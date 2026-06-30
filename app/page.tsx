@@ -1,11 +1,23 @@
-import { ButtonLink } from "@/components/button";
+import { Hero } from "@/components/home/hero";
+import { ServicesGrid } from "@/components/home/services-grid";
+import { IndustriesSection } from "@/components/home/industries-section";
+import { AboutSection } from "@/components/home/about-section";
+import { TeamSection } from "@/components/home/team-section";
+import { CareersCtaSection } from "@/components/home/careers-cta-section";
+import { BlogSection } from "@/components/home/blog-section";
+import { FinalCtaSection } from "@/components/home/final-cta-section";
 
-export default function Home() {
+export default function HomePage() {
   return (
-    <section className="container py-24 text-center">
-      <h1 className="mb-4">Anvi Corp USA</h1>
-      <p className="mb-8 text-lg text-ink-400">Design system in place. Real homepage lands in the next commit.</p>
-      <ButtonLink href="/contact">Contact Us</ButtonLink>
-    </section>
+    <>
+      <Hero />
+      <ServicesGrid />
+      <IndustriesSection />
+      <AboutSection />
+      <TeamSection />
+      <CareersCtaSection />
+      <BlogSection />
+      <FinalCtaSection />
+    </>
   );
 }
