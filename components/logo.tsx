@@ -7,10 +7,10 @@ export function Logo({ className = "" }: { className?: string }) {
       <Image
         src="/logo.png"
         alt="Anvi Corp USA"
-        width={160}
-        height={48}
+        width={220}
+        height={64}
         priority
-        className="h-10 w-auto"
+        className="h-12 lg:h-14 w-auto"
       />
     </Link>
   );

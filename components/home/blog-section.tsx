@@ -11,7 +11,7 @@ const posts = [
 
 export function BlogSection() {
   return (
-    <section className="py-20 lg:py-28 bg-ink-50">
+    <section id="blog" className="py-20 lg:py-28 bg-ink-50">
       <div className="container">
         <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 mb-12">
           <div className="max-w-xl">

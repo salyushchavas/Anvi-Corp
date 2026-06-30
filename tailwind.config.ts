@@ -57,11 +57,17 @@ const config: Config = {
       },
       animation: {
         "float-slow": "float 8s ease-in-out infinite",
+        "anvi-rise":  "anvi-rise 25s linear infinite",
       },
       keyframes: {
         float: {
           "0%, 100%": { transform: "translateY(0) scale(1)", opacity: "0.6" },
           "50%":      { transform: "translateY(-30px) scale(1.1)", opacity: "1" },
+        },
+        // ported from _legacy/assets/css/main.css @keyframes animate
+        "anvi-rise": {
+          "0%":   { transform: "translateY(0) rotate(0deg)",      opacity: "1", borderRadius: "0" },
+          "100%": { transform: "translateY(-1000px) rotate(720deg)", opacity: "0", borderRadius: "50%" },
         },
       },
     },

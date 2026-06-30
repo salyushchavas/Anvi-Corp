@@ -4,27 +4,29 @@ import { useCallback, useEffect, useState } from "react";
 import useEmblaCarousel from "embla-carousel-react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { FloatingCircles } from "@/components/floating-circles";
+import { HeroSocialRail } from "@/components/hero-social-rail";
 
 const slides = [
   {
-    title: "Building Tomorrow's",
-    accent: "Future, Today.",
-    body: "Engineering reliable software, cloud, and IT solutions for ambitious teams.",
+    line1: "Building",
+    line2: "Tomorrow's,",
+    line3: "Future Today!",
   },
   {
-    title: "Dreaming Big,",
-    accent: "Building Bigger.",
-    body: "From idea to production — meticulous strategy, flawless execution, measurable outcomes.",
+    line1: "Dreaming",
+    line2: "Big, Building",
+    line3: "Bigger",
   },
   {
-    title: "Transforming Dreams",
-    accent: "into Reality.",
-    body: "Advanced IT solutions tailored to your needs, powered by a team that ships.",
+    line1: "Transforming",
+    line2: "Dreams into",
+    line3: "Reality",
   },
 ];
 
 export function Hero() {
-  const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true, duration: 30 });
+  const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true, duration: 35 });
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const scrollTo = useCallback((i: number) => emblaApi?.scrollTo(i), [emblaApi]);
@@ -47,44 +49,42 @@ export function Hero() {
     <section className="relative isolate overflow-hidden bg-ink-900 text-white">
       {/* video background */}
       <video
-        className="absolute inset-0 h-full w-full object-cover opacity-40"
+        className="absolute inset-0 h-full w-full object-cover"
         autoPlay muted loop playsInline preload="metadata"
         poster="/about-1.jpg"
       >
         <source src="/slider/banner.mp4" type="video/mp4" />
       </video>
-      {/* gradient veil */}
-      <div className="absolute inset-0 bg-gradient-to-br from-ink-900/85 via-ink-900/65 to-brand-900/70" />
+      {/* dark gradient veil for legibility */}
+      <div className="absolute inset-0 bg-gradient-to-br from-ink-900/75 via-ink-900/50 to-ink-900/65" />
 
-      {/* slider */}
-      <div className="relative container min-h-[78vh] lg:min-h-[88vh] flex items-center py-24">
-        <div className="w-full" ref={emblaRef}>
+      {/* legacy floating circles */}
+      <FloatingCircles />
+
+      {/* vertical socials + scroll-down (right edge) */}
+      <HeroSocialRail />
+
+      {/* carousel viewport — MUST be overflow-hidden so slides don't bleed */}
+      <div className="relative min-h-[78vh] lg:min-h-[88vh] flex items-center">
+        <div className="w-full overflow-hidden" ref={emblaRef}>
           <div className="flex">
             {slides.map((s, i) => (
               <div key={i} className="min-w-0 flex-[0_0_100%]">
-                <div className="max-w-2xl">
-                  <h1 className="text-white">
-                    {s.title}
-                    <span className="block bg-gradient-to-r from-brand-300 to-brand-500 bg-clip-text text-transparent">
-                      {s.accent}
-                    </span>
-                  </h1>
-                  <p className="mt-6 text-lg lg:text-xl text-ink-200 max-w-xl">
-                    {s.body}
-                  </p>
-                  <div className="mt-10 flex flex-wrap gap-4">
-                    <Link
-                      href="/contact"
-                      className="inline-flex items-center gap-2 rounded-full bg-brand px-8 py-4 font-semibold text-white shadow-cardHover hover:bg-brand-600 transition"
-                    >
-                      Get in touch <ArrowRight className="h-4 w-4" />
-                    </Link>
-                    <Link
-                      href="#services"
-                      className="inline-flex items-center gap-2 rounded-full border-2 border-white/30 px-8 py-4 font-semibold text-white hover:bg-white hover:text-ink-900 transition"
-                    >
-                      Our services
-                    </Link>
+                <div className="container py-20 lg:py-28 pr-16 md:pr-24">
+                  <div className="max-w-3xl">
+                    <h1 className="text-white text-5xl md:text-6xl lg:text-7xl xl:text-[80px] leading-[1.05] font-bold">
+                      {s.line1} <br />
+                      {s.line2} <br />
+                      {s.line3}
+                    </h1>
+                    <div className="mt-10">
+                      <Link
+                        href="/contact"
+                        className="inline-flex items-center gap-2 rounded-full bg-brand px-10 py-4 text-base font-bold text-white shadow-cardHover hover:bg-brand-600 transition"
+                      >
+                        Read More <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </div>
                   </div>
                 </div>
               </div>

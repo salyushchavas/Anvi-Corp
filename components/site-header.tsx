@@ -7,10 +7,10 @@ import { Logo } from "./logo";
 import { ButtonLink } from "./button";
 
 const services = [
-  { href: "/services/software-development", label: "Software Development" },
-  { href: "/services/cloud-development", label: "Cloud Development" },
-  { href: "/services/mobile-application-development", label: "Mobile App Development" },
-  { href: "/services/it-consulting", label: "IT Consulting" },
+  { href: "/services/software-development",            label: "Software Development" },
+  { href: "/services/cloud-development",               label: "Cloud Development" },
+  { href: "/services/mobile-application-development",  label: "Mobile App Development" },
+  { href: "/services/it-consulting",                   label: "IT Consulting" },
 ];
 
 export function SiteHeader() {
@@ -36,10 +36,10 @@ export function SiteHeader() {
         scrolled ? "bg-white/95 backdrop-blur-md shadow-sm" : "bg-white"
       }`}
     >
-      <div className="container flex h-16 lg:h-20 items-center justify-between">
+      <div className="container flex h-20 lg:h-24 items-center justify-between">
         <Logo />
 
-        {/* Desktop nav */}
+        {/* Desktop nav — matches legacy IA: Home / Services / Industries / About Us / Careers / Blogs + Contact button */}
         <nav className="hidden lg:flex items-center gap-1" aria-label="Primary">
           <NavLink href="/">Home</NavLink>
           <div
@@ -48,7 +48,7 @@ export function SiteHeader() {
             onMouseLeave={() => setServicesOpen(false)}
           >
             <button
-              className="inline-flex items-center gap-1 px-4 py-2 text-sm font-medium text-ink-800 hover:text-brand transition-colors"
+              className="inline-flex items-center gap-1 px-4 py-2 text-base font-medium text-ink-800 hover:text-brand transition-colors"
               aria-haspopup="true"
               aria-expanded={servicesOpen}
               onClick={() => setServicesOpen(v => !v)}
@@ -73,9 +73,10 @@ export function SiteHeader() {
             )}
           </div>
           <NavLink href="/#industries">Industries</NavLink>
-          <NavLink href="/#about">About</NavLink>
+          <NavLink href="/#about">About Us</NavLink>
           <NavLink href="/careers">Careers</NavLink>
-          <ButtonLink href="/contact" size="sm" className="ml-3">
+          <NavLink href="/#blog">Blogs</NavLink>
+          <ButtonLink href="/contact" size="md" className="ml-3">
             Contact Us
           </ButtonLink>
         </nav>
@@ -114,8 +115,9 @@ export function SiteHeader() {
               </div>
             </details>
             <MobileLink href="/#industries" onClick={() => setMobileOpen(false)}>Industries</MobileLink>
-            <MobileLink href="/#about" onClick={() => setMobileOpen(false)}>About</MobileLink>
+            <MobileLink href="/#about" onClick={() => setMobileOpen(false)}>About Us</MobileLink>
             <MobileLink href="/careers" onClick={() => setMobileOpen(false)}>Careers</MobileLink>
+            <MobileLink href="/#blog" onClick={() => setMobileOpen(false)}>Blogs</MobileLink>
             <div className="pt-2">
               <ButtonLink href="/contact" className="w-full" onClick={() => setMobileOpen(false)}>
                 Contact Us
@@ -130,7 +132,7 @@ export function SiteHeader() {
 
 function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <Link href={href} className="px-4 py-2 text-sm font-medium text-ink-800 hover:text-brand">
+    <Link href={href} className="px-4 py-2 text-base font-medium text-ink-800 hover:text-brand">
       {children}
     </Link>
   );
