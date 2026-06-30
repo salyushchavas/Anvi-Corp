@@ -1,36 +1,106 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# anvicorp.com
 
-## Getting Started
+Next.js 14 (App Router, TypeScript, Tailwind) rebuild of the legacy PHP/HTML
+brochure site. Deployed to Vercel. The previous PHP site is preserved under
+`_legacy/` for visual reference.
 
-First, run the development server:
+## Stack
+
+- **Next.js 14** App Router, TypeScript, statically rendered
+- **Tailwind CSS** for styling; brand tokens in `tailwind.config.ts`
+- **Kumbh Sans** via `next/font/google`
+- **Lucide React** for icons
+- **Embla Carousel** for the homepage hero (only client JS on the site outside the contact form)
+- **Resend** for the contact form (replaces the legacy PHP `mail()`)
+
+## Local development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env.local   # then fill in RESEND_API_KEY
+npm run dev                  # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Environment variables
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Name              | Required | Notes |
+|-------------------|----------|-------|
+| `RESEND_API_KEY`  | yes      | Get one at https://resend.com/api-keys |
+| `MAIL_TO`         | no       | Default: `info@anvicorp.com` |
+| `MAIL_FROM`       | no       | Default: `Anvi Corp Website <onboarding@resend.dev>`. Switch to `noreply@anvicorp.com` after verifying the domain in Resend. |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Set these in **Vercel → Project → Settings → Environment Variables**, scoped to both **Production** and **Preview**.
 
-## Learn More
+## Deploying to Vercel
 
-To learn more about Next.js, take a look at the following resources:
+The Vercel project (`anvicorp.com`) is already created. To enable automatic deploys on push:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Open the project in Vercel → **Settings → Git**
+2. Click **Connect Git Repository** → choose `salyushchavas/Anvi-Corp`
+3. Set the production branch to `main`
+4. Add the env vars above under **Settings → Environment Variables**
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Once linked, every push to `main` triggers a production-target build; every push to any other branch creates a preview deployment with its own URL.
 
-## Deploy on Vercel
+To deploy manually from your machine:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npx vercel              # preview deploy
+npx vercel --prod       # production deploy
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The `anvicorp.com` customer domain is **not** in Vercel's domain list — DNS cutover is a separate step.
+
+## Project layout
+
+```
+app/
+├── layout.tsx                 # root layout: SiteHeader + SiteFooter + fonts
+├── page.tsx                   # home (composes all home/* sections)
+├── icon.png                   # favicon (Next 14 convention)
+├── sitemap.ts                 # generated /sitemap.xml
+├── robots.ts                  # generated /robots.txt
+├── not-found.tsx              # custom 404
+├── services/<slug>/page.tsx   # 4 service pages — all use ServicePageTemplate
+├── contact/page.tsx           # contact UI (form is a client component)
+├── privacy-policy/page.tsx
+├── careers/page.tsx           # Phase 2 seam — "coming soon" placeholder
+└── api/contact/route.ts       # POST handler — Resend email
+
+components/                    # shared design system
+├── site-header.tsx, site-footer.tsx, back-to-top.tsx
+├── button.tsx, inner-banner.tsx, check-list.tsx, section-heading.tsx
+├── service-page-template.tsx  # shared service-page layout
+├── contact-form.tsx           # client form with honeypot + validation
+├── logo.tsx, social-icons.tsx
+└── home/                      # homepage section components
+    ├── hero.tsx (client — Embla carousel + video background)
+    ├── services-grid.tsx, industries-section.tsx, about-section.tsx
+    ├── team-section.tsx, careers-cta-section.tsx
+    ├── blog-section.tsx, final-cta-section.tsx
+
+public/
+├── googleb1ffc46918a9fd23.html  # Google Search Console — exact filename
+├── logo.png
+├── slider/{banner,1}.mp4        # hero videos
+├── services/*, industries/*, blog/*
+
+_legacy/                       # original PHP/HTML site, kept for reference
+                               # (excluded from Vercel uploads via .vercelignore)
+```
+
+## URL redirects
+
+Every legacy URL has a 308 redirect in `next.config.mjs`:
+
+```
+/index.html                          → /
+/software-development.html           → /services/software-development
+/cloud-development.html              → /services/cloud-development
+/mobile-application-development.html → /services/mobile-application-development
+/it-consulting.html                  → /services/it-consulting
+/contact-us.php                      → /contact
+/privacy-policy.html                 → /privacy-policy
+```
+
+`_legacy/apply.php` was intentionally not migrated — it's an orphaned Blueera template that wasn't linked from anywhere.

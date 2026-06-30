@@ -1,0 +1,9 @@
+# Legacy PHP/HTML site kept as visual reference — not needed at runtime
+_legacy/
+
+# Local-only config samples and docs
+.env.example
+README.md
+
+# Local build artifacts (Vercel rebuilds anyway)
+.next/
