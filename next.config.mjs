@@ -1,4 +1,30 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {};
+const nextConfig = {
+  reactStrictMode: true,
+  poweredByHeader: false,
+  async redirects() {
+    return [
+      { source: "/index.html",                          destination: "/",                                            permanent: true },
+      { source: "/software-development.html",           destination: "/services/software-development",               permanent: true },
+      { source: "/cloud-development.html",              destination: "/services/cloud-development",                  permanent: true },
+      { source: "/mobile-application-development.html", destination: "/services/mobile-application-development",     permanent: true },
+      { source: "/it-consulting.html",                  destination: "/services/it-consulting",                      permanent: true },
+      { source: "/contact-us.php",                      destination: "/contact",                                     permanent: true },
+      { source: "/privacy-policy.html",                 destination: "/privacy-policy",                              permanent: true },
+    ];
+  },
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options",        value: "SAMEORIGIN" },
+          { key: "Referrer-Policy",        value: "strict-origin-when-cross-origin" },
+        ],
+      },
+    ];
+  },
+};
 
 export default nextConfig;
