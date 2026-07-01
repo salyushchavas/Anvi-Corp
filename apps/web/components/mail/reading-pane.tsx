@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import {
   Archive,
   ArrowLeft,
+  Download,
+  FileText,
   Flag,
   Forward,
   MailOpen,
@@ -11,9 +14,12 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
-import type { MailMessageDetail, MailMessageSummary } from "@/lib/mail-types";
+import type { MailAttachment, MailMessageDetail, MailMessageSummary } from "@/lib/mail-types";
 import { Avatar, Spinner } from "./ui";
-import { formatFull, participantName, recipientList } from "./format";
+import { formatBytes, formatFull, participantName, recipientList } from "./format";
+import { attachmentsApi } from "@/lib/mail-client";
+import { MailApiError } from "@/lib/mail-api";
+import { useToast } from "./toast";
 
 export function ReadingPane({
   entry,
@@ -46,6 +52,29 @@ export function ReadingPane({
   onDelete: () => void;
   onBack: () => void;
 }) {
+  const toast = useToast();
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  async function downloadAttachment(att: MailAttachment) {
+    setDownloadingId(att.id);
+    try {
+      // Bearer-authed blob through the walled proxy → object URL → <a download>.
+      const { blob, filename } = await attachmentsApi.download(att.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename || att.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err instanceof MailApiError ? err.message : "Could not download the attachment.");
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
   if (!entry) {
     return (
       <div className="hidden h-full flex-col items-center justify-center gap-3 p-8 text-center text-ink-300 lg:flex">
@@ -112,6 +141,31 @@ export function ReadingPane({
               <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-ink-700">
                 {m.bodyText || m.bodyHtml || <span className="italic text-ink-300">(no content)</span>}
               </div>
+
+              {m.attachments.length > 0 && (
+                <ul className="mt-4 space-y-1.5">
+                  {m.attachments.map((a) => (
+                    <li
+                      key={a.id}
+                      className="flex items-center gap-2 rounded-lg border border-ink-100 bg-ink-50 px-3 py-2 text-sm"
+                    >
+                      <FileText className="h-4 w-4 flex-shrink-0 text-brand" />
+                      <span className="min-w-0 flex-1 truncate text-ink-700">{a.filename}</span>
+                      <span className="flex-shrink-0 text-xs text-ink-300">{formatBytes(a.sizeBytes)}</span>
+                      <button
+                        type="button"
+                        onClick={() => downloadAttachment(a)}
+                        disabled={downloadingId === a.id}
+                        className="inline-flex flex-shrink-0 items-center gap-1 rounded-lg border border-ink-100 bg-white px-2.5 py-1 text-xs font-medium text-ink-700 hover:text-brand disabled:opacity-60"
+                        aria-label={`Download ${a.filename}`}
+                      >
+                        {downloadingId === a.id ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
+                        Download
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </article>
           ))}
       </div>

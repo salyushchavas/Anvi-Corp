@@ -1,6 +1,7 @@
 // Typed calls to every A1–A3 endpoint, all on the single mail-api instance.
-import { mailApi } from "./mail-api";
+import { mailApi, mailDownloadBlob, mailUpload, type BlobDownload } from "./mail-api";
 import type {
+  MailAttachment,
   MailAuthResponse,
   MailCredential,
   MailDomain,
@@ -85,4 +86,18 @@ export const adminApi = {
   updateDomain: (id: string, body: { displayName?: string; active?: boolean }) =>
     mailApi<MailDomain>(`/api/mail/admin/domains/${id}`, { method: "PATCH", body }),
   deleteDomain: (id: string) => mailApi<void>(`/api/mail/admin/domains/${id}`, { method: "DELETE" }),
+};
+
+// ── Attachments (A5) — draft-anchored upload, walled proxy download, delete ──
+export const attachmentsApi = {
+  /** Raw octet-stream upload to the caller's own draft; filename/type as query params. */
+  upload: (draftId: string, file: File) =>
+    mailUpload<MailAttachment>("/api/mail/attachments", file, {
+      draftId,
+      filename: file.name,
+      contentType: file.type || "application/octet-stream",
+    }),
+  /** Bearer-authed blob download through the walled proxy (no raw/presigned URL). */
+  download: (id: string): Promise<BlobDownload> => mailDownloadBlob(`/api/mail/attachments/${id}`),
+  remove: (id: string) => mailApi<void>(`/api/mail/attachments/${id}`, { method: "DELETE" }),
 };

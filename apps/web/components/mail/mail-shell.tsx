@@ -123,6 +123,7 @@ export function MailShell() {
           body: d.bodyText ?? "",
           inReplyTo: d.inReplyTo ?? undefined,
           draftEntryId: m.entryId,
+          attachments: d.attachments,
         });
       } catch (err) {
         toast.error(err instanceof MailApiError ? err.message : "Could not open the draft.");

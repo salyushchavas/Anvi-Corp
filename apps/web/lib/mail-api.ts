@@ -138,36 +138,93 @@ export interface RequestOptions {
   query?: Record<string, string | number | undefined>;
 }
 
-export function mailApi<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  return doRequest<T>(path, opts, true);
-}
-
-async function doRequest<T>(path: string, opts: RequestOptions, allowRefresh: boolean): Promise<T> {
-  const useAuth = opts.auth !== false;
+/** JSON request on the authed instance. */
+export async function mailApi<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const url = `${API_BASE}${path}${buildQuery(opts.query)}`;
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (useAuth) {
-    const t = getToken();
-    if (t) headers.Authorization = `Bearer ${t}`;
-  }
-
-  const res = await fetch(url, {
+  const init: RequestInit = {
     method: opts.method ?? "GET",
-    headers,
+    headers: { "Content-Type": "application/json" },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-  });
-
-  if (res.status === 401 && useAuth && allowRefresh && getRefreshToken()) {
-    const newToken = await refreshOnce();
-    if (newToken) return doRequest<T>(path, opts, false); // retry once with the fresh token
-    redirectToLogin();
-    throw new MailApiError(401, "Your session has expired. Please sign in again.", "MAIL_SESSION_EXPIRED");
-  }
-
+  };
+  const res = await fetchWithAuth(url, init, opts.auth !== false);
   if (!res.ok) throw await toError(res);
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/**
+ * Upload a RAW octet-stream body (a File/Blob) on the SAME authed instance
+ * (Bearer + single-flight 401 refresh). The backend reads the request body as
+ * raw bytes; filename/contentType go as query params. Response parsed as JSON.
+ */
+export async function mailUpload<T>(
+  path: string,
+  file: Blob,
+  query?: Record<string, string | number | undefined>,
+): Promise<T> {
+  const url = `${API_BASE}${path}${buildQuery(query)}`;
+  const res = await fetchWithAuth(url, { method: "POST", body: file }, true);
+  if (!res.ok) throw await toError(res);
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+export interface BlobDownload {
+  blob: Blob;
+  filename: string | null;
+  contentType: string | null;
+}
+
+/**
+ * Download a binary body through the authed WALLED proxy (Bearer + refresh).
+ * The bytes come back decrypted with a Content-Disposition filename — there is
+ * no presigned / raw S3 URL.
+ */
+export async function mailDownloadBlob(path: string): Promise<BlobDownload> {
+  const res = await fetchWithAuth(`${API_BASE}${path}`, { method: "GET" }, true);
+  if (!res.ok) throw await toError(res);
+  return {
+    blob: await res.blob(),
+    filename: filenameFromDisposition(res.headers.get("Content-Disposition")),
+    contentType: res.headers.get("Content-Type"),
+  };
+}
+
+/** Shared authed fetch: attaches the Bearer, single-flights a 401 refresh, retries once. */
+async function fetchWithAuth(
+  url: string,
+  init: RequestInit,
+  useAuth: boolean,
+  allowRefresh = true,
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (useAuth) {
+    const t = getToken();
+    if (t) headers.set("Authorization", `Bearer ${t}`);
+  }
+  const res = await fetch(url, { ...init, headers });
+  if (res.status === 401 && useAuth && allowRefresh && getRefreshToken()) {
+    const newToken = await refreshOnce();
+    if (newToken) return fetchWithAuth(url, init, useAuth, false); // retry once with the fresh token
+    redirectToLogin();
+    throw new MailApiError(401, "Your session has expired. Please sign in again.", "MAIL_SESSION_EXPIRED");
+  }
+  return res;
+}
+
+function filenameFromDisposition(cd: string | null): string | null {
+  if (!cd) return null;
+  const star = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(cd);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ""));
+    } catch {
+      /* fall through to plain */
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(cd);
+  return plain ? plain[1].trim() : null;
 }
 
 async function toError(res: Response): Promise<MailApiError> {

@@ -56,6 +56,13 @@ export interface MailMessageSummary {
   createdAt: string;
 }
 
+export interface MailAttachment {
+  id: string;
+  filename: string;
+  contentType: string | null;
+  sizeBytes: number;
+}
+
 export interface MailMessageDetail {
   entryId: string;
   messageId: string;
@@ -77,6 +84,7 @@ export interface MailMessageDetail {
   draftCc: string | null;
   draftBcc: string | null;
   createdAt: string;
+  attachments: MailAttachment[];
 }
 
 export interface MailFolderCount {
