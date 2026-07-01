@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
 import { Kumbh_Sans } from "next/font/google";
 import "./globals.css";
-import { SiteHeader } from "@/components/site-header";
-import { SiteFooter } from "@/components/site-footer";
-import { BackToTop } from "@/components/back-to-top";
 
 const kumbh = Kumbh_Sans({
   subsets: ["latin"],
@@ -32,15 +29,13 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", title: "Anvi Corp USA" },
 };
 
+// Shell-free root layout: only html/body + fonts + globals. The marketing chrome
+// (header/footer) lives in the (marketing) route group; the mail app has its own
+// chrome in the (mail) route group. Route groups don't affect URLs.
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={kumbh.variable}>
-      <body>
-        <SiteHeader />
-        <main>{children}</main>
-        <SiteFooter />
-        <BackToTop />
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
