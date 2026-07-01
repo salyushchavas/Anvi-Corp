@@ -1,0 +1,9 @@
+# The Maven wrapper shell script MUST stay LF so it runs on Linux build agents
+# (Railway/Railpack). A CRLF shebang (#!/bin/sh\r) is an invalid interpreter.
+mvnw            text eol=lf
+*.sh            text eol=lf
+
+# Windows-only launchers stay CRLF.
+mvnw.cmd        text eol=crlf
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
