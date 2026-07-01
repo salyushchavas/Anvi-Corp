@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { LogOut, Mail, Menu, Search, Settings, Shield, X } from "lucide-react";
+import { Bell, LogOut, Mail, Menu, Search, Settings, Shield, X } from "lucide-react";
 import { useMailAuth } from "./mail-auth-provider";
 import { FolderRail, type FolderView } from "./folder-rail";
 import { MessageList } from "./message-list";
 import { ReadingPane } from "./reading-pane";
 import { ComposeDialog, type ComposeInitial } from "./compose-dialog";
+import { useMailEvents } from "./use-mail-events";
 import { Avatar, ConfirmDialog, FormField, Input, Modal, Spinner } from "./ui";
 import { useToast } from "./toast";
 import { foldersApi, messagesApi } from "@/lib/mail-client";
@@ -106,6 +107,33 @@ export function MailShell() {
   useEffect(() => {
     loadListing();
   }, [loadListing]);
+
+  // A8 real-time: a delivered NEW_MAIL bumps the affected folder's badge in the
+  // EXISTING state (system OR A6 custom, per the A7-resolved placement) and refreshes
+  // the active list head; the hook resyncs counts on (re)connect and pops a desktop
+  // notification only for a true INBOX arrival while the tab is hidden.
+  const { notifyPermission, requestNotifyPermission } = useMailEvents({
+    enabled: !!account,
+    onReconnect: refreshCounts,
+    onNotificationClick: () => selectFolder("INBOX"),
+    onEvent: (e) => {
+      if (e.type !== "NEW_MAIL") return;
+      if (e.customFolderId) {
+        const id = e.customFolderId;
+        setCustomFolders((prev) => prev.map((f) => (f.id === id ? { ...f, total: f.total + 1, unread: f.unread + 1 } : f)));
+        if (customFolder?.id === id) loadListing();
+      } else {
+        const folder = e.folder as MailFolder;
+        setCounts((prev) => {
+          const has = prev.some((c) => c.folder === folder);
+          return has
+            ? prev.map((c) => (c.folder === folder ? { ...c, total: c.total + 1, unread: c.unread + 1 } : c))
+            : [...prev, { folder, total: 1, unread: 1 }];
+        });
+        if (!customFolder && !search && view === folder) loadListing();
+      }
+    },
+  });
 
   function selectFolder(v: FolderView) {
     setView(v);
@@ -403,6 +431,17 @@ export function MailShell() {
             <Link href="/mail/admin" className="hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50 sm:inline-flex">
               <Shield className="h-4 w-4" /> Admin
             </Link>
+          )}
+          {notifyPermission === "default" && (
+            <button
+              type="button"
+              onClick={requestNotifyPermission}
+              title="Enable notifications"
+              aria-label="Enable notifications"
+              className="rounded-lg p-2 text-ink-500 hover:bg-ink-50 hover:text-brand"
+            >
+              <Bell className="h-4 w-4" />
+            </button>
           )}
           <Link href="/mail/settings" className="hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50 sm:inline-flex">
             <Settings className="h-4 w-4" /> Settings

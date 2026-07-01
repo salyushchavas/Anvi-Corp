@@ -28,7 +28,9 @@ import com.anvicorp.api.mail.repository.MailMessageRepository;
 import com.anvicorp.api.mail.rules.MailDeliveryOutcome;
 import com.anvicorp.api.mail.rules.MailRuleEngine;
 import com.anvicorp.api.mail.rules.MailRuleEnvelope;
+import com.anvicorp.api.mail.sse.MailDeliveredEvent;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -79,6 +81,7 @@ public class MailMessageService {
     private final MailAttachmentRepository attachmentRepository;
     private final MailCustomFolderRepository customFolderRepository;
     private final MailRuleEngine ruleEngine;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Value("${app.webmail.messages.max-subject-length:500}")
     private int maxSubject;
@@ -560,6 +563,15 @@ public class MailMessageService {
                     .customFolderId(outcome.getCustomFolderId())
                     .isRead(outcome.isRead()).isStarred(outcome.isStarred()).isImportant(outcome.isImportant())
                     .build());
+            // Best-effort real-time notify (A8): buffer an event carrying the A7-RESOLVED
+            // placement; a @TransactionalEventListener(AFTER_COMMIT) fans it out to THIS
+            // recipient's own SSE streams only after the row commits. Publishing here just
+            // enqueues — it cannot fail or roll back the delivery.
+            eventPublisher.publishEvent(new MailDeliveredEvent(
+                    a.getId(),
+                    outcome.getFolder().name(),
+                    outcome.getCustomFolderId() != null ? outcome.getCustomFolderId().toString() : null,
+                    msg.getId().toString()));
         }
     }
 

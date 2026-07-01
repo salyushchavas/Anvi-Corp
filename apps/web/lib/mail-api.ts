@@ -8,6 +8,9 @@ import type { MailRole } from "./mail-types";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/+$/, "");
 
+/** Origin the mail API is served from — used by the A8 SSE fetch stream (lib/mail-events). */
+export const MAIL_API_BASE = API_BASE;
+
 export const TOKEN_KEY = "mail.token";
 export const REFRESH_KEY = "mail.refreshToken";
 export const ACCOUNT_KEY = "mail.account";
@@ -122,6 +125,15 @@ function refreshOnce(): Promise<string | null> {
     });
   }
   return refreshPromise;
+}
+
+/**
+ * Single-flight access-token refresh, shared with the A8 SSE fetch stream so a 401
+ * on the stream and a concurrent 401 on a JSON call coalesce into one refresh.
+ * Returns the fresh token, or null when the session is gone.
+ */
+export function mailRefresh(): Promise<string | null> {
+  return refreshOnce();
 }
 
 function redirectToLogin(): void {
