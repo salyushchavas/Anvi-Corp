@@ -29,8 +29,13 @@ public interface MailMailboxEntryRepository extends JpaRepository<MailMailboxEnt
             UUID accountId, Pageable pageable);
 
     /** True if the caller participates in (has any entry for) a message — walling
-     *  check for replies and draft sends. */
+     *  check for replies, draft sends, and attachment downloads. */
     boolean existsByAccountIdAndMessageId(UUID accountId, UUID messageId);
+
+    /** The caller's entry for a message in a specific folder (e.g. their DRAFTS
+     *  entry — used by the attachment delete-from-draft guard). */
+    Optional<MailMailboxEntry> findByAccountIdAndMessageIdAndFolder(
+            UUID accountId, UUID messageId, MailFolder folder);
 
     /** The caller's live entries within a thread (for the thread view). */
     List<MailMailboxEntry> findByAccountIdAndMessageIdInAndDeletedAtIsNull(

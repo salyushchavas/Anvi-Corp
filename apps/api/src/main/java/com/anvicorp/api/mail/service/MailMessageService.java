@@ -1,6 +1,7 @@
 package com.anvicorp.api.mail.service;
 
 import com.anvicorp.api.auth.MailPrincipal;
+import com.anvicorp.api.mail.dto.MailAttachmentResponse;
 import com.anvicorp.api.mail.dto.MailDraftRequest;
 import com.anvicorp.api.mail.dto.MailFlagsRequest;
 import com.anvicorp.api.mail.dto.MailFolderCount;
@@ -19,6 +20,7 @@ import com.anvicorp.api.mail.entity.MailMessageRecipient;
 import com.anvicorp.api.mail.entity.MailRecipientType;
 import com.anvicorp.api.mail.exception.MailApiException;
 import com.anvicorp.api.mail.repository.MailAccountRepository;
+import com.anvicorp.api.mail.repository.MailAttachmentRepository;
 import com.anvicorp.api.mail.repository.MailMailboxEntryRepository;
 import com.anvicorp.api.mail.repository.MailMessageRecipientRepository;
 import com.anvicorp.api.mail.repository.MailMessageRepository;
@@ -70,6 +72,7 @@ public class MailMessageService {
     private final MailMessageRecipientRepository recipientRepository;
     private final MailMailboxEntryRepository entryRepository;
     private final MailAccountRepository accountRepository;
+    private final MailAttachmentRepository attachmentRepository;
 
     @Value("${app.webmail.messages.max-subject-length:500}")
     private int maxSubject;
@@ -559,6 +562,12 @@ public class MailMessageService {
                     .filter(Objects::nonNull).toList();
         }
         boolean isDraft = entry.getFolder() == MailFolder.DRAFTS;
+        List<MailAttachmentResponse> attachments = Boolean.TRUE.equals(msg.getHasAttachments())
+                ? attachmentRepository.findByMessageId(msg.getId()).stream()
+                        .map(a -> new MailAttachmentResponse(a.getId().toString(), a.getFilename(),
+                                a.getContentType(), a.getSizeBytes()))
+                        .toList()
+                : List.of();
         return new MailMessageDetail(
                 entry.getId().toString(), msg.getId().toString(),
                 msg.getThreadId() != null ? msg.getThreadId().toString() : null,
@@ -568,7 +577,7 @@ public class MailMessageService {
                 Boolean.TRUE.equals(entry.getIsRead()), Boolean.TRUE.equals(entry.getIsStarred()),
                 Boolean.TRUE.equals(entry.getIsImportant()), Boolean.TRUE.equals(msg.getHasAttachments()),
                 isDraft ? msg.getDraftTo() : null, isDraft ? msg.getDraftCc() : null,
-                isDraft ? msg.getDraftBcc() : null, msg.getCreatedAt());
+                isDraft ? msg.getDraftBcc() : null, msg.getCreatedAt(), attachments);
     }
 
     private Map<UUID, MailAccount> resolveAccountsFor(Set<UUID> senderIds,

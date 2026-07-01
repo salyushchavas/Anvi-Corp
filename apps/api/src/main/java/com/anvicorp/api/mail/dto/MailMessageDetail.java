@@ -12,8 +12,8 @@ import java.util.List;
  * sender; their own if the caller was BCC'd; empty otherwise). The {@code draft*}
  * fields are populated only for a DRAFTS entry so the composer can re-hydrate.
  *
- * <p>Attachments arrive in a later phase ({@code hasAttachments} is always false
- * for now and there is no attachment list field yet).</p>
+ * <p>{@code attachments} lists the message's attachments (empty when none); each
+ * is downloaded through the walled proxy at {@code /api/mail/attachments/{id}}.</p>
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record MailMessageDetail(
@@ -36,6 +36,7 @@ public record MailMessageDetail(
         String draftTo,
         String draftCc,
         String draftBcc,
-        Instant createdAt
+        Instant createdAt,
+        List<MailAttachmentResponse> attachments
 ) {
 }
