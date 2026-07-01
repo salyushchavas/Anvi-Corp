@@ -16,15 +16,31 @@ public interface MailMailboxEntryRepository extends JpaRepository<MailMailboxEnt
     /** Walled fetch — only the caller's own entry. */
     Optional<MailMailboxEntry> findByIdAndAccountId(UUID id, UUID accountId);
 
-    // ── System-folder listing + counts (live entries only) ────────────────────
-    Page<MailMailboxEntry> findByAccountIdAndFolderAndDeletedAtIsNull(
+    // ── System-folder listing + counts (A6 precedence: only FK-NULL entries;
+    //    a message moved into a custom folder no longer shows in its system
+    //    folder. For every existing/never-custom entry this is identical to
+    //    before — they all have custom_folder_id NULL). ──────────────────────────
+    Page<MailMailboxEntry> findByAccountIdAndFolderAndCustomFolderIdIsNullAndDeletedAtIsNull(
             UUID accountId, MailFolder folder, Pageable pageable);
 
-    long countByAccountIdAndFolderAndDeletedAtIsNull(UUID accountId, MailFolder folder);
+    long countByAccountIdAndFolderAndCustomFolderIdIsNullAndDeletedAtIsNull(UUID accountId, MailFolder folder);
 
-    long countByAccountIdAndFolderAndDeletedAtIsNullAndIsReadFalse(UUID accountId, MailFolder folder);
+    long countByAccountIdAndFolderAndCustomFolderIdIsNullAndDeletedAtIsNullAndIsReadFalse(
+            UUID accountId, MailFolder folder);
 
-    // ── Starred view ─────────────────────────────────────────────────────────
+    // ── Custom-folder listing + counts ────────────────────────────────────────
+    Page<MailMailboxEntry> findByAccountIdAndCustomFolderIdAndDeletedAtIsNull(
+            UUID accountId, UUID customFolderId, Pageable pageable);
+
+    long countByAccountIdAndCustomFolderIdAndDeletedAtIsNull(UUID accountId, UUID customFolderId);
+
+    long countByAccountIdAndCustomFolderIdAndDeletedAtIsNullAndIsReadFalse(UUID accountId, UUID customFolderId);
+
+    /** All the caller's entries in a custom folder (any state) — used by
+     *  delete-folder → Trash so no entry retains a dangling FK. */
+    List<MailMailboxEntry> findByAccountIdAndCustomFolderId(UUID accountId, UUID customFolderId);
+
+    // ── Starred view (cross-folder; placement-agnostic) ───────────────────────
     Page<MailMailboxEntry> findByAccountIdAndIsStarredTrueAndDeletedAtIsNull(
             UUID accountId, Pageable pageable);
 
@@ -41,7 +57,8 @@ public interface MailMailboxEntryRepository extends JpaRepository<MailMailboxEnt
     List<MailMailboxEntry> findByAccountIdAndMessageIdInAndDeletedAtIsNull(
             UUID accountId, Collection<UUID> messageIds);
 
-    /** Bounded scan for search (Pageable caps the candidate set; TRASH excluded). */
+    /** Bounded scan for search (Pageable caps the candidate set; TRASH excluded).
+     *  Custom-foldered entries are still searchable (their folder enum isn't TRASH). */
     List<MailMailboxEntry> findByAccountIdAndDeletedAtIsNullAndFolderNot(
             UUID accountId, MailFolder folder, Pageable pageable);
 }

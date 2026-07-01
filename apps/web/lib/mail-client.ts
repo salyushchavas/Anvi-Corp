@@ -4,6 +4,7 @@ import type {
   MailAttachment,
   MailAuthResponse,
   MailCredential,
+  MailCustomFolder,
   MailDomain,
   MailFolder,
   MailFolderCount,
@@ -50,6 +51,8 @@ export const messagesApi = {
     mailApi<MailMessageDetail>(`/api/mail/drafts/${entryId}/send`, { method: "POST", body: payload ?? {} }),
   move: (entryId: string, folder: MailFolder) =>
     mailApi<MailMessageDetail>(`/api/mail/messages/${entryId}/folder`, { method: "PATCH", body: { folder } }),
+  moveToCustomFolder: (entryId: string, customFolderId: string) =>
+    mailApi<MailMessageDetail>(`/api/mail/messages/${entryId}/folder`, { method: "PATCH", body: { customFolderId } }),
   trash: (entryId: string) =>
     mailApi<MailMessageDetail>(`/api/mail/messages/${entryId}/trash`, { method: "POST" }),
   setFlags: (entryId: string, flags: { isRead?: boolean; isStarred?: boolean; isImportant?: boolean }) =>
@@ -100,4 +103,15 @@ export const attachmentsApi = {
   /** Bearer-authed blob download through the walled proxy (no raw/presigned URL). */
   download: (id: string): Promise<BlobDownload> => mailDownloadBlob(`/api/mail/attachments/${id}`),
   remove: (id: string) => mailApi<void>(`/api/mail/attachments/${id}`, { method: "DELETE" }),
+};
+
+// ── Custom folders (A6) — CRUD + per-folder message listing ──────────────────
+export const foldersApi = {
+  list: () => mailApi<MailCustomFolder[]>("/api/mail/folders"),
+  create: (name: string) => mailApi<MailCustomFolder>("/api/mail/folders", { method: "POST", body: { name } }),
+  rename: (id: string, name: string) =>
+    mailApi<MailCustomFolder>(`/api/mail/folders/${id}`, { method: "PUT", body: { name } }),
+  remove: (id: string) => mailApi<void>(`/api/mail/folders/${id}`, { method: "DELETE" }),
+  messages: (id: string, page = 0, size = 25) =>
+    mailApi<MailPage<MailMessageSummary>>(`/api/mail/folders/${id}/messages`, { query: { page, size } }),
 };

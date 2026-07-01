@@ -8,12 +8,13 @@ import { FolderRail, type FolderView } from "./folder-rail";
 import { MessageList } from "./message-list";
 import { ReadingPane } from "./reading-pane";
 import { ComposeDialog, type ComposeInitial } from "./compose-dialog";
-import { Avatar } from "./ui";
+import { Avatar, ConfirmDialog, FormField, Input, Modal, Spinner } from "./ui";
 import { useToast } from "./toast";
-import { messagesApi } from "@/lib/mail-client";
+import { foldersApi, messagesApi } from "@/lib/mail-client";
 import { MailApiError } from "@/lib/mail-api";
 import { participantName } from "./format";
 import type {
+  MailCustomFolder,
   MailFolder,
   MailFolderCount,
   MailMessageDetail,
@@ -37,6 +38,8 @@ export function MailShell() {
   const toast = useToast();
 
   const [view, setView] = useState<FolderView>("INBOX");
+  const [customFolder, setCustomFolder] = useState<MailCustomFolder | null>(null);
+  const [customFolders, setCustomFolders] = useState<MailCustomFolder[]>([]);
   const [search, setSearch] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [counts, setCounts] = useState<MailFolderCount[]>([]);
@@ -53,6 +56,12 @@ export function MailShell() {
   const [mobileReading, setMobileReading] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
 
+  // Custom-folder edit modal (create/rename) + delete confirm.
+  const [folderEdit, setFolderEdit] = useState<{ mode: "create" | "rename"; folder?: MailCustomFolder } | null>(null);
+  const [folderName, setFolderName] = useState("");
+  const [folderBusy, setFolderBusy] = useState(false);
+  const [folderToDelete, setFolderToDelete] = useState<MailCustomFolder | null>(null);
+
   const loadCounts = useCallback(async () => {
     try {
       setCounts(await messagesApi.folderCounts());
@@ -61,11 +70,25 @@ export function MailShell() {
     }
   }, []);
 
+  const loadFolders = useCallback(async () => {
+    try {
+      setCustomFolders(await foldersApi.list());
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+
+  const refreshCounts = useCallback(() => {
+    loadCounts();
+    loadFolders();
+  }, [loadCounts, loadFolders]);
+
   const loadListing = useCallback(async () => {
     setListLoading(true);
     try {
       let page: MailPage<MailMessageSummary>;
       if (search) page = await messagesApi.search(search, pageIndex);
+      else if (customFolder) page = await foldersApi.messages(customFolder.id, pageIndex);
       else if (view === "STARRED") page = await messagesApi.starred(pageIndex);
       else page = await messagesApi.listFolder(view, pageIndex);
       setListing(page);
@@ -75,17 +98,28 @@ export function MailShell() {
     } finally {
       setListLoading(false);
     }
-  }, [view, pageIndex, search, toast]);
+  }, [view, customFolder, pageIndex, search, toast]);
 
   useEffect(() => {
-    loadCounts();
-  }, [loadCounts]);
+    refreshCounts();
+  }, [refreshCounts]);
   useEffect(() => {
     loadListing();
   }, [loadListing]);
 
   function selectFolder(v: FolderView) {
     setView(v);
+    setCustomFolder(null);
+    setSearch(null);
+    setSearchInput("");
+    setPageIndex(0);
+    setSelected(null);
+    setDetail([]);
+    setNavOpen(false);
+  }
+
+  function selectCustom(f: MailCustomFolder) {
+    setCustomFolder(f);
     setSearch(null);
     setSearchInput("");
     setPageIndex(0);
@@ -98,6 +132,7 @@ export function MailShell() {
     e.preventDefault();
     const q = searchInput.trim();
     setSearch(q || null);
+    setCustomFolder(null);
     setPageIndex(0);
     setSelected(null);
     setDetail([]);
@@ -148,7 +183,7 @@ export function MailShell() {
       if (incoming && !m.isRead) {
         await messagesApi.setFlags(m.entryId, { isRead: true });
         patchRow(m.entryId, { isRead: true });
-        loadCounts();
+        refreshCounts();
       }
     } catch (err) {
       toast.error(err instanceof MailApiError ? err.message : "Could not load the message.");
@@ -165,7 +200,7 @@ export function MailShell() {
     try {
       await messagesApi.setFlags(selected.entryId, patch);
       patchRow(selected.entryId, patch);
-      if (flag === "isRead") loadCounts();
+      if (flag === "isRead") refreshCounts();
     } catch (err) {
       toast.error(err instanceof MailApiError ? err.message : "Action failed.");
     }
@@ -177,6 +212,21 @@ export function MailShell() {
     try {
       await messagesApi.move(selected.entryId, folder);
       toast.success(`Moved to ${FOLDER_TITLES[folder]}.`);
+      clearSelectionAndReload();
+    } catch (err) {
+      toast.error(err instanceof MailApiError ? err.message : "Could not move the message.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function moveSelectedToCustom(folderId: string) {
+    if (!selected) return;
+    setActionBusy(true);
+    try {
+      await messagesApi.moveToCustomFolder(selected.entryId, folderId);
+      const f = customFolders.find((x) => x.id === folderId);
+      toast.success(`Moved to ${f?.name ?? "folder"}.`);
       clearSelectionAndReload();
     } catch (err) {
       toast.error(err instanceof MailApiError ? err.message : "Could not move the message.");
@@ -218,7 +268,69 @@ export function MailShell() {
     setDetail([]);
     setMobileReading(false);
     loadListing();
-    loadCounts();
+    refreshCounts();
+  }
+
+  // ── Custom-folder CRUD ────────────────────────────────────────────────────
+  function openNewFolder() {
+    setFolderName("");
+    setFolderEdit({ mode: "create" });
+  }
+  function openRenameFolder(f: MailCustomFolder) {
+    setFolderName(f.name);
+    setFolderEdit({ mode: "rename", folder: f });
+  }
+  async function submitFolder(e: React.FormEvent) {
+    e.preventDefault();
+    const name = folderName.trim();
+    if (!name) {
+      toast.error("Folder name is required.");
+      return;
+    }
+    setFolderBusy(true);
+    try {
+      if (folderEdit?.mode === "rename" && folderEdit.folder) {
+        const updated = await foldersApi.rename(folderEdit.folder.id, name);
+        setCustomFolder((prev) => (prev && prev.id === updated.id ? updated : prev));
+        toast.success("Folder renamed.");
+      } else {
+        await foldersApi.create(name);
+        toast.success("Folder created.");
+      }
+      setFolderEdit(null);
+      loadFolders();
+    } catch (err) {
+      toast.error(err instanceof MailApiError ? err.message : "Could not save the folder.");
+    } finally {
+      setFolderBusy(false);
+    }
+  }
+  async function confirmDeleteFolder() {
+    if (!folderToDelete) return;
+    setFolderBusy(true);
+    try {
+      await foldersApi.remove(folderToDelete.id);
+      toast.success(`Deleted "${folderToDelete.name}" — its messages moved to Trash.`);
+      const wasActive = customFolder?.id === folderToDelete.id;
+      if (wasActive) {
+        // Clearing customFolder/view changes loadListing's deps, so its effect
+        // re-fires with fresh state and loads the Inbox. A manual loadListing()
+        // here would run the STALE closure (still pointing at the just-deleted
+        // folder) → a spurious 404 that races the correct load. Let the effect do it.
+        setCustomFolder(null);
+        setView("INBOX");
+      }
+      setFolderToDelete(null);
+      refreshCounts();
+      // Non-active delete: deps are unchanged so the effect won't refire; refresh
+      // manually in case the current view is Trash (the folder's mail landed there).
+      if (!wasActive) loadListing();
+    } catch (err) {
+      toast.error(err instanceof MailApiError ? err.message : "Could not delete the folder.");
+      setFolderToDelete(null);
+    } finally {
+      setFolderBusy(false);
+    }
   }
 
   function composeFromReply(mode: "reply" | "replyAll" | "forward") {
@@ -240,8 +352,27 @@ export function MailShell() {
     setCompose({ to, subject: prefix("Re:", subj), inReplyTo: d.messageId, body: quote(d) });
   }
 
-  const listTitle = search ? `Search: ${search}` : FOLDER_TITLES[view];
+  const listTitle = search ? `Search: ${search}` : customFolder ? customFolder.name : FOLDER_TITLES[view];
+  const listView: FolderView = customFolder ? "INBOX" : view;
   const isAdmin = account?.role === "ADMIN" || account?.role === "SUPER_ADMIN";
+
+  const rail = (
+    <FolderRail
+      counts={counts}
+      active={view}
+      activeCustomId={customFolder?.id ?? null}
+      customFolders={customFolders}
+      onSelect={selectFolder}
+      onSelectCustom={selectCustom}
+      onCompose={() => {
+        setCompose({});
+        setNavOpen(false);
+      }}
+      onNewFolder={openNewFolder}
+      onRenameFolder={openRenameFolder}
+      onDeleteFolder={(f) => setFolderToDelete(f)}
+    />
+  );
 
   return (
     <div className="flex h-screen flex-col bg-white">
@@ -283,9 +414,7 @@ export function MailShell() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <aside className="hidden w-60 flex-shrink-0 border-r border-ink-100 lg:block">
-          <FolderRail counts={counts} active={view} onSelect={selectFolder} onCompose={() => setCompose({})} />
-        </aside>
+        <aside className="hidden w-60 flex-shrink-0 border-r border-ink-100 lg:block">{rail}</aside>
 
         <section
           className={`w-full flex-shrink-0 flex-col border-r border-ink-100 lg:flex lg:w-96 ${
@@ -294,7 +423,7 @@ export function MailShell() {
         >
           <MessageList
             title={listTitle}
-            view={view}
+            view={listView}
             page={listing}
             loading={listLoading}
             selectedEntryId={selected?.entryId ?? null}
@@ -315,13 +444,15 @@ export function MailShell() {
             messages={detail}
             loading={detailLoading}
             busy={actionBusy}
+            customFolders={customFolders}
             onReply={() => composeFromReply("reply")}
             onReplyAll={() => composeFromReply("replyAll")}
             onForward={() => composeFromReply("forward")}
             onStar={() => toggleFlag("isStarred")}
             onImportant={() => toggleFlag("isImportant")}
             onToggleRead={() => toggleFlag("isRead")}
-            onArchive={() => moveSelected("ARCHIVE")}
+            onMove={moveSelected}
+            onMoveToCustom={moveSelectedToCustom}
             onTrash={trashSelected}
             onDelete={deleteSelected}
             onBack={() => setMobileReading(false)}
@@ -333,16 +464,16 @@ export function MailShell() {
       {navOpen && (
         <div className="fixed inset-0 z-[80] lg:hidden">
           <div className="absolute inset-0 bg-ink-800/40" onClick={() => setNavOpen(false)} />
-          <div className="absolute left-0 top-0 h-full w-64 bg-white shadow-cardHover">
+          <div className="absolute left-0 top-0 flex h-full w-64 flex-col bg-white shadow-cardHover">
             <div className="flex items-center justify-between border-b border-ink-100 px-3 py-3">
               <span className="font-bold text-ink-800">Anvi {APP_NAME}</span>
               <button type="button" onClick={() => setNavOpen(false)} className="rounded p-1 text-ink-400 hover:bg-ink-50">
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <FolderRail counts={counts} active={view} onSelect={selectFolder} onCompose={() => { setCompose({}); setNavOpen(false); }} />
+            <div className="min-h-0 flex-1">{rail}</div>
             {isAdmin && (
-              <Link href="/mail/admin" className="mx-3 mt-1 flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-ink-700 hover:bg-ink-50">
+              <Link href="/mail/admin" className="m-3 flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-ink-700 hover:bg-ink-50">
                 <Shield className="h-4 w-4 text-ink-400" /> Admin console
               </Link>
             )}
@@ -350,7 +481,47 @@ export function MailShell() {
         </div>
       )}
 
-      {compose && <ComposeDialog initial={compose} onClose={() => setCompose(null)} onSent={() => { loadListing(); loadCounts(); }} />}
+      {compose && (
+        <ComposeDialog
+          initial={compose}
+          onClose={() => setCompose(null)}
+          onSent={() => {
+            loadListing();
+            refreshCounts();
+          }}
+        />
+      )}
+
+      {/* Create / rename folder */}
+      {folderEdit && (
+        <Modal open onClose={() => setFolderEdit(null)} title={folderEdit.mode === "rename" ? "Rename folder" : "New folder"} width="max-w-sm">
+          <form onSubmit={submitFolder} className="space-y-4">
+            <FormField label="Folder name" htmlFor="folder-name" required>
+              <Input id="folder-name" value={folderName} onChange={(e) => setFolderName(e.target.value)} autoFocus maxLength={100} />
+            </FormField>
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setFolderEdit(null)} className="rounded-full px-5 py-2 text-sm font-semibold text-ink-700 hover:bg-ink-50">
+                Cancel
+              </button>
+              <button type="submit" disabled={folderBusy} className="inline-flex items-center gap-2 rounded-full bg-brand px-6 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-60">
+                {folderBusy && <Spinner className="h-4 w-4 text-white" />}
+                {folderEdit.mode === "rename" ? "Rename" : "Create"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      <ConfirmDialog
+        open={folderToDelete !== null}
+        title="Delete folder"
+        message={`Delete "${folderToDelete?.name}"? Its messages move to Trash (recoverable).`}
+        confirmLabel="Delete folder"
+        danger
+        busy={folderBusy}
+        onConfirm={confirmDeleteFolder}
+        onCancel={() => setFolderToDelete(null)}
+      />
     </div>
   );
 }

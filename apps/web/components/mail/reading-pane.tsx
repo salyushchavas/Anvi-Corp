@@ -1,20 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
-  Archive,
   ArrowLeft,
   Download,
   FileText,
   Flag,
+  Folder,
+  FolderInput,
   Forward,
+  Inbox,
   MailOpen,
   Reply,
   ReplyAll,
   Star,
   Trash2,
 } from "lucide-react";
-import type { MailAttachment, MailMessageDetail, MailMessageSummary } from "@/lib/mail-types";
+import type { MailAttachment, MailCustomFolder, MailFolder, MailMessageDetail, MailMessageSummary } from "@/lib/mail-types";
 import { Avatar, Spinner } from "./ui";
 import { formatBytes, formatFull, participantName, recipientList } from "./format";
 import { attachmentsApi } from "@/lib/mail-client";
@@ -26,13 +28,15 @@ export function ReadingPane({
   messages,
   loading,
   busy,
+  customFolders,
   onReply,
   onReplyAll,
   onForward,
   onStar,
   onImportant,
   onToggleRead,
-  onArchive,
+  onMove,
+  onMoveToCustom,
   onTrash,
   onDelete,
   onBack,
@@ -41,19 +45,35 @@ export function ReadingPane({
   messages: MailMessageDetail[];
   loading: boolean;
   busy: boolean;
+  customFolders: MailCustomFolder[];
   onReply: () => void;
   onReplyAll: () => void;
   onForward: () => void;
   onStar: () => void;
   onImportant: () => void;
   onToggleRead: () => void;
-  onArchive: () => void;
+  onMove: (folder: MailFolder) => void;
+  onMoveToCustom: (folderId: string) => void;
   onTrash: () => void;
   onDelete: () => void;
   onBack: () => void;
 }) {
   const toast = useToast();
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const moveBtnRef = useRef<HTMLButtonElement>(null);
+  const [moveMenu, setMoveMenu] = useState<{ left: number; top: number } | null>(null);
+
+  function openMoveMenu() {
+    const r = moveBtnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    // Fixed positioning escapes the toolbar's overflow-x-auto clip; clamp on-screen.
+    const width = 216;
+    setMoveMenu({ left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)), top: r.bottom + 4 });
+  }
+  function pickMove(fn: () => void) {
+    setMoveMenu(null);
+    fn();
+  }
 
   async function downloadAttachment(att: MailAttachment) {
     setDownloadingId(att.id);
@@ -101,10 +121,41 @@ export function ReadingPane({
         <ToolbarButton icon={Flag} label="Important" active={entry.isImportant} onClick={onImportant} />
         <ToolbarButton icon={MailOpen} label={entry.isRead ? "Mark unread" : "Mark read"} onClick={onToggleRead} />
         <span className="mx-1 h-5 w-px flex-shrink-0 bg-ink-100" />
-        {!inTrash && <ToolbarButton icon={Archive} label="Archive" onClick={onArchive} disabled={busy} />}
+        <button
+          ref={moveBtnRef}
+          type="button"
+          onClick={() => (moveMenu ? setMoveMenu(null) : openMoveMenu())}
+          disabled={busy}
+          title="Move to"
+          aria-label="Move to"
+          aria-haspopup="menu"
+          aria-expanded={moveMenu !== null}
+          className="flex-shrink-0 rounded-lg p-2 text-ink-500 transition hover:bg-ink-50 hover:text-brand disabled:opacity-40"
+        >
+          <FolderInput className="h-4 w-4" />
+        </button>
         <ToolbarButton icon={Trash2} label={inTrash ? "Delete forever" : "Trash"} onClick={inTrash ? onDelete : onTrash} disabled={busy} danger={inTrash} />
         {busy && <Spinner className="ml-2 h-4 w-4" />}
       </div>
+
+      {moveMenu && (
+        <>
+          <button type="button" aria-hidden tabIndex={-1} className="fixed inset-0 z-[95] cursor-default" onClick={() => setMoveMenu(null)} />
+          <div
+            role="menu"
+            style={{ left: moveMenu.left, top: moveMenu.top }}
+            className="fixed z-[96] max-h-72 w-52 overflow-y-auto rounded-xl border border-ink-100 bg-white py-1 shadow-cardHover"
+          >
+            <p className="px-3 py-1 text-xs font-semibold uppercase tracking-wide text-ink-300">Move to</p>
+            <MoveItem icon={Inbox} label="Inbox" onClick={() => pickMove(() => onMove("INBOX"))} />
+            <MoveItem icon={Folder} label="Archive" onClick={() => pickMove(() => onMove("ARCHIVE"))} />
+            {customFolders.length > 0 && <div className="my-1 h-px bg-ink-100" />}
+            {customFolders.map((f) => (
+              <MoveItem key={f.id} icon={Folder} label={f.name} onClick={() => pickMove(() => onMoveToCustom(f.id))} />
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="flex-1 overflow-y-auto">
         <div className="border-b border-ink-100 px-6 py-4">
@@ -170,6 +221,20 @@ export function ReadingPane({
           ))}
       </div>
     </div>
+  );
+}
+
+function MoveItem({ icon: Icon, label, onClick }: { icon: typeof Inbox; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink-700 hover:bg-ink-50"
+    >
+      <Icon className="h-4 w-4 flex-shrink-0 text-ink-400" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+    </button>
   );
 }
 

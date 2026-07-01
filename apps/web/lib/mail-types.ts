@@ -85,10 +85,19 @@ export interface MailMessageDetail {
   draftBcc: string | null;
   createdAt: string;
   attachments: MailAttachment[];
+  customFolderId: string | null;
 }
 
 export interface MailFolderCount {
   folder: MailFolder;
+  total: number;
+  unread: number;
+}
+
+/** A user-created custom folder + its live counts (A6). */
+export interface MailCustomFolder {
+  id: string;
+  name: string;
   total: number;
   unread: number;
 }

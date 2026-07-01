@@ -109,6 +109,9 @@ public class MailMessageController {
     public MailMessageDetail move(@AuthenticationPrincipal MailPrincipal principal,
                                   @PathVariable String entryId,
                                   @RequestBody MailMoveRequest req) {
+        if (req.customFolderId() != null && !req.customFolderId().isBlank()) {
+            return service.moveToCustomFolder(principal, uuid(entryId), uuid(req.customFolderId()));
+        }
         return service.move(principal, uuid(entryId), folder(req.folder()));
     }
 
