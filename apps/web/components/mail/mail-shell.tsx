@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { LogOut, Mail, Menu, Search, Shield, X } from "lucide-react";
+import { LogOut, Mail, Menu, Search, Settings, Shield, X } from "lucide-react";
 import { useMailAuth } from "./mail-auth-provider";
 import { FolderRail, type FolderView } from "./folder-rail";
 import { MessageList } from "./message-list";
@@ -404,6 +404,9 @@ export function MailShell() {
               <Shield className="h-4 w-4" /> Admin
             </Link>
           )}
+          <Link href="/mail/settings" className="hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50 sm:inline-flex">
+            <Settings className="h-4 w-4" /> Settings
+          </Link>
           <div className="flex items-center gap-2">
             <Avatar name={account?.displayName} email={account?.email} size="h-8 w-8" />
             <button type="button" onClick={logout} className="rounded-lg p-2 text-ink-500 hover:bg-ink-50" title="Sign out" aria-label="Sign out">
@@ -472,8 +475,19 @@ export function MailShell() {
               </button>
             </div>
             <div className="min-h-0 flex-1">{rail}</div>
+            <Link
+              href="/mail/settings"
+              onClick={() => setNavOpen(false)}
+              className="mx-3 mt-1 flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-ink-700 hover:bg-ink-50"
+            >
+              <Settings className="h-4 w-4 text-ink-400" /> Settings
+            </Link>
             {isAdmin && (
-              <Link href="/mail/admin" className="m-3 flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-ink-700 hover:bg-ink-50">
+              <Link
+                href="/mail/admin"
+                onClick={() => setNavOpen(false)}
+                className="mx-3 mb-3 mt-1 flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-ink-700 hover:bg-ink-50"
+              >
                 <Shield className="h-4 w-4 text-ink-400" /> Admin console
               </Link>
             )}

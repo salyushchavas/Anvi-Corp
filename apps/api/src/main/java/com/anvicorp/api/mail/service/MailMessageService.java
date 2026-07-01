@@ -25,6 +25,9 @@ import com.anvicorp.api.mail.repository.MailCustomFolderRepository;
 import com.anvicorp.api.mail.repository.MailMailboxEntryRepository;
 import com.anvicorp.api.mail.repository.MailMessageRecipientRepository;
 import com.anvicorp.api.mail.repository.MailMessageRepository;
+import com.anvicorp.api.mail.rules.MailDeliveryOutcome;
+import com.anvicorp.api.mail.rules.MailRuleEngine;
+import com.anvicorp.api.mail.rules.MailRuleEnvelope;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -75,6 +78,7 @@ public class MailMessageService {
     private final MailAccountRepository accountRepository;
     private final MailAttachmentRepository attachmentRepository;
     private final MailCustomFolderRepository customFolderRepository;
+    private final MailRuleEngine ruleEngine;
 
     @Value("${app.webmail.messages.max-subject-length:500}")
     private int maxSubject;
@@ -100,7 +104,7 @@ public class MailMessageService {
             throw badRequest("At least one recipient is required", "MAIL_NO_RECIPIENTS");
         }
         MailMessage msg = newMessage(sender, req.subject(), req.bodyText(), req.bodyHtml(), req.inReplyTo());
-        deliver(msg, r);
+        deliver(sender, msg, r);
         MailMailboxEntry sent = entryRepository.save(MailMailboxEntry.builder()
                 .accountId(sender.getId()).messageId(msg.getId()).folder(MailFolder.SENT)
                 .isRead(true).build());
@@ -194,7 +198,7 @@ public class MailMessageService {
         msg.setDraftBcc(null);
         messageRepository.save(msg);
 
-        deliver(msg, r);
+        deliver(sender, msg, r);
         draftEntry.setFolder(MailFolder.SENT);
         draftEntry.setIsRead(true);
         entryRepository.save(draftEntry);
@@ -531,20 +535,36 @@ public class MailMessageService {
     }
 
     /**
-     * Creates recipient rows + one unread INBOX entry per distinct recipient.
-     * (Rules / SSE / non-INBOX delivery placement are later phases.)
+     * Creates recipient rows + one delivered entry per distinct recipient. Each
+     * recipient's own enabled inbox rules (A7) resolve that entry's placement
+     * (system folder OR A6 custom FK) + flags at delivery time; the no-rules /
+     * no-match path is byte-for-byte the A2 unread-INBOX behavior. The engine is
+     * FAIL-OPEN — it never throws, so a rule can never fail this send. The sender's
+     * SENT copy (created by the caller) is never touched by rules.
      */
-    private void deliver(MailMessage msg, Resolved r) {
+    private void deliver(MailAccount sender, MailMessage msg, Resolved r) {
         saveRecipientRows(msg.getId(), r.to(), MailRecipientType.TO);
         saveRecipientRows(msg.getId(), r.cc(), MailRecipientType.CC);
         saveRecipientRows(msg.getId(), r.bcc(), MailRecipientType.BCC);
+        MailRuleEnvelope envelope = new MailRuleEnvelope(
+                addressOf(sender),
+                r.to().stream().map(this::addressOf).toList(),
+                r.cc().stream().map(this::addressOf).toList(),
+                msg.getSubject(),
+                Boolean.TRUE.equals(msg.getHasAttachments()));
         for (MailAccount a : r.all()) {
+            MailDeliveryOutcome outcome = ruleEngine.resolveDelivery(a.getId(), envelope);
             entryRepository.save(MailMailboxEntry.builder()
                     .accountId(a.getId()).messageId(msg.getId())
-                    .folder(MailFolder.INBOX)
-                    .isRead(false).isStarred(false).isImportant(false)
+                    .folder(outcome.getFolder())
+                    .customFolderId(outcome.getCustomFolderId())
+                    .isRead(outcome.isRead()).isStarred(outcome.isStarred()).isImportant(outcome.isImportant())
                     .build());
         }
+    }
+
+    private String addressOf(MailAccount a) {
+        return a.getLocalPart() + "@" + a.getDomain().getName();
     }
 
     private void saveRecipientRows(UUID messageId, List<MailAccount> accts, MailRecipientType type) {

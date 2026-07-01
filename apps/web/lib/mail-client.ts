@@ -14,6 +14,8 @@ import type {
   MailMessageSummary,
   MailPage,
   MailRole,
+  MailRule,
+  MailRuleInput,
   MailSendPayload,
   MailThreadResponse,
 } from "./mail-types";
@@ -114,4 +116,16 @@ export const foldersApi = {
   remove: (id: string) => mailApi<void>(`/api/mail/folders/${id}`, { method: "DELETE" }),
   messages: (id: string, page = 0, size = 25) =>
     mailApi<MailPage<MailMessageSummary>>(`/api/mail/folders/${id}/messages`, { query: { page, size } }),
+};
+
+// ── Inbox rules (A7) — walled per-account CRUD + reorder/toggle ───────────────
+export const rulesApi = {
+  list: () => mailApi<MailRule[]>("/api/mail/rules"),
+  create: (input: MailRuleInput) => mailApi<MailRule>("/api/mail/rules", { method: "POST", body: input }),
+  update: (id: string, input: MailRuleInput) =>
+    mailApi<MailRule>(`/api/mail/rules/${id}`, { method: "PUT", body: input }),
+  remove: (id: string) => mailApi<void>(`/api/mail/rules/${id}`, { method: "DELETE" }),
+  setEnabled: (id: string, enabled: boolean) =>
+    mailApi<MailRule>(`/api/mail/rules/${id}/enabled`, { method: "PATCH", body: { enabled } }),
+  reorder: (ids: string[]) => mailApi<MailRule[]>("/api/mail/rules/reorder", { method: "POST", body: { ids } }),
 };

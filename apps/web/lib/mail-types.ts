@@ -150,3 +150,49 @@ export interface MailSendPayload {
   bodyHtml?: string;
   inReplyTo?: string;
 }
+
+// ── Inbox rules (A7) — mirror com.anvicorp.api.mail.rules.* + dto.MailRule* ──────
+export type MailRuleField = "FROM" | "TO" | "CC" | "SUBJECT" | "HAS_ATTACHMENT";
+export type MailRuleOperator = "CONTAINS" | "EQUALS" | "IS_TRUE";
+export type MailRuleActionType =
+  | "MOVE_TO_SYSTEM_FOLDER"
+  | "MOVE_TO_CUSTOM_FOLDER"
+  | "MARK_READ"
+  | "STAR"
+  | "MARK_IMPORTANT"
+  | "DELETE";
+export type MailRuleMatchMode = "ALL" | "ANY";
+
+export interface MailRuleCondition {
+  field: MailRuleField;
+  operator: MailRuleOperator;
+  value: string | null;
+}
+
+export interface MailRuleAction {
+  type: MailRuleActionType;
+  targetSystemFolder: MailFolder | null;
+  targetCustomFolderId: string | null;
+}
+
+export interface MailRule {
+  id: string;
+  name: string;
+  priority: number;
+  enabled: boolean;
+  matchMode: MailRuleMatchMode;
+  stopProcessing: boolean;
+  conditions: MailRuleCondition[];
+  actions: MailRuleAction[];
+  createdAt: string;
+}
+
+/** Create/update payload — the server assigns/compacts priority, never the client. */
+export interface MailRuleInput {
+  name: string;
+  matchMode: MailRuleMatchMode;
+  enabled: boolean;
+  stopProcessing: boolean;
+  conditions: MailRuleCondition[];
+  actions: MailRuleAction[];
+}
