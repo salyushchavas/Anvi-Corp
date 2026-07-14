@@ -114,7 +114,11 @@ const config: Config = {
         // ── Brand (env-derived) — replaces marketing's hardcoded ramp.
         // With NEXT_PUBLIC_BRAND_PRIMARY=#2A8CDB set in apps/web/.env.local
         // the derived ramp is Anvi blue; unset would fall back to Skyzen orange.
-        brand: BRAND_RAMP,
+        // DEFAULT alias to brand-500 so `bg-brand`/`text-brand` (marketing utilities) resolve.
+        brand: {
+          DEFAULT: BRAND_RAMP[500],
+          ...BRAND_RAMP,
+        },
 
         // ── Accent — marketing was `{DEFAULT: "#3C72FC", 600: "#264FCB"}`.
         // Careers uses `{DEFAULT, dark, light}`. The union keeps marketing's
