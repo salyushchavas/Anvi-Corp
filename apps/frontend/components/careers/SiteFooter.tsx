@@ -28,25 +28,17 @@ export default function SiteFooter() {
     <footer className="bg-[#050a14] text-skyzen-text">
       <div className="mx-auto max-w-7xl px-6 pt-16 pb-6">
         <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-4">
-          {/* Brand */}
+          {/* Brand — same wordmark as marketing (public/logo.png).
+              White background pill so the dark-navy footer doesn't hide
+              a dark-colored logo. */}
           <div className="lg:col-span-1">
-            <Link href="/" className="mb-4 inline-flex items-center gap-2.5">
-              <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-md bg-white/10 p-1">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={BRAND.logoUrl}
-                  alt={BRAND.name}
-                  className="h-8 w-8 object-contain"
-                />
-              </span>
-              <span className="flex flex-col leading-tight">
-                <span className="text-[18px] font-extrabold uppercase tracking-wide text-white">
-                  {BRAND.name}
-                </span>
-                <span className="text-[10px] uppercase tracking-[0.15em] text-white/50">
-                  {BRAND.productName}
-                </span>
-              </span>
+            <Link href="/" className="mb-4 inline-block">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={BRAND.logoUrl}
+                alt={BRAND.name}
+                className="h-10 w-auto rounded-md bg-white/95 px-2 py-1.5"
+              />
             </Link>
             <p className="max-w-[260px] text-sm leading-relaxed text-skyzen-muted">
               {/* TODO: replace with an official Anvi tagline. Neutral placeholder for now. */}

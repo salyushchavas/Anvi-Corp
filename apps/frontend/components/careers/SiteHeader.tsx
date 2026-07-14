@@ -54,23 +54,20 @@ export default function SiteHeader() {
       {/* Main nav — wrapped in a pill container (matches legacy index.html .nav-inner) */}
       <nav className="px-4 py-4 lg:py-5">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 rounded-full border border-white/10 bg-[#2a2d35] px-4 py-2.5 shadow-[0_8px_32px_rgba(0,0,0,0.4)] lg:px-7">
-        {/* Brand */}
-        <Link href="/" className="flex items-center gap-2.5">
-          <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-md">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={BRAND.logoUrl}
-              alt={BRAND.name}
-              className="h-9 w-9 object-contain"
-            />
-          </span>
-          <span className="flex flex-col leading-tight">
-            <span className="text-[18px] font-extrabold uppercase tracking-wide text-white">
-              {BRAND.name}
-            </span>
-            <span className="text-[10px] uppercase tracking-[0.15em] text-white/50">
-              {BRAND.productName}
-            </span>
+        {/* Brand — reuses the marketing wordmark logo (public/logo.png).
+            The logo IS the wordmark, so we drop the previous SKY-ZEN text
+            span (Skyzen had an icon-only logo + text wordmark; Anvi's is
+            a single wordmark image). A small vertical separator + product
+            label indicates you're in the /careers section vs the marketing site. */}
+        <Link href="/" className="flex items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={BRAND.logoUrl}
+            alt={BRAND.name}
+            className="h-8 lg:h-9 w-auto rounded bg-white/95 px-1.5 py-1"
+          />
+          <span className="hidden border-l border-white/20 pl-3 text-[10px] font-medium uppercase tracking-[0.18em] text-white/70 sm:inline">
+            {BRAND.productName}
           </span>
         </Link>
 
