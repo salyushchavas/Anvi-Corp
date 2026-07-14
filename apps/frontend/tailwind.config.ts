@@ -5,7 +5,7 @@ import type { Config } from "tailwindcss";
 // NEXT_PUBLIC_BRAND_PRIMARY (and optionally NEXT_PUBLIC_BRAND_ACCENT);
 // the resulting Tailwind colors are baked at build time. With no env
 // vars set, the SKYZEN_BRAND_RAMP defaults render — but Anvi's
-// apps/web/.env.local sets these to the Anvi blue #2A8CDB so the marketing
+// apps/frontend/.env.local sets these to the Anvi blue #2A8CDB so the marketing
 // site produces the exact same brand-* palette it always has (no visual
 // regression), while the careers dashboard chrome now derives from the
 // same source of truth.
@@ -112,7 +112,7 @@ const config: Config = {
     extend: {
       colors: {
         // ── Brand (env-derived) — replaces marketing's hardcoded ramp.
-        // With NEXT_PUBLIC_BRAND_PRIMARY=#2A8CDB set in apps/web/.env.local
+        // With NEXT_PUBLIC_BRAND_PRIMARY=#2A8CDB set in apps/frontend/.env.local
         // the derived ramp is Anvi blue; unset would fall back to Skyzen orange.
         // DEFAULT alias to brand-500 so `bg-brand`/`text-brand` (marketing utilities) resolve.
         brand: {

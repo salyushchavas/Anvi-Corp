@@ -6,7 +6,7 @@ import IdleTimeoutProvider from '@/components/auth/IdleTimeoutProvider';
 
 // Careers-specific metadata — overrides the root marketing metadata for
 // any URL under /careers/*. Root layout still supplies <html>, <body>,
-// and the shared fonts (see apps/web/app/layout.tsx).
+// and the shared fonts (see apps/frontend/app/layout.tsx).
 export const metadata: Metadata = {
   title: {
     default: BRAND.documentTitle,
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
  *   - Brand CSS vars        — per-brand primary color injected into :root
  *   - icofont plugin CSS    — icon font used by Site header / footer
  *
- * The root layout at apps/web/app/layout.tsx stays minimal (html/body +
+ * The root layout at apps/frontend/app/layout.tsx stays minimal (html/body +
  * fonts) so the marketing homepage doesn't pay for any careers-only
  * providers. Nested layouts only wrap their subtree.
  */

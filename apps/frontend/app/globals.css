@@ -33,7 +33,7 @@
 
 /* ─── Careers design tokens & dashboard scope ─────────────────────── */
 /* CSS custom properties. Overridden at runtime for per-brand deploys by
- * the inline <style> block in apps/web/app/careers/layout.tsx (which
+ * the inline <style> block in apps/frontend/app/careers/layout.tsx (which
  * reads NEXT_PUBLIC_BRAND_PRIMARY at build time via lib/careers/brand). */
 :root {
   /* Chrome */
