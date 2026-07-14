@@ -1,6 +1,6 @@
 package com.anvicorp.api.mail.controller;
 
-import com.anvicorp.api.auth.MailPrincipal;
+import com.anvicorp.api.mail.auth.MailPrincipal;
 import com.anvicorp.api.mail.dto.CreateDomainRequest;
 import com.anvicorp.api.mail.dto.CreateMailboxRequest;
 import com.anvicorp.api.mail.dto.MailCredentialResponse;

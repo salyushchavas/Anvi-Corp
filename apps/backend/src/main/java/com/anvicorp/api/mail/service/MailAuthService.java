@@ -1,7 +1,7 @@
 package com.anvicorp.api.mail.service;
 
-import com.anvicorp.api.auth.MailJwtUtil;
-import com.anvicorp.api.auth.MailSessionTokenService;
+import com.anvicorp.api.mail.auth.MailJwtUtil;
+import com.anvicorp.api.mail.auth.MailSessionTokenService;
 import com.anvicorp.api.mail.dto.MailAuthResponse;
 import com.anvicorp.api.mail.dto.MailChangePasswordRequest;
 import com.anvicorp.api.mail.dto.MailLoginRequest;

@@ -1,7 +1,7 @@
 package com.anvicorp.api.mail.service;
 
-import com.anvicorp.api.auth.MailPrincipal;
-import com.anvicorp.api.auth.MailSessionTokenService;
+import com.anvicorp.api.mail.auth.MailPrincipal;
+import com.anvicorp.api.mail.auth.MailSessionTokenService;
 import com.anvicorp.api.mail.dto.CreateDomainRequest;
 import com.anvicorp.api.mail.dto.CreateMailboxRequest;
 import com.anvicorp.api.mail.dto.MailCredentialResponse;

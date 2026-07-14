@@ -1,6 +1,6 @@
 package com.anvicorp.api.mail.controller;
 
-import com.anvicorp.api.auth.MailPrincipal;
+import com.anvicorp.api.mail.auth.MailPrincipal;
 import com.anvicorp.api.mail.dto.MailAttachmentResponse;
 import com.anvicorp.api.mail.exception.MailApiException;
 import com.anvicorp.api.mail.service.MailAttachmentService;

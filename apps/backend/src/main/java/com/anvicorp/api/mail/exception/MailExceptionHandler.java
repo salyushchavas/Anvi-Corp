@@ -1,7 +1,7 @@
 package com.anvicorp.api.mail.exception;
 
-import com.anvicorp.api.common.ErrorResponse;
-import com.anvicorp.api.common.TraceIdFilter;
+import com.anvicorp.api.exception.ErrorResponse;
+import com.anvicorp.api.exception.TraceIdFilter;
 import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;

@@ -54,7 +54,14 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
-        <!-- NO spring-boot-starter-mail: internal mail is DB rows, not SMTP/IMAP. -->
+        <!-- Internal mail (mail/*) is DB rows, not SMTP/IMAP — but careers'
+             transactional notifications (offer letters, verification codes,
+             new-hire packets) go out via SMTP. Careers' SmtpEmailProvider
+             uses jakarta.mail + Spring's JavaMailSender from this starter. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.postgresql</groupId>

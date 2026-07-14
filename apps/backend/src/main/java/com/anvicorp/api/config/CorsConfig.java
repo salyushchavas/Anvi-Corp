@@ -6,20 +6,24 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.CorsFilter;
 
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * Single source of truth for CORS allowed-origins. The mail chain
- * ({@link MailSecurityConfig}) wires this {@link CorsConfigurationSource} into
- * its Spring Security pipeline via {@code http.cors(c -> c.configurationSource(
- * ...))}, so cross-origin callers (the Vercel-hosted web app hitting the
- * Railway-hosted API) get the right {@code Access-Control-Allow-Origin}.
+ * Single source of truth for CORS allowed-origins across BOTH security chains:
+ * the careers chain ({@code SecurityConfig}) which relies on the global
+ * {@link CorsFilter} servlet filter, AND the mail chain
+ * ({@code com.anvicorp.api.mail.config.MailSecurityConfig}) which wires the
+ * exposed {@link CorsConfigurationSource} bean into its Spring Security
+ * pipeline via {@code http.cors(c -> c.configurationSource(...))}.
  *
- * <p>Origins come from the {@code cors.allowed-origins} property (env var
- * {@code CORS_ORIGINS}), comma-separated. Empty/unset → no cross-origin
- * permitted (the app still boots).</p>
+ * <p>Origins are read from the {@code cors.allowed-origins} property
+ * (env var {@code CORS_ORIGINS} per {@code application.properties}). Adding a
+ * domain to that one env var now covers both chains — the mail chain can no
+ * longer drift away from the careers chain because there is only one
+ * configuration to keep up to date.</p>
  */
 @Configuration
 public class CorsConfig {
@@ -46,5 +50,10 @@ public class CorsConfig {
 
         source.registerCorsConfiguration("/**", config);
         return source;
+    }
+
+    @Bean
+    public CorsFilter corsFilter(CorsConfigurationSource corsConfigurationSource) {
+        return new CorsFilter(corsConfigurationSource);
     }
 }

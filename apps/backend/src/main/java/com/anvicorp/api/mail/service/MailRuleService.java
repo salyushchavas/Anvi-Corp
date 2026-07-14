@@ -1,6 +1,6 @@
 package com.anvicorp.api.mail.service;
 
-import com.anvicorp.api.auth.MailPrincipal;
+import com.anvicorp.api.mail.auth.MailPrincipal;
 import com.anvicorp.api.mail.dto.MailRuleRequest;
 import com.anvicorp.api.mail.dto.MailRuleResponse;
 import com.anvicorp.api.mail.entity.MailFolder;

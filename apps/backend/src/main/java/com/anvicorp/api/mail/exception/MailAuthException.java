@@ -6,7 +6,7 @@ import org.springframework.http.HttpStatus;
  * Mail-module auth/validation failure. Carries an HTTP status + a stable
  * machine-readable code. Handled by {@link MailExceptionHandler} (scoped to the
  * mail package) which renders it as the shared
- * {@code com.anvicorp.api.common.ErrorResponse} JSON shape.
+ * {@code com.anvicorp.api.exception.ErrorResponse} JSON shape.
  */
 public class MailAuthException extends RuntimeException {
 

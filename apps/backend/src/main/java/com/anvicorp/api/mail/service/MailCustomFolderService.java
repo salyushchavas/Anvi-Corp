@@ -1,6 +1,6 @@
 package com.anvicorp.api.mail.service;
 
-import com.anvicorp.api.auth.MailPrincipal;
+import com.anvicorp.api.mail.auth.MailPrincipal;
 import com.anvicorp.api.mail.dto.MailCustomFolderRequest;
 import com.anvicorp.api.mail.dto.MailCustomFolderResponse;
 import com.anvicorp.api.mail.entity.MailCustomFolder;
