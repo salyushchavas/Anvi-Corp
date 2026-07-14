@@ -34,7 +34,7 @@ export default function SiteHeader() {
 
   return (
     <header className="bg-skyzen-dark text-skyzen-text">
-      {/* Top bar */}
+      {/* Top bar — email + phone from _legacy/contact-us.php (real Anvi values). */}
       <div className="border-b border-skyzen-border bg-skyzen-dark/95 text-[13px]">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-2">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
@@ -45,9 +45,17 @@ export default function SiteHeader() {
               <i className="icofont-email mr-1.5 text-accent" />
               {BRAND.supportEmail}
             </a>
+            <a
+              href="tel:+14699454554"
+              className="inline-flex items-center text-skyzen-muted transition hover:text-accent"
+            >
+              <i className="icofont-phone mr-1.5 text-accent" />
+              +1 469-945-4554
+            </a>
           </div>
-          {/* Phone + social intentionally omitted — no Anvi phone / LinkedIn provided.
-              Skyzen's contact was removed rather than kept. Add back when values exist. */}
+          {/* Social icons intentionally omitted — no real Anvi social URLs in _legacy/
+              (the homepage had placeholder <a href="#"> icons; apply.php's real URLs
+              belonged to Blueera, a different company). Add back when accounts exist. */}
         </div>
       </div>
 

@@ -40,13 +40,17 @@ export default function SiteFooter() {
                 className="h-10 w-auto rounded-md bg-white/95 px-2 py-1.5"
               />
             </Link>
-            <p className="max-w-[260px] text-sm leading-relaxed text-skyzen-muted">
-              {/* TODO: replace with an official Anvi tagline. Neutral placeholder for now. */}
-              Advanced IT consulting, software development, and cloud solutions
-              tailored to your needs.
+            <p className="max-w-[280px] text-sm leading-relaxed text-skyzen-muted">
+              {/* From _legacy/index.html — hero tagline (slider 1, line 109) +
+                  the "Advanced IT solutions tailored to your needs" descriptor
+                  from the services section heading (line 223). */}
+              Building Tomorrow&apos;s Future, Today.
+              <br />
+              Advanced IT solutions tailored to your needs.
             </p>
-            {/* Social block removed — no Anvi LinkedIn / social URLs provided.
-                Add back when the accounts exist. */}
+            {/* Socials intentionally omitted — no real Anvi social URLs in _legacy/.
+                The homepage social icons were <a href="#"> placeholders; the URLs in
+                apply.php pointed at Blueera (a different company) and were not reused. */}
           </div>
 
           {/* Navigation */}
@@ -93,7 +97,15 @@ export default function SiteFooter() {
               Contact Info
             </h6>
             <div className="space-y-3">
-              {/* Phone omitted — no Anvi phone number provided. */}
+              <div className="flex items-start gap-2.5">
+                <i className="icofont-phone mt-0.5 text-accent" />
+                <a
+                  href="tel:+14699454554"
+                  className="text-sm text-skyzen-muted transition hover:text-accent"
+                >
+                  +1 469-945-4554
+                </a>
+              </div>
               <div className="flex items-start gap-2.5">
                 <i className="icofont-email mt-0.5 text-accent" />
                 <a
