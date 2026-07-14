@@ -3,23 +3,25 @@ import type { Config } from "tailwindcss";
 // ── Brand ramp generator (build-time, env-driven) ─────────────────────
 // Ported from the careers tailwind config. Each deploy sets
 // NEXT_PUBLIC_BRAND_PRIMARY (and optionally NEXT_PUBLIC_BRAND_ACCENT);
-// the resulting Tailwind colors are baked at build time. With no env
-// vars set, the SKYZEN_BRAND_RAMP defaults render — but Anvi's
-// apps/frontend/.env.local sets these to the Anvi blue #2A8CDB so the marketing
-// site produces the exact same brand-* palette it always has (no visual
-// regression), while the careers dashboard chrome now derives from the
-// same source of truth.
-const SKYZEN_BRAND_RAMP: Record<number, string> = {
-  50:  "#fff7ed",
-  100: "#ffedd5",
-  200: "#fed7aa",
-  300: "#fdba74",
-  400: "#fb923c",
-  500: "#f97316",
-  600: "#ea580c",
-  700: "#c2410c",
-  800: "#9a3412",
-  900: "#7c2d12",
+// the resulting Tailwind colors are baked at build time.
+//
+// DEFAULT_BRAND_RAMP is Anvi blue #2A8CDB — used as a safety net if the
+// env var goes missing. Anvi's .env.local sets NEXT_PUBLIC_BRAND_PRIMARY
+// explicitly (quoted, because Next's dotenv parses bare `#value` as an
+// empty-string comment), so the derived ramp is what actually renders.
+// This fallback exists only to prevent Skyzen orange from re-appearing
+// if the env var ever gets unset or mis-quoted again.
+const DEFAULT_BRAND_RAMP: Record<number, string> = {
+  50:  "#EFF7FD",
+  100: "#D8ECFA",
+  200: "#B1D8F4",
+  300: "#7BBDED",
+  400: "#4FA3E1",
+  500: "#2A8CDB",  // brand anchor — Anvi blue from _legacy/assets/css/main.css .blue
+  600: "#1F6BA8",
+  700: "#1D6299",
+  800: "#174D78",
+  900: "#0E2A45",
 };
 
 function hexToRgb(hex: string): [number, number, number] | null {
@@ -41,7 +43,7 @@ function mix(from: [number, number, number], to: [number, number, number], t: nu
 }
 function deriveRamp(primaryHex: string): Record<number, string> {
   const rgb = hexToRgb(primaryHex);
-  if (!rgb) return { ...SKYZEN_BRAND_RAMP };
+  if (!rgb) return { ...DEFAULT_BRAND_RAMP };
   const W: [number, number, number] = [255, 255, 255];
   const K: [number, number, number] = [0, 0, 0];
   return {
@@ -61,37 +63,28 @@ function deriveRamp(primaryHex: string): Record<number, string> {
 const BRAND_PRIMARY_ENV = process.env.NEXT_PUBLIC_BRAND_PRIMARY;
 const BRAND_ACCENT_ENV  = process.env.NEXT_PUBLIC_BRAND_ACCENT;
 
-const BRAND_RAMP    = BRAND_PRIMARY_ENV ? deriveRamp(BRAND_PRIMARY_ENV) : SKYZEN_BRAND_RAMP;
-const RING_DEFAULT  = BRAND_PRIMARY_ENV ?? "#f97316";
+const BRAND_RAMP    = BRAND_PRIMARY_ENV ? deriveRamp(BRAND_PRIMARY_ENV) : DEFAULT_BRAND_RAMP;
+const RING_DEFAULT  = BRAND_PRIMARY_ENV ?? "#2A8CDB";
 
-// Accent — from careers (env-derivable). Anvi's .env.local sets NEXT_PUBLIC_BRAND_ACCENT=#3C72FC.
-const ACCENT_DEFAULT = BRAND_ACCENT_ENV ?? "#fb9b47";
+// Accent — env-derivable. Anvi's .env.local sets NEXT_PUBLIC_BRAND_ACCENT="#3C72FC".
+// Fallback constants below are Anvi values (not Skyzen orange) so a missing
+// env var never causes an orange render.
+const ANVI_ACCENT_RGB: [number, number, number] = [60, 114, 252]; // #3C72FC
+const ACCENT_DEFAULT = BRAND_ACCENT_ENV ?? "#3C72FC";
 const ACCENT_DARK    = BRAND_ACCENT_ENV
-  ? mix(hexToRgb(BRAND_ACCENT_ENV) ?? [251, 155, 71], [0, 0, 0], 0.15)
-  : "#ff7c20";
+  ? mix(hexToRgb(BRAND_ACCENT_ENV) ?? ANVI_ACCENT_RGB, [0, 0, 0], 0.15)
+  : "#264FCB"; // mix(#3C72FC, black, 0.15)
 const ACCENT_LIGHT   = BRAND_ACCENT_ENV
-  ? mix(hexToRgb(BRAND_ACCENT_ENV) ?? [251, 155, 71], [255, 255, 255], 0.20)
-  : "#ffb347";
+  ? mix(hexToRgb(BRAND_ACCENT_ENV) ?? ANVI_ACCENT_RGB, [255, 255, 255], 0.20)
+  : "#5F87F9"; // mix(#3C72FC, white, 0.20)
 
 // Legacy `primary` ramp used by some careers surfaces. Derived from the
-// brand primary when env is set, so a per-brand deploy re-themes any
-// lingering primary-* utilities.
-const SKYZEN_PRIMARY_RAMP: Record<number, string> = {
-  50:  "#fff5ec",
-  100: "#ffe6d1",
-  200: "#ffcc9e",
-  300: "#ffb066",
-  400: "#fb9b47",
-  500: "#ff7c20",
-  600: "#e0862f",
-  700: "#b86723",
-  800: "#8f4f1c",
-  900: "#5e3411",
-};
-const PRIMARY_RAMP = BRAND_PRIMARY_ENV ? deriveRamp(BRAND_PRIMARY_ENV) : SKYZEN_PRIMARY_RAMP;
+// brand primary when env is set; falls back to the Anvi ramp so orange
+// never leaks through this key either.
+const PRIMARY_RAMP = BRAND_PRIMARY_ENV ? deriveRamp(BRAND_PRIMARY_ENV) : DEFAULT_BRAND_RAMP;
 
 function toRgbString(hex: string): string {
-  const rgb = hexToRgb(hex) ?? [251, 155, 71];
+  const rgb = hexToRgb(hex) ?? ANVI_ACCENT_RGB;
   return `${rgb[0]},${rgb[1]},${rgb[2]}`;
 }
 const GLOW_RGB = toRgbString(ACCENT_DEFAULT);

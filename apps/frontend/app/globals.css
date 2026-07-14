@@ -48,10 +48,14 @@
   --ds-text-muted: #475569;    /* slate-600 */
   --ds-text-subtle: #94a3b8;   /* slate-400 */
 
-  /* Brand — Skyzen orange defaults; overwritten per-brand at build. */
-  --ds-brand: #c2410c;         /* brand-700 */
-  --ds-brand-hover: #9a3412;   /* brand-800 */
-  --ds-brand-ring: #f97316;    /* brand-500 */
+  /* Brand — Anvi blue defaults. Careers layout injects an inline <style>
+   * override at runtime for per-brand deploys, but marketing pages don't
+   * run that layout so they use these defaults directly. The *:focus-visible
+   * outline below reads --ds-brand-ring — with Skyzen orange as the default
+   * (as it was), the homepage focus states rendered orange. */
+  --ds-brand: #1D6299;         /* brand-700 = mix(#2A8CDB, black, 0.30) */
+  --ds-brand-hover: #174D78;   /* brand-800 = mix(#2A8CDB, black, 0.45) */
+  --ds-brand-ring: #2A8CDB;    /* brand-500 = Anvi blue */
 }
 
 /* Focus ring — brand-colored for careers surfaces. Marketing pages
