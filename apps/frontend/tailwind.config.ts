@@ -60,8 +60,15 @@ function deriveRamp(primaryHex: string): Record<number, string> {
   };
 }
 
-const BRAND_PRIMARY_ENV = process.env.NEXT_PUBLIC_BRAND_PRIMARY;
-const BRAND_ACCENT_ENV  = process.env.NEXT_PUBLIC_BRAND_ACCENT;
+// Empty-string guard: Vercel env vars can be set to "" via the dashboard
+// (either intentionally or by a paste that lost the value). `??` would
+// treat "" as valid and hand the empty string down to Tailwind, which
+// emits broken CSS (utility with no color prefix → button renders white).
+// `||` treats "" as falsy so the fallback fires. Confirmed regression on
+// deployed /careers/login where BRAND_ACCENT was empty and the sign-in
+// button rendered as a white pill.
+const BRAND_PRIMARY_ENV = process.env.NEXT_PUBLIC_BRAND_PRIMARY || undefined;
+const BRAND_ACCENT_ENV  = process.env.NEXT_PUBLIC_BRAND_ACCENT  || undefined;
 
 const BRAND_RAMP    = BRAND_PRIMARY_ENV ? deriveRamp(BRAND_PRIMARY_ENV) : DEFAULT_BRAND_RAMP;
 const RING_DEFAULT  = BRAND_PRIMARY_ENV ?? "#2A8CDB";
