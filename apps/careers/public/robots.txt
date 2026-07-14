@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /cgi-bin/
+Disallow: /skyzenadmin/
+Disallow: /genhash.php
+Disallow: /dbconn.php
+Disallow: /schema.sql
+
+Sitemap: https://skyzentech.com/sitemap.xml
