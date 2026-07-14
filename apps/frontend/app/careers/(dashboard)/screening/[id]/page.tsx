@@ -149,7 +149,7 @@ function ScreeningForm() {
         )}
         <Link
           href="/careers/intern"
-          className="mt-5 inline-flex items-center justify-center rounded-full bg-gradient-to-r from-accent to-accent-dark px-5 py-2 text-sm font-semibold text-white shadow-glow-accent hover:shadow-glow-accent-lg"
+          className="mt-5 inline-flex items-center justify-center rounded-full bg-accent hover:bg-accent-dark px-5 py-2 text-sm font-semibold text-white shadow-glow-accent hover:shadow-glow-accent-lg"
         >
           Back to dashboard
         </Link>
@@ -224,7 +224,7 @@ function ScreeningForm() {
       <button
         type="submit"
         disabled={submitting || !everyScorableAnswered}
-        className="w-full rounded-full bg-gradient-to-r from-accent to-accent-dark px-5 py-2.5 text-sm font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg disabled:opacity-50 disabled:shadow-none"
+        className="w-full rounded-full bg-accent hover:bg-accent-dark px-5 py-2.5 text-sm font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg disabled:opacity-50 disabled:shadow-none"
       >
         {submitting ? 'Submitting…' : 'Submit screening'}
       </button>

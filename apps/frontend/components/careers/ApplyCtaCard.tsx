@@ -24,7 +24,7 @@ export default function ApplyCtaCard({ slug }: { slug: string }) {
   const loginPath = `/careers/login?returnTo=${encodeURIComponent(applyPath)}`;
 
   const buttonClass =
-    'block w-full rounded-full bg-gradient-to-r from-accent to-accent-dark px-4 py-3 text-center text-sm font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg';
+    'block w-full rounded-full bg-accent hover:bg-accent-dark px-4 py-3 text-center text-sm font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg';
 
   // While auth state is loading, render a neutral disabled button so the
   // server-rendered shell doesn't visibly swap CTAs on hydration.

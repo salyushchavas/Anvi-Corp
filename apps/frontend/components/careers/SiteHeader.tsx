@@ -107,7 +107,7 @@ export default function SiteHeader() {
               <div className="flex items-center gap-2">
                 <Link
                   href={authenticatedDashboard}
-                  className="rounded-full bg-gradient-to-br from-accent to-accent-dark px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white shadow-glow-accent transition hover:shadow-glow-accent-lg"
+                  className="rounded-full bg-accent hover:bg-accent-dark px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white shadow-glow-accent transition hover:shadow-glow-accent-lg"
                 >
                   Dashboard
                 </Link>
@@ -123,7 +123,7 @@ export default function SiteHeader() {
             ) : (
               <Link
                 href="/careers/login"
-                className="rounded-full bg-gradient-to-br from-accent to-accent-dark px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white shadow-glow-accent transition hover:shadow-glow-accent-lg"
+                className="rounded-full bg-accent hover:bg-accent-dark px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white shadow-glow-accent transition hover:shadow-glow-accent-lg"
               >
                 Sign in
               </Link>
@@ -173,7 +173,7 @@ export default function SiteHeader() {
                 <Link
                   href="/careers/login"
                   onClick={closeMobile}
-                  className="block rounded-md bg-gradient-to-br from-accent to-accent-dark px-3 py-2.5 text-center text-sm font-semibold text-white"
+                  className="block rounded-md bg-accent hover:bg-accent-dark px-3 py-2.5 text-center text-sm font-semibold text-white"
                 >
                   Sign in
                 </Link>
@@ -184,7 +184,7 @@ export default function SiteHeader() {
                 <Link
                   href={authenticatedDashboard}
                   onClick={closeMobile}
-                  className="block rounded-md bg-gradient-to-br from-accent to-accent-dark px-3 py-2.5 text-center text-sm font-semibold text-white"
+                  className="block rounded-md bg-accent hover:bg-accent-dark px-3 py-2.5 text-center text-sm font-semibold text-white"
                 >
                   Dashboard
                 </Link>

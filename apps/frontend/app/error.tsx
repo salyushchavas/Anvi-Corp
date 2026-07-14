@@ -51,7 +51,7 @@ export default function GlobalError({
           </Link>
         </div>
       </header>
-      <div className="bg-gradient-to-r from-accent to-accent-dark px-6 py-1" />
+      <div className="bg-accent hover:bg-accent-dark px-6 py-1" />
 
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center px-6 py-16 text-center">
         <p className="text-7xl font-extrabold tracking-tight text-accent">500</p>
@@ -74,7 +74,7 @@ export default function GlobalError({
           <button
             type="button"
             onClick={() => reset()}
-            className="rounded-full bg-gradient-to-r from-accent to-accent-dark px-5 py-2 text-sm font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg"
+            className="rounded-full bg-accent hover:bg-accent-dark px-5 py-2 text-sm font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg"
           >
             Try again
           </button>

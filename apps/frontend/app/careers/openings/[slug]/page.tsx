@@ -85,7 +85,7 @@ export default async function JobPostingDetailPage({ params }: Props) {
           </p>
           <Link
             href="/careers/openings"
-            className="inline-block rounded-full bg-gradient-to-r from-accent to-accent-dark px-5 py-2.5 text-sm font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg"
+            className="inline-block rounded-full bg-accent hover:bg-accent-dark px-5 py-2.5 text-sm font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg"
           >
             Back to all openings
           </Link>

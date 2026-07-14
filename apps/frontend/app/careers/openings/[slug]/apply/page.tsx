@@ -168,7 +168,7 @@ function ApplyFlow() {
         </p>
         <Link
           href={`/careers/verify-email?returnTo=${encodeURIComponent(returnTo)}`}
-          className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-accent to-accent-dark px-5 py-2 font-semibold text-white shadow-glow-accent hover:shadow-glow-accent-lg"
+          className="inline-flex items-center justify-center rounded-full bg-accent hover:bg-accent-dark px-5 py-2 font-semibold text-white shadow-glow-accent hover:shadow-glow-accent-lg"
         >
           Verify email
         </Link>
@@ -264,7 +264,7 @@ function ApplyFlow() {
         <button
           type="submit"
           disabled={!canSubmit}
-          className="w-full rounded-full bg-gradient-to-r from-accent to-accent-dark px-4 py-3 text-sm font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg disabled:opacity-50 disabled:shadow-none"
+          className="w-full rounded-full bg-accent hover:bg-accent-dark px-4 py-3 text-sm font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg disabled:opacity-50 disabled:shadow-none"
         >
           {submitting ? 'Submitting…' : 'Submit Application'}
         </button>

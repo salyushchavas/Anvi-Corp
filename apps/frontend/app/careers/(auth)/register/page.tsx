@@ -272,7 +272,7 @@ function RegisterPageInner() {
           <button
             type="submit"
             disabled={loading || !acceptedTos}
-            className="w-full rounded-full bg-gradient-to-r from-accent to-accent-dark px-4 py-2.5 font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg disabled:opacity-50 disabled:shadow-none"
+            className="w-full rounded-full bg-accent hover:bg-accent-dark px-4 py-2.5 font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg disabled:opacity-50 disabled:shadow-none"
           >
             {loading ? 'Creating account…' : 'Create account'}
           </button>

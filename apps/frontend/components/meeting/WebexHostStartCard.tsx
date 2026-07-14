@@ -113,7 +113,7 @@ export default function WebexHostStartCard({
           href={freshStartUrl}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-2 rounded-md bg-gradient-to-br from-accent to-accent-dark px-4 py-2 text-sm font-semibold text-white shadow-sm hover:from-accent-dark hover:to-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-dark"
+          className="inline-flex items-center gap-2 rounded-md bg-accent hover:bg-accent-dark px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-dark"
         >
           <Video className="h-4 w-4" />
           Start Meeting (Host)

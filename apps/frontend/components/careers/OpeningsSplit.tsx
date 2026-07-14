@@ -191,7 +191,7 @@ function VerifyEmailPrompt({ email }: { email?: string }) {
       </p>
       <Link
         href={`/careers/verify-email?${params.toString()}`}
-        className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-accent to-accent-dark px-5 py-2 font-semibold text-white shadow-glow-accent hover:shadow-glow-accent-lg"
+        className="inline-flex items-center justify-center rounded-full bg-accent hover:bg-accent-dark px-5 py-2 font-semibold text-white shadow-glow-accent hover:shadow-glow-accent-lg"
       >
         Verify email
       </Link>

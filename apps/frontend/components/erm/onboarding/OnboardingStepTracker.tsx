@@ -535,7 +535,7 @@ function ActionAffordance({
           type="button"
           onClick={onActivateNow}
           disabled={!canActivate || activatingNow}
-          className="inline-flex items-center gap-1.5 rounded-md bg-gradient-to-br from-accent to-accent-dark px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-accent-dark hover:to-accent-dark disabled:opacity-60"
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent hover:bg-accent-dark px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-dark disabled:opacity-60"
         >
           <Zap className="h-4 w-4" />
           {activatingNow ? 'Activating…' : 'Activate now'}
