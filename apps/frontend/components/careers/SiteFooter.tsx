@@ -1,25 +1,25 @@
 import Link from 'next/link';
+import { BRAND } from '@/lib/careers/brand';
 
 const NAV_LINKS: ReadonlyArray<{ label: string; href: string }> = [
-  { label: 'Home', href: '/' },
-  { label: 'Services', href: '/#what-we-do' },
-  { label: 'Why We', href: '/#why-we' },
-  { label: 'Our Expertise', href: '/#our-expertise' },
-  { label: 'Career Support', href: '/#career-support' },
-  { label: 'Contact', href: '/#contact' },
+  { label: 'Home',       href: '/' },
+  { label: 'Services',   href: '/#services' },
+  { label: 'Industries', href: '/#industries' },
+  { label: 'About',      href: '/#about' },
+  { label: 'Contact',    href: '/contact' },
 ];
 
 const SERVICE_LINKS: ReadonlyArray<{ label: string; href: string }> = [
-  { label: 'IT Consulting', href: '/#what-we-do' },
-  { label: 'Software Dev', href: '/#what-we-do' },
-  { label: 'Training', href: '/#what-we-do' },
-  { label: 'Staffing', href: '/#what-we-do' },
-  { label: 'Careers', href: '/careers/openings' },
+  { label: 'Software Development',      href: '/services/software-development' },
+  { label: 'Cloud Development',         href: '/services/cloud-development' },
+  { label: 'Mobile App Development',    href: '/services/mobile-application-development' },
+  { label: 'IT Consulting',             href: '/services/it-consulting' },
+  { label: 'Careers',                   href: '/careers/openings' },
 ];
 
 const LEGAL_LINKS: ReadonlyArray<{ label: string; href: string }> = [
-  { label: 'Privacy Policy', href: '/privacy' },
-  { label: 'Terms of Service', href: '/terms' },
+  { label: 'Privacy Policy', href: '/privacy-policy' },
+  // /terms doesn't exist on the Anvi site yet — dropped rather than linking to a 404.
 ];
 
 export default function SiteFooter() {
@@ -32,37 +32,29 @@ export default function SiteFooter() {
           <div className="lg:col-span-1">
             <Link href="/" className="mb-4 inline-flex items-center gap-2.5">
               <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-md bg-white/10 p-1">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src="/careers/images/skyzen-logo.png"
-                  alt="Skyzen"
+                  src={BRAND.logoUrl}
+                  alt={BRAND.name}
                   className="h-8 w-8 object-contain"
                 />
               </span>
               <span className="flex flex-col leading-tight">
-                <span className="text-[18px] font-extrabold uppercase tracking-wide">
-                  <span className="text-white">SKY</span>
-                  <span className="text-accent">ZEN</span>
+                <span className="text-[18px] font-extrabold uppercase tracking-wide text-white">
+                  {BRAND.name}
                 </span>
                 <span className="text-[10px] uppercase tracking-[0.15em] text-white/50">
-                  Technologies LLC
+                  {BRAND.productName}
                 </span>
               </span>
             </Link>
             <p className="max-w-[260px] text-sm leading-relaxed text-skyzen-muted">
-              Skyzen Technologies LLC — where technology meets excellence. Premier IT
-              consulting, staffing, and training in Plano, TX.
+              {/* TODO: replace with an official Anvi tagline. Neutral placeholder for now. */}
+              Advanced IT consulting, software development, and cloud solutions
+              tailored to your needs.
             </p>
-            <div className="mt-5 flex items-center gap-2">
-              <a
-                href="https://www.linkedin.com/company/skyzen-tech-llc/"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="LinkedIn"
-                className="flex h-9 w-9 items-center justify-center rounded-md border border-skyzen-border text-skyzen-muted transition hover:border-accent hover:bg-accent/10 hover:text-accent"
-              >
-                <i className="icofont-linkedin" />
-              </a>
-            </div>
+            {/* Social block removed — no Anvi LinkedIn / social URLs provided.
+                Add back when the accounts exist. */}
           </div>
 
           {/* Navigation */}
@@ -109,28 +101,20 @@ export default function SiteFooter() {
               Contact Info
             </h6>
             <div className="space-y-3">
-              <div className="flex items-start gap-2.5">
-                <i className="icofont-phone mt-0.5 text-accent" />
-                <a
-                  href="tel:4699453339"
-                  className="text-sm text-skyzen-muted transition hover:text-accent"
-                >
-                  +1 469-945-3339
-                </a>
-              </div>
+              {/* Phone omitted — no Anvi phone number provided. */}
               <div className="flex items-start gap-2.5">
                 <i className="icofont-email mt-0.5 text-accent" />
                 <a
-                  href="mailto:info@skyzentech.com"
+                  href={`mailto:${BRAND.supportEmail}`}
                   className="text-sm text-skyzen-muted transition hover:text-accent"
                 >
-                  info@skyzentech.com
+                  {BRAND.supportEmail}
                 </a>
               </div>
               <div className="flex items-start gap-2.5">
                 <i className="icofont-location-pin mt-0.5 text-accent" />
                 <span className="text-sm text-skyzen-muted">
-                  5465 Legacy Drive, Suite 650,
+                  7950 Legacy Dr, Suite 400,
                   <br />
                   Plano, TX 75024
                 </span>
@@ -142,7 +126,7 @@ export default function SiteFooter() {
         {/* Bottom */}
         <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-skyzen-border pt-5">
           <span className="text-xs text-skyzen-muted">
-            &copy; {year} Skyzen Technologies LLC. All rights reserved.
+            &copy; {year} {BRAND.legalName}. All rights reserved.
           </span>
           <div className="flex flex-wrap items-center gap-4">
             {LEGAL_LINKS.map((link) => (

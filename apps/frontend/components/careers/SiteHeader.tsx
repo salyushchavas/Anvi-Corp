@@ -5,13 +5,14 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/lib/careers/auth-context';
 import { getDashboardForUser } from '@/lib/careers/role-routing';
+import { BRAND } from '@/lib/careers/brand';
 
 const NAV_LINKS: ReadonlyArray<{ label: string; href: string }> = [
-  { label: 'HOME', href: '/' },
-  { label: 'SERVICES', href: '/#what-we-do' },
-  { label: 'WHY WE?', href: '/#why-we' },
-  { label: 'OUR EXPERTISE', href: '/#our-expertise' },
-  { label: 'CAREER SUPPORT', href: '/#career-support' },
+  { label: 'HOME',       href: '/' },
+  { label: 'SERVICES',   href: '/#services' },
+  { label: 'INDUSTRIES', href: '/#industries' },
+  { label: 'ABOUT',      href: '/#about' },
+  { label: 'CONTACT',    href: '/contact' },
 ];
 
 export default function SiteHeader() {
@@ -38,31 +39,15 @@ export default function SiteHeader() {
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-2">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
             <a
-              href="mailto:info@skyzentech.com"
+              href={`mailto:${BRAND.supportEmail}`}
               className="inline-flex items-center text-skyzen-muted transition hover:text-accent"
             >
               <i className="icofont-email mr-1.5 text-accent" />
-              info@skyzentech.com
-            </a>
-            <a
-              href="tel:4699453339"
-              className="inline-flex items-center text-skyzen-muted transition hover:text-accent"
-            >
-              <i className="icofont-phone mr-1.5 text-accent" />
-              +1 469-945-3339
+              {BRAND.supportEmail}
             </a>
           </div>
-          <div className="flex items-center gap-2">
-            <a
-              href="https://www.linkedin.com/company/skyzen-tech-llc/"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="LinkedIn"
-              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-skyzen-border text-skyzen-muted transition hover:border-accent hover:text-accent"
-            >
-              <i className="icofont-linkedin" />
-            </a>
-          </div>
+          {/* Phone + social intentionally omitted — no Anvi phone / LinkedIn provided.
+              Skyzen's contact was removed rather than kept. Add back when values exist. */}
         </div>
       </div>
 
@@ -72,19 +57,19 @@ export default function SiteHeader() {
         {/* Brand */}
         <Link href="/" className="flex items-center gap-2.5">
           <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-md">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/careers/images/skyzen-logo.png"
-              alt="Skyzen"
+              src={BRAND.logoUrl}
+              alt={BRAND.name}
               className="h-9 w-9 object-contain"
             />
           </span>
           <span className="flex flex-col leading-tight">
-            <span className="text-[18px] font-extrabold uppercase tracking-wide">
-              <span className="text-white">SKY</span>
-              <span className="text-accent">ZEN</span>
+            <span className="text-[18px] font-extrabold uppercase tracking-wide text-white">
+              {BRAND.name}
             </span>
             <span className="text-[10px] uppercase tracking-[0.15em] text-white/50">
-              Technologies LLC
+              {BRAND.productName}
             </span>
           </span>
         </Link>
@@ -135,7 +120,7 @@ export default function SiteHeader() {
                 href="/careers/login"
                 className="rounded-full bg-gradient-to-br from-accent to-accent-dark px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white shadow-glow-accent transition hover:shadow-glow-accent-lg"
               >
-                Login
+                Sign in
               </Link>
             )}
           </li>
@@ -145,11 +130,11 @@ export default function SiteHeader() {
         <button
           type="button"
           onClick={() => setMobileOpen((v) => !v)}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-md text-white/85 transition hover:bg-white/10 lg:hidden"
           aria-label="Toggle menu"
           aria-expanded={mobileOpen}
-          className="rounded-md border border-white/10 p-2 text-white/80 lg:hidden"
         >
-          <i className={mobileOpen ? 'icofont-close-line' : 'icofont-navigation-menu'} />
+          <i className={mobileOpen ? 'icofont-close text-lg' : 'icofont-navigation-menu text-lg'} />
         </button>
         </div>
       </nav>
@@ -157,58 +142,49 @@ export default function SiteHeader() {
       {/* Mobile menu */}
       {mobileOpen && (
         <div className="border-t border-skyzen-border bg-skyzen-dark/98 lg:hidden">
-          <ul className="mx-auto flex max-w-7xl flex-col gap-1 px-4 py-3">
+          <ul className="mx-auto max-w-7xl space-y-1 px-4 py-4">
             {NAV_LINKS.map((link) => (
               <li key={link.href}>
                 <Link
                   href={link.href}
                   onClick={closeMobile}
-                  className="block rounded px-3 py-2 text-sm font-medium text-white/80 hover:bg-white/10 hover:text-white"
+                  className="block rounded-md px-3 py-2.5 text-sm font-medium text-white/85 transition hover:bg-white/10 hover:text-white"
                 >
                   {link.label}
                 </Link>
               </li>
             ))}
-            <li>
+            <li className="border-t border-skyzen-border pt-2">
               <Link
                 href="/careers/openings"
                 onClick={closeMobile}
-                className="block rounded px-3 py-2 text-sm font-medium text-accent hover:bg-accent/10"
+                className="block rounded-md px-3 py-2.5 text-sm font-medium text-accent transition hover:bg-accent/10"
               >
-                CAREERS
+                Careers
               </Link>
             </li>
-            <li className="border-t border-skyzen-border pt-2">
-              {user ? (
-                <>
-                  <Link
-                    href={authenticatedDashboard}
-                    onClick={closeMobile}
-                    className="block rounded px-3 py-2 text-sm font-semibold text-white hover:bg-white/10"
-                  >
-                    Dashboard
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeMobile();
-                      handleLogout();
-                    }}
-                    className="block w-full rounded px-3 py-2 text-left text-sm text-white/70 hover:bg-white/5"
-                  >
-                    Logout
-                  </button>
-                </>
-              ) : (
+            {!isLoading && !user && (
+              <li>
                 <Link
                   href="/careers/login"
                   onClick={closeMobile}
-                  className="block rounded px-3 py-2 text-sm font-semibold text-accent hover:bg-accent/10"
+                  className="block rounded-md bg-gradient-to-br from-accent to-accent-dark px-3 py-2.5 text-center text-sm font-semibold text-white"
                 >
-                  Login
+                  Sign in
                 </Link>
-              )}
-            </li>
+              </li>
+            )}
+            {!isLoading && user && (
+              <li>
+                <Link
+                  href={authenticatedDashboard}
+                  onClick={closeMobile}
+                  className="block rounded-md bg-gradient-to-br from-accent to-accent-dark px-3 py-2.5 text-center text-sm font-semibold text-white"
+                >
+                  Dashboard
+                </Link>
+              </li>
+            )}
           </ul>
         </div>
       )}
