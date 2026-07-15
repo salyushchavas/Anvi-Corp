@@ -36,7 +36,7 @@ import java.util.Base64;
  *   openssl rand -base64 32
  * </pre>
  */
-@Component
+@Component("careersAesGcmCipher")
 @Slf4j
 public class AesGcmCipher {
 

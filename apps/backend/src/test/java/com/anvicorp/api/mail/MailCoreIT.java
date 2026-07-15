@@ -1,6 +1,6 @@
 package com.anvicorp.api.mail;
 
-import com.anvicorp.api.auth.MailPrincipal;
+import com.anvicorp.api.mail.auth.MailPrincipal;
 import com.anvicorp.api.mail.dto.MailDraftRequest;
 import com.anvicorp.api.mail.dto.MailFlagsRequest;
 import com.anvicorp.api.mail.dto.MailFolderCount;

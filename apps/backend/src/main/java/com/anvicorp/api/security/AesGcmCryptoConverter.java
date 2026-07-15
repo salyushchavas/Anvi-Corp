@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
  * {@code @Convert(converter = AesGcmCryptoConverter.class)} get encrypted.
  * Every other String column on every other entity is untouched.
  */
-@Component
+@Component("careersAesGcmCryptoConverter")
 @Converter(autoApply = false)
 public class AesGcmCryptoConverter implements AttributeConverter<String, String> {
 

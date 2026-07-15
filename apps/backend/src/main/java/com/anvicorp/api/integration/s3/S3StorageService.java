@@ -59,7 +59,7 @@ import java.util.UUID;
  * Wire any existing read/write path. {@code DocumentVaultService} +
  * {@code ResumeService} are untouched. This is capability only.
  */
-@Service
+@Service("careersS3StorageService")
 @Slf4j
 public class S3StorageService {
 
