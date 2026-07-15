@@ -26,8 +26,8 @@ import java.time.format.DateTimeFormatter;
  * Every outgoing mail renders through {@link #wrapHtml(String, String)} —
  * the same logo header, brand colors, content card, and footer. Adding a new
  * email type is "build the body fragment, call {@code wrapHtml}". Colors
- * come from the frontend's tailwind palette (Skyzen orange accent on the
- * dark navy header) — see {@code frontend/tailwind.config.ts}.
+ * mirror the frontend's tailwind palette (Anvi blue accent on the dark navy
+ * header) — see {@code apps/frontend/tailwind.config.ts}.
  *
  * <h2>From header</h2>
  * {@code MimeMessageHelper.setFrom(address, personalName)} so the recipient's
@@ -61,11 +61,14 @@ public class SmtpEmailProvider implements EmailProvider {
             DateTimeFormatter.ofPattern("MMM d, yyyy");
 
     // Brand tokens — mirror frontend/tailwind.config.ts so the email is
-    // visually continuous with the rest of the product.
-    private static final String COLOR_HEADER_BG    = "#080d1a"; // skyzen.dark
+    // visually continuous with the rest of the product. Baked at compile
+    // time (email HTML is built from these constants, not read from the
+    // BRAND config bean — kept simple). For per-brand deploys that need
+    // different accents, override in a subclass or introduce config here.
+    private static final String COLOR_HEADER_BG    = "#080d1a"; // neutral dark navy (unchanged across brands)
     private static final String COLOR_HEADER_TEXT  = "#ffffff";
-    private static final String COLOR_ACCENT_FROM  = "#fb9b47"; // accent.DEFAULT
-    private static final String COLOR_ACCENT_TO    = "#ff7c20"; // accent.dark
+    private static final String COLOR_ACCENT_FROM  = "#2A8CDB"; // Anvi brand-500 (was Skyzen orange #fb9b47)
+    private static final String COLOR_ACCENT_TO    = "#1F6BA8"; // Anvi brand-600 (was Skyzen orange #ff7c20)
     private static final String COLOR_BODY_BG      = "#f3f4f6";
     private static final String COLOR_CARD_BG      = "#ffffff";
     private static final String COLOR_CARD_BORDER  = "#e5e7eb";
@@ -73,8 +76,8 @@ public class SmtpEmailProvider implements EmailProvider {
     private static final String COLOR_TEXT_BODY    = "#1f2937";
     private static final String COLOR_TEXT_MUTED   = "#6b7280";
     private static final String COLOR_TEXT_HINT    = "#4b5563";
-    private static final String COLOR_CODE_BG      = "#fff5ec"; // primary.50
-    private static final String COLOR_CODE_BORDER  = "#ffcc9e"; // primary.200
+    private static final String COLOR_CODE_BG      = "#EFF7FD"; // Anvi brand-50   (was primary.50 orange tint)
+    private static final String COLOR_CODE_BORDER  = "#D8ECFA"; // Anvi brand-100  (was primary.200 orange tint)
 
     private final JavaMailSender mailSender;
     private final String mailFromAddress;
