@@ -118,7 +118,7 @@ export default function HireApprovalDetailPage() {
             <div className="mt-3 grid grid-cols-3 gap-3 text-center">
               <Score label="Technical" value={d.technicalScore} />
               <Score label="Communication" value={d.communicationScore} />
-              <Score label="Cultural fit" value={d.culturalFitScore} />
+              <Score label="Domain Knowledge" value={d.culturalFitScore} />
             </div>
             <div className="mt-4 text-xs">
               <p className="font-semibold text-slate-700">ERM recommendation</p>

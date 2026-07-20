@@ -236,7 +236,7 @@ export default function InterviewDetailPage() {
                     <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
                       <Score label="Technical" value={data.technicalScore} />
                       <Score label="Communication" value={data.communicationScore} />
-                      <Score label="Cultural fit" value={data.culturalFitScore} />
+                      <Score label="Domain Knowledge" value={data.culturalFitScore} />
                     </div>
                     {data.applicantVisibleNotes && (
                       <div className="mt-4">

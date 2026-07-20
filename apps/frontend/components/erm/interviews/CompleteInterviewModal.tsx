@@ -101,7 +101,7 @@ export default function CompleteInterviewModal({
             <div className="grid grid-cols-3 gap-2">
               <ScoreInput label="Technical" value={technicalScore} onChange={setTechnicalScore} />
               <ScoreInput label="Communication" value={communicationScore} onChange={setCommunicationScore} />
-              <ScoreInput label="Cultural fit" value={culturalFitScore} onChange={setCulturalFitScore} />
+              <ScoreInput label="Domain Knowledge" value={culturalFitScore} onChange={setCulturalFitScore} />
             </div>
 
             <div>
