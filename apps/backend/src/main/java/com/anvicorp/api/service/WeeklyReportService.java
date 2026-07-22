@@ -9,10 +9,9 @@ import com.anvicorp.api.dto.report.WeeklyReportResponse;
 import com.anvicorp.api.entity.AuditLog;
 import com.anvicorp.api.entity.Candidate;
 import com.anvicorp.api.entity.Document;
-import com.anvicorp.api.entity.Engagement;
+import com.anvicorp.api.entity.Engagement; // still used by supervisor / attachment guards below
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.entity.WeeklyReport;
-import com.anvicorp.api.enums.EngagementStatus;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.enums.WeeklyReportStatus;
 import com.anvicorp.api.exception.BadRequestException;
@@ -45,10 +44,12 @@ import java.util.UUID;
 /**
  * Weekly narrative reports — second piece of the Phase-2 weekly cycle.
  *
- * <h2>Active-engagement gate</h2>
- * A caller must have a {@link Candidate} row with an Engagement in status
- * {@link EngagementStatus#ACTIVE}. Pre-hire / pending / completed interns
- * cannot create or edit reports.
+ * <h2>Intern-active gate</h2>
+ * A caller must have a {@link Candidate} row AND
+ * {@link LifecycleAccessPolicy#ensureCanWrite} must pass — same source
+ * of truth as timesheets, project submissions, and every other
+ * intern-side write path. Pre-hire applicants (no candidate row) and
+ * post-exit interns (past the cleanup window) are refused.
  *
  * <h2>APPROVED-lock guard</h2>
  * Once {@code status == APPROVED} the report is frozen. PUT returns 409,
@@ -81,6 +82,7 @@ public class WeeklyReportService {
     private final ObjectMapper objectMapper;
     private final DocumentVaultService documentVault;
     private final DocumentRepository documentRepository;
+    private final LifecycleAccessPolicy lifecycleAccessPolicy;
 
     // ── Attachment constants ────────────────────────────────────────────────
 
@@ -104,8 +106,7 @@ public class WeeklyReportService {
 
     @Transactional
     public WeeklyReportResponse create(CreateWeeklyReportRequest req, User actor) {
-        Engagement engagement = requireActiveEngagement(actor);
-        Candidate intern = engagement.getCandidate();
+        Candidate intern = requireActiveIntern(actor);
 
         try {
             WeeklyReport report = WeeklyReport.builder()
@@ -303,34 +304,36 @@ public class WeeklyReportService {
     // ── Gate helpers ────────────────────────────────────────────────────────
 
     /**
-     * Active-engagement gate. Returns the most-recent eligible engagement
-     * so callers can read its candidate / id.
+     * Intern-active gate. Delegates to the same
+     * {@link LifecycleAccessPolicy#ensureCanWrite} check that timesheets,
+     * project submissions, and every other intern-side write path
+     * already use — a single source of truth for "can this intern do
+     * work-side actions right now?"
      *
-     * <p>Eligibility mirrors {@code ProjectAssignmentService.ELIGIBLE_STATUSES}
-     * — {@link EngagementStatus#READY_TO_START} + {@link EngagementStatus#ACTIVE}
-     * — so anyone the trainer can already assign projects to can also
-     * file weekly reports. The strict "ACTIVE only" check that used to
-     * live here refused interns whose engagement was in READY_TO_START
-     * (compliance done, awaiting the automatic ACTIVE flip), even though
-     * they had projects assigned and were doing real work.</p>
+     * <p>Rationale for dropping the previous engagement-status filter:
+     * an intern can have {@code User.lifecycleStatus = ACTIVE_INTERN}
+     * (with projects assigned and submissions accepted) while their
+     * {@code Engagement.status} sits in an off-track value like
+     * {@code READY_TO_START} or even null on legacy rows. Gating
+     * weekly reports on Engagement.status alone refused people the
+     * rest of the platform treats as active. Now we only check:</p>
+     * <ol>
+     *   <li>The actor has a {@link Candidate} row (else 403 — APPLICANTs
+     *       never file reports).</li>
+     *   <li>{@code LifecycleAccessPolicy.ensureCanWrite} passes — same
+     *       policy timesheets use. Throws {@code LifecycleClosedException}
+     *       if the intern has exited past the cleanup window.</li>
+     * </ol>
      */
-    private Engagement requireActiveEngagement(User candidateUser) {
+    private Candidate requireActiveIntern(User candidateUser) {
         Candidate candidate = candidateRepository.findByUserId(candidateUser.getId())
                 .orElseThrow(() -> new ForbiddenException(
                         "Weekly reports are available to active interns only."));
-        List<Engagement> all = engagementRepository.findByCandidateId(candidate.getId());
-        List<Engagement> eligible = all.stream()
-                .filter(e -> e.getStatus() == EngagementStatus.READY_TO_START
-                        || e.getStatus() == EngagementStatus.ACTIVE)
-                .toList();
-        if (eligible.isEmpty()) {
-            throw new ForbiddenException(
-                    "Weekly reports are available to active interns only.");
-        }
-        return eligible.stream()
-                .max(Comparator.comparing(Engagement::getCreatedAt,
-                        Comparator.nullsLast(Comparator.naturalOrder())))
-                .orElse(eligible.get(0));
+        lifecycleAccessPolicy.ensureCanWrite(
+                candidateUser,
+                candidateUser.getId(),
+                LifecycleAccessPolicy.WriteIntent.CREATE_NEW);
+        return candidate;
     }
 
     /**
