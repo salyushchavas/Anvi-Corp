@@ -48,7 +48,7 @@ export default function AssignCompanyEmailDialog({
     () => localPart.trim().toLowerCase().replace(/\s+/g, ''),
     [localPart],
   );
-  const previewEmail = cleanLocal ? `${cleanLocal}@skyzentech.com` : '—';
+  const previewEmail = cleanLocal ? `${cleanLocal}@anvicorp.com` : '—';
   const canSubmit = cleanLocal.length > 0 && password.length >= 8 && !submitting;
 
   async function submit() {
@@ -120,7 +120,7 @@ export default function AssignCompanyEmailDialog({
                 autoFocus
               />
               <span className="flex items-center bg-slate-50 px-3 text-sm text-slate-500">
-                @skyzentech.com
+                @anvicorp.com
               </span>
             </div>
             <p className="mt-1 text-[11px] text-slate-500">
