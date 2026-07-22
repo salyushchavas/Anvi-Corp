@@ -152,6 +152,24 @@ public class CareersMailProvisioningService {
                             + ". Pick a different local-part.");
         }
 
+        // Pre-flight uniqueness on the careers side too — we're about to
+        // move User.email to the company address atomically, so a
+        // collision with any OTHER user's login email would raise a raw
+        // DataIntegrityViolation (users.email UNIQUE). Surface it as a
+        // clean 409 with an actionable message instead — most commonly
+        // fires when a staff row (admin-created via the unified flow)
+        // already claims that local-part.
+        String prospectiveCompanyEmail = localPart + "@" + domain.getName();
+        String currentInternEmail = intern.getEmail() == null
+                ? "" : intern.getEmail().toLowerCase();
+        if (!prospectiveCompanyEmail.equalsIgnoreCase(currentInternEmail)
+                && userRepository.existsByEmail(prospectiveCompanyEmail)) {
+            throw new ConflictException(
+                    "Another user already has the careers login "
+                            + prospectiveCompanyEmail
+                            + ". Pick a different local-part.");
+        }
+
         String passwordHash = passwordEncoder.encode(startingPassword);
         String displayName = intern.getFullName();
         MailAccount mailbox = MailAccount.builder()
