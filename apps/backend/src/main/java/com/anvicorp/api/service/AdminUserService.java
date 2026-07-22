@@ -6,6 +6,7 @@ import com.anvicorp.api.config.BrandConfig;
 import com.anvicorp.api.dto.admin.AdminUserResponse;
 import com.anvicorp.api.dto.admin.CreateStaffUserResponse;
 import com.anvicorp.api.dto.admin.CreateUserRequest;
+import com.anvicorp.api.dto.admin.UpdateUserCredentialsRequest;
 import com.anvicorp.api.dto.admin.UpdateUserRoleRequest;
 import com.anvicorp.api.dto.admin.UpdateUserStatusRequest;
 import com.anvicorp.api.entity.AuditLog;
@@ -430,6 +431,154 @@ public class AdminUserService {
     }
 
     /**
+     * Admin-issued credentials edit. Updates {@code User.email} and/or
+     * {@code User.passwordHash} and dual-writes to the target user's
+     * paired {@link MailAccount} (matched by the pre-edit email) so the
+     * unified careers+mail credential story from
+     * {@link #create(CreateUserRequest, User)} stays true.
+     *
+     * <p>Both fields are optional; at least one must be non-blank.
+     * Email uniqueness is enforced on the careers side (409 on collision
+     * with any other user); on the mail side the {@code (localPart, domain)}
+     * uniqueness is enforced too (409 if another mailbox already sits
+     * there). Password is re-encoded with the same shared BCrypt encoder
+     * so a single raw string still authenticates against both chains.</p>
+     *
+     * <p>When the new email's domain isn't a provisioned {@code MailDomain},
+     * the mailbox keeps its current address — only the careers-side
+     * {@code User.email} moves. This lets an admin rebrand a user's
+     * careers login to an external address without breaking their
+     * mailbox routing.</p>
+     */
+    @Transactional
+    public AdminUserResponse updateCredentials(UUID id,
+                                                UpdateUserCredentialsRequest req,
+                                                User caller) {
+        if (req == null) throw new BadRequestException("body required");
+        String newEmail = req.getEmail() == null ? null : req.getEmail().trim().toLowerCase();
+        String newPassword = req.getPassword();
+        boolean emailChanging = newEmail != null && !newEmail.isEmpty();
+        boolean passwordChanging = newPassword != null && !newPassword.isBlank();
+        if (!emailChanging && !passwordChanging) {
+            throw new BadRequestException(
+                    "Provide at least one of: email, password.");
+        }
+
+        User target = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + id));
+        String oldEmail = target.getEmail() != null ? target.getEmail().toLowerCase() : null;
+
+        // ── Email uniqueness (careers side) ─────────────────────────────
+        if (emailChanging && !newEmail.equals(oldEmail)) {
+            int at = newEmail.indexOf('@');
+            if (at <= 0 || at == newEmail.length() - 1) {
+                throw new BadRequestException("email must be of the form local-part@domain");
+            }
+            if (userRepository.existsByEmail(newEmail)) {
+                throw new ConflictException(
+                        "A user with that email already exists");
+            }
+        }
+
+        // ── Resolve the paired MailAccount (pre-edit email lookup) ─────
+        // findByLocalPartAndDomain_Name expects (localPart, domainName);
+        // we split the OLD email so the lookup finds the currently-paired
+        // row even mid-transaction. Null when no mailbox exists — the
+        // user was never provisioned via the unified /admin/users create
+        // flow, or their mailbox was manually deleted since.
+        MailAccount mailbox = null;
+        if (oldEmail != null) {
+            int oldAt = oldEmail.indexOf('@');
+            if (oldAt > 0) {
+                String oldLocal = oldEmail.substring(0, oldAt);
+                String oldDomain = oldEmail.substring(oldAt + 1);
+                mailbox = mailAccountRepository
+                        .findByLocalPartAndDomain_Name(oldLocal, oldDomain)
+                        .orElse(null);
+            }
+        }
+
+        // ── Apply email change ──────────────────────────────────────────
+        String appliedEmail = target.getEmail();
+        String mailboxOutcome = "unchanged";
+        if (emailChanging && !newEmail.equals(oldEmail)) {
+            target.setEmail(newEmail);
+            appliedEmail = newEmail;
+            // Try to move the paired mailbox to the new address too,
+            // if the new domain is provisioned. Otherwise leave the
+            // mailbox where it was — mail routing is preserved even
+            // when careers login moves to an external address.
+            if (mailbox != null) {
+                int newAt = newEmail.indexOf('@');
+                String newLocal = newEmail.substring(0, newAt);
+                String newDomainName = newEmail.substring(newAt + 1);
+                MailDomain newDomain = mailDomainRepository
+                        .findByName(newDomainName).orElse(null);
+                if (newDomain != null) {
+                    // Uniqueness guard — refuse if some other mailbox
+                    // is already at (newLocal, newDomain).
+                    boolean taken = mailAccountRepository
+                            .existsByLocalPartAndDomain_Id(newLocal, newDomain.getId())
+                            && !mailbox.getId().equals(
+                                    mailAccountRepository.findByLocalPartAndDomain_Id(
+                                            newLocal, newDomain.getId())
+                                            .map(MailAccount::getId).orElse(null));
+                    if (taken) {
+                        throw new ConflictException(
+                                "A mailbox already exists at " + newEmail
+                                        + " — pick a different local-part or delete the "
+                                        + "existing mailbox first.");
+                    }
+                    mailbox.setDomain(newDomain);
+                    mailbox.setLocalPart(newLocal);
+                    mailboxOutcome = "moved to " + newEmail;
+                } else {
+                    mailboxOutcome = "unchanged (domain " + newDomainName + " not provisioned)";
+                }
+            }
+        }
+
+        // ── Apply password change ───────────────────────────────────────
+        if (passwordChanging) {
+            String hash = passwordEncoder.encode(newPassword);
+            target.setPasswordHash(hash);
+            target.setMustChangePassword(false);
+            if (mailbox != null) {
+                mailbox.setPasswordHash(hash);
+                mailbox.setMustChangePassword(false);
+                mailbox.setRequireChangeOnFirstLogin(false);
+                if ("unchanged".equals(mailboxOutcome)) {
+                    mailboxOutcome = "password synced";
+                } else {
+                    mailboxOutcome = mailboxOutcome + " + password synced";
+                }
+            }
+        }
+
+        target = userRepository.save(target);
+        if (mailbox != null) {
+            mailAccountRepository.save(mailbox);
+        }
+
+        Map<String, Object> snap = new LinkedHashMap<>();
+        // Never persist the raw password (or the hash) in the audit
+        // snapshot — the audit row survives long-term.
+        snap.put("targetEmail", appliedEmail);
+        snap.put("emailChanged", emailChanging && !newEmail.equals(oldEmail));
+        snap.put("passwordChanged", passwordChanging);
+        snap.put("mailboxOutcome", mailboxOutcome);
+        // Also enforce the status enum — MailAccount stays ACTIVE (the
+        // credentials edit isn't a lifecycle action).
+        if (mailbox != null && mailbox.getStatus() == null) {
+            mailbox.setStatus(MailAccountStatus.ACTIVE);
+            mailbox.setRole(mailbox.getRole() == null ? MailRole.USER : mailbox.getRole());
+        }
+        writeAudit("USER_CREDENTIALS_UPDATED", target, caller, snap);
+
+        return toResponse(target);
+    }
+
+    /**
      * Hard-delete a user AND every row scoped to them. Surgical alternative
      * to the boot-only {@code CleanSlateRunner} full-wipe — lets the
      * SUPER_ADMIN drop a single account (intern OR staff) from the admin
@@ -825,6 +974,27 @@ public class AdminUserService {
                 "DELETE FROM intern_lifecycles WHERE user_id NOT IN "
                         + "(SELECT id FROM users)");
 
+        // Phase 12c — staff-side references. The existing sweeps above
+        // are all intern-scoped (candidate_id / lifecycle_id /
+        // application_id), so they're zero-match for staff users. But
+        // when we hard-delete a staff account (ERM / TRAINER /
+        // EVALUATOR / MANAGER / etc.) that ever hosted an interview,
+        // {@code interviews.interviewer_id} is a NOT-NULL FK back to
+        // {@code users.id} — it blocks the terminal users DELETE.
+        //
+        // Cascade-drop those interviews (and their event logs). Rows
+        // like {@code interviews.created_by} / {@code feedback_submitted_by}
+        // / {@code cancelled_by_id} / etc. are plain UUID columns with
+        // no FK, so they become dangling references — harmless at the
+        // DB level, and the interview row itself dies with the delete
+        // below anyway.
+        del(deleted, "staff interview_event_logs",
+                "DELETE FROM interview_event_logs WHERE interview_id IN "
+                        + "(SELECT id FROM interviews WHERE interviewer_id = ?)",
+                userId);
+        del(deleted, "staff interviews (as interviewer)",
+                "DELETE FROM interviews WHERE interviewer_id = ?", userId);
+
         // Audit the delete BEFORE we drop the user row — caller is the
         // actor; target is the subject. Both audit columns are plain
         // UUIDs (no FK), so the row survives the user delete and stays
@@ -992,6 +1162,12 @@ public class AdminUserService {
                 "SELECT COUNT(*) FROM work_authorization_records WHERE user_id = ?");
         probes.put("support_tickets",
                 "SELECT COUNT(*) FROM support_tickets WHERE opener_user_id = ?");
+        // Staff-side FKs — interviews.interviewer_id is the NOT-NULL FK
+        // that blocked staff-user deletes before Phase 12c was added.
+        // Probe it here so any future FK we haven't swept surfaces in
+        // the pre-flight ConflictException instead of as a raw 23503.
+        probes.put("interviews (as interviewer)",
+                "SELECT COUNT(*) FROM interviews WHERE interviewer_id = ?");
 
         for (Map.Entry<String, String> e : probes.entrySet()) {
             String savepoint = "probe_" + e.getKey().replaceAll("[^a-zA-Z0-9_]", "_");
