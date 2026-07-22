@@ -303,23 +303,34 @@ public class WeeklyReportService {
     // ── Gate helpers ────────────────────────────────────────────────────────
 
     /**
-     * Active-engagement gate. Returns the engagement so callers can read
-     * its candidate / id.
+     * Active-engagement gate. Returns the most-recent eligible engagement
+     * so callers can read its candidate / id.
+     *
+     * <p>Eligibility mirrors {@code ProjectAssignmentService.ELIGIBLE_STATUSES}
+     * — {@link EngagementStatus#READY_TO_START} + {@link EngagementStatus#ACTIVE}
+     * — so anyone the trainer can already assign projects to can also
+     * file weekly reports. The strict "ACTIVE only" check that used to
+     * live here refused interns whose engagement was in READY_TO_START
+     * (compliance done, awaiting the automatic ACTIVE flip), even though
+     * they had projects assigned and were doing real work.</p>
      */
     private Engagement requireActiveEngagement(User candidateUser) {
         Candidate candidate = candidateRepository.findByUserId(candidateUser.getId())
                 .orElseThrow(() -> new ForbiddenException(
                         "Weekly reports are available to active interns only."));
-        List<Engagement> active = engagementRepository
-                .findByCandidateIdAndStatus(candidate.getId(), EngagementStatus.ACTIVE);
-        if (active.isEmpty()) {
+        List<Engagement> all = engagementRepository.findByCandidateId(candidate.getId());
+        List<Engagement> eligible = all.stream()
+                .filter(e -> e.getStatus() == EngagementStatus.READY_TO_START
+                        || e.getStatus() == EngagementStatus.ACTIVE)
+                .toList();
+        if (eligible.isEmpty()) {
             throw new ForbiddenException(
                     "Weekly reports are available to active interns only.");
         }
-        return active.stream()
+        return eligible.stream()
                 .max(Comparator.comparing(Engagement::getCreatedAt,
                         Comparator.nullsLast(Comparator.naturalOrder())))
-                .orElse(active.get(0));
+                .orElse(eligible.get(0));
     }
 
     /**
