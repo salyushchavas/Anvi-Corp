@@ -2,7 +2,6 @@ package com.anvicorp.api.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.anvicorp.api.auth.SessionTokenService;
 import com.anvicorp.api.config.BrandConfig;
 import com.anvicorp.api.dto.admin.AdminUserResponse;
 import com.anvicorp.api.dto.admin.CreateStaffUserResponse;
@@ -10,31 +9,28 @@ import com.anvicorp.api.dto.admin.CreateUserRequest;
 import com.anvicorp.api.dto.admin.UpdateUserRoleRequest;
 import com.anvicorp.api.dto.admin.UpdateUserStatusRequest;
 import com.anvicorp.api.entity.AuditLog;
-import com.anvicorp.api.entity.StaffActivationToken;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ConflictException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
+import com.anvicorp.api.mail.entity.MailAccount;
+import com.anvicorp.api.mail.entity.MailAccountStatus;
+import com.anvicorp.api.mail.entity.MailDomain;
+import com.anvicorp.api.mail.entity.MailRole;
+import com.anvicorp.api.mail.repository.MailAccountRepository;
+import com.anvicorp.api.mail.repository.MailDomainRepository;
 import com.anvicorp.api.notification.EmailDeliveryException;
 import com.anvicorp.api.notification.EmailProvider;
 import com.anvicorp.api.repository.AuditLogRepository;
-import com.anvicorp.api.repository.StaffActivationTokenRepository;
 import com.anvicorp.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.security.SecureRandom;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.Base64;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -100,27 +96,10 @@ public class AdminUserService {
     private final PasswordEncoder passwordEncoder;
     private final ObjectMapper objectMapper;
     private final JdbcTemplate jdbcTemplate;
-    private final StaffActivationTokenRepository activationTokenRepository;
     private final EmailProvider emailProvider;
     private final BrandConfig brand;
-
-    /** Single-use token lifetime — the brief locks this at 24 hours. */
-    private static final Duration ACTIVATION_TOKEN_TTL = Duration.ofHours(24);
-
-    /**
-     * Where the activation link points. The {@code {token}} placeholder
-     * is substituted with the raw token at issue time. Same env-var
-     * shape as the password-reset link so OPS provisions one URL
-     * template per environment.
-     */
-    @Value("${app.activation.url-template:http://localhost:3000/careers/activate?token={token}}")
-    private String activationUrlTemplate;
-
-    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
-
-    private static final DateTimeFormatter ACTIVATION_EXPIRY_FMT =
-            DateTimeFormatter.ofPattern("MMM d, yyyy 'at' h:mm a z")
-                    .withZone(ZoneId.of("America/New_York"));
+    private final MailDomainRepository mailDomainRepository;
+    private final MailAccountRepository mailAccountRepository;
 
     @Transactional(readOnly = true)
     public List<AdminUserResponse> list(UserRole roleFilter, String search) {
@@ -135,15 +114,39 @@ public class AdminUserService {
     }
 
     /**
-     * Admin-driven staff invite. Mints a User row with NO usable
-     * password (passwordHash = null) and issues a one-time activation
-     * token. The raw token is returned in the response (admin's
-     * copy-fallback) AND emailed to the user. Token is stored ONLY as
-     * its SHA-256 hash; 24-hour expiry; single-use.
+     * Admin-driven staff creation — UNIFIED with mail provisioning. One
+     * action, one transaction: creates the careers {@link User} AND the
+     * paired {@link MailAccount}, both with the SAME BCrypt password hash
+     * so the admin-typed password authenticates against BOTH login
+     * surfaces (careers app + internal /mail app).
      *
-     * <p>Login refuses any row with a null hash via the explicit gate in
-     * {@code AuthService.login} — there's no way to authenticate as the
-     * new user until they redeem the link and set a password.</p>
+     * <h2>Atomicity</h2>
+     * The whole method runs in a single {@code @Transactional} block —
+     * if mailbox provisioning throws for any reason the careers User
+     * insert rolls back too. No half-provisioned staff (a careers row
+     * with no mailbox, or a mailbox with no careers identity).
+     *
+     * <h2>Pairing</h2>
+     * By EMAIL match — no schema change. The careers User's
+     * {@code email} column equals {@code localPart + "@" + domain.name}
+     * for its paired MailAccount. Password is encoded ONCE and applied
+     * to both rows so the two authenticate the same raw string.
+     *
+     * <h2>Idempotency</h2>
+     * Pre-flight both sides:
+     * <ul>
+     *   <li>careers side: refuse if a User already exists at that email
+     *       (409 conflict)</li>
+     *   <li>mail side: refuse if a MailAccount already exists at that
+     *       {@code (localPart, domain)} pair (409 conflict) — surfaces
+     *       an existing orphan mailbox instead of silently overwriting
+     *       or duplicating.</li>
+     * </ul>
+     *
+     * <h2>Delivery email</h2>
+     * If {@code deliveryEmail} is provided, we send a credentials
+     * handoff email out-of-band (best-effort — failure does NOT roll
+     * back the transaction; the admin still has the copy panel).
      */
     @Transactional
     public CreateStaffUserResponse create(CreateUserRequest req, User caller) {
@@ -155,70 +158,96 @@ public class AdminUserService {
             throw new BadRequestException(STAFF_CREATABLE_ROLE_MSG);
         }
         String email = req.getEmail().trim().toLowerCase();
+        int at = email.indexOf('@');
+        if (at <= 0 || at == email.length() - 1) {
+            throw new BadRequestException("email must be of the form local-part@domain");
+        }
+        String localPart = email.substring(0, at);
+        String domainName = email.substring(at + 1);
+
         if (userRepository.existsByEmail(email)) {
             throw new ConflictException("A user with that email already exists");
         }
+
+        // Resolve the mail domain BEFORE we insert the User row so a
+        // missing domain surfaces as a clean 400 instead of the mailbox
+        // insert failing halfway through the transaction.
+        MailDomain domain = mailDomainRepository.findByName(domainName)
+                .orElseThrow(() -> new BadRequestException(
+                        "Mail domain '" + domainName + "' is not provisioned — "
+                                + "the admin creation flow only supports emails on a "
+                                + "configured internal domain."));
+
+        if (mailAccountRepository.existsByLocalPartAndDomain_Id(localPart, domain.getId())) {
+            throw new ConflictException(
+                    "A mailbox already exists at " + email + " — resolve the orphan "
+                            + "mailbox before creating this user.");
+        }
+
         String name = (req.getName() == null || req.getName().isBlank())
                 ? deriveNameFromEmail(email)
                 : req.getName().trim();
 
+        // Encode the raw password ONCE — the SAME hash goes into both
+        // rows. Because both auth chains use the shared BCrypt encoder
+        // bean, the same raw string will authenticate against both.
+        String passwordHash = passwordEncoder.encode(req.getPassword());
+
         User user = User.builder()
                 .email(email)
-                // No usable password until the user activates. The
-                // password_hash column was made nullable in
-                // SchemaFixupRunner for this exact path.
-                .passwordHash(null)
+                .passwordHash(passwordHash)
                 .fullName(name)
                 .roles(EnumSet.of(role))
                 .active(true)
-                // Staff don't go through the 6-digit email-verify flow — the
-                // admin who creates them implicitly vouches for the address.
-                // The activation link itself acts as the email-ownership
-                // proof: only the inbox owner can complete activation.
+                // Admin who creates the account vouches for the address —
+                // no 6-digit email-verify hoop for staff.
                 .emailVerified(true)
-                // The activation flow is the password-setting moment; the
-                // temp-password gate doesn't apply here.
+                // Admin-set password is considered final; no forced-change
+                // prompt on first login.
                 .mustChangePassword(false)
                 .build();
         user = userRepository.save(user);
 
-        // ── Mint the activation token ────────────────────────────────────
-        // 32 random bytes → base64url (no padding) ≈ 43 chars, ~256 bits.
-        // Store ONLY its SHA-256 hash; the raw value is shown once and
-        // never persisted.
-        byte[] rawBytes = new byte[32];
-        SECURE_RANDOM.nextBytes(rawBytes);
-        String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(rawBytes);
-        String tokenHash = SessionTokenService.hash(rawToken);
-        Instant expiresAt = Instant.now().plus(ACTIVATION_TOKEN_TTL);
-
-        StaffActivationToken token = StaffActivationToken.builder()
-                .userId(user.getId())
-                .tokenHash(tokenHash)
-                .expiresAt(expiresAt)
-                .createdById(caller != null ? caller.getId() : null)
+        // Dual-write: paired MailAccount with the SAME hash. Any throw
+        // here rolls back the User insert too — atomic by @Transactional.
+        MailAccount mailbox = MailAccount.builder()
+                .domain(domain)
+                .localPart(localPart)
+                .displayName(name)
+                .passwordHash(passwordHash)
+                .role(MailRole.USER)
+                .status(MailAccountStatus.ACTIVE)
+                .mustChangePassword(false)
+                // No forced change on first login either — the admin
+                // already picked a real password, not a temp one.
+                .requireChangeOnFirstLogin(false)
                 .build();
-        activationTokenRepository.save(token);
+        mailbox = mailAccountRepository.save(mailbox);
 
-        String activationUrl = activationUrlTemplate.replace("{token}", rawToken);
+        // Optional out-of-band credentials handoff (best-effort — email
+        // failure does NOT roll back the transaction; the admin still
+        // has the copy panel).
+        Boolean credentialsEmailSent = null;
+        String deliveryEmail = req.getDeliveryEmail();
+        if (deliveryEmail != null && !deliveryEmail.isBlank()) {
+            credentialsEmailSent = sendCredentialsEmail(
+                    deliveryEmail.trim().toLowerCase(), name, email,
+                    req.getPassword(), role);
+        }
 
-        // ── Email the invite (best-effort) ───────────────────────────────
-        // Failure here is non-fatal: the admin has the URL in the response
-        // and can share it out-of-band. We surface inviteEmailSent so the
-        // admin UI knows whether to nudge the user to check email.
-        boolean emailSent = sendActivationEmail(user.getEmail(), user.getFullName(),
-                role, activationUrl, expiresAt);
-
-        // Audit. NEVER include the raw token in the audit JSON — the only
-        // sensitive thing in the snapshot would be that token, and audit
-        // rows persist far beyond the 24-hour token window.
         Map<String, Object> snap = new LinkedHashMap<>();
         snap.put("createdEmail", user.getEmail());
         snap.put("createdRole", role.name());
-        snap.put("activationTokenIssued", true);
-        snap.put("activationExpiresAt", expiresAt.toString());
-        snap.put("inviteEmailSent", emailSent);
-        writeAudit("USER_CREATED_BY_ADMIN_INVITE", user, caller, snap);
+        snap.put("mailboxProvisioned", true);
+        snap.put("mailboxId", mailbox.getId().toString());
+        snap.put("mailboxAddress", email);
+        // Never persist the raw password or the hash in the audit
+        // snapshot — the entire row survives long-term for forensics.
+        if (credentialsEmailSent != null) {
+            snap.put("credentialsEmailSent", credentialsEmailSent);
+            snap.put("credentialsDeliveryEmail", deliveryEmail);
+        }
+        writeAudit("USER_CREATED_BY_ADMIN", user, caller, snap);
 
         return CreateStaffUserResponse.builder()
                 .id(user.getId())
@@ -228,68 +257,66 @@ public class AdminUserService {
                 .active(Boolean.TRUE.equals(user.getActive()))
                 .createdAt(user.getCreatedAt())
                 .applicantId(user.getApplicantId())
-                .activationUrl(activationUrl)
-                .activationExpiresAt(expiresAt)
-                .inviteEmailSent(emailSent)
+                .mailboxProvisioned(Boolean.TRUE)
+                .mailboxAddress(email)
+                .credentialsEmailSent(credentialsEmailSent)
                 .build();
     }
 
-    private boolean sendActivationEmail(String email, String fullName, UserRole role,
-                                        String activationUrl, Instant expiresAt) {
+    /**
+     * Sends the credentials-handoff email to the admin-supplied
+     * out-of-band {@code deliveryEmail}. Best-effort — the caller
+     * treats any failure as non-fatal (the admin still has the copy
+     * panel as fallback).
+     */
+    private boolean sendCredentialsEmail(String deliveryEmail, String fullName,
+                                         String loginEmail, String rawPassword,
+                                         UserRole role) {
         String roleLabel = humanizeRole(role);
         String safeName = (fullName == null || fullName.isBlank()) ? "there" : fullName;
-        String expiryLabel = ACTIVATION_EXPIRY_FMT.format(expiresAt);
-        String subject = "Activate your " + brand.getName() + " " + roleLabel + " account";
+        String subject = "Your " + brand.getName() + " " + roleLabel + " account is ready";
 
-        // Plain-text alternative for mail clients that don't render HTML
-        // (also what spam-scoring sees). The HTML version is what most
-        // recipients will see; sendBrandedHtml drops it inside the
-        // shared branded wrapper without escaping our markup.
+        // Plain-text alternative for mail clients that don't render HTML.
         String plain = ""
                 + "Hi " + safeName + ",\n\n"
-                + "A " + brand.getName() + " administrator created a " + roleLabel
-                + " account for you. Open the link below to set your password and "
-                + "sign in.\n\n"
-                + activationUrl + "\n\n"
-                + "This link expires " + expiryLabel + " and can only be used once.\n\n"
-                + "If you weren't expecting this invite, you can ignore this email.\n\n"
+                + "A " + brand.getName() + " administrator has created your "
+                + roleLabel + " account. These credentials sign you in to BOTH "
+                + brand.getName() + " careers AND your internal mailbox.\n\n"
+                + "Login email: " + loginEmail + "\n"
+                + "Password:    " + rawPassword + "\n\n"
+                + "Sign in and change your password immediately.\n\n"
                 + "— The " + brand.getName() + " team\n";
 
         String html = ""
                 + "<h2 style=\"margin:0 0 12px;font-size:20px;color:#0f172a;\">"
-                + "You've been added to " + escapeHtml(brand.getName()) + "</h2>"
+                + "Your " + escapeHtml(brand.getName()) + " account is ready</h2>"
                 + "<p style=\"margin:0 0 12px;font-size:15px;color:#1f2937;\">"
                 + "Hi " + escapeHtml(safeName) + ",</p>"
                 + "<p style=\"margin:0 0 12px;font-size:15px;color:#1f2937;\">"
-                + "A " + escapeHtml(brand.getName()) + " administrator created a <strong>"
+                + "A " + escapeHtml(brand.getName()) + " administrator has created your <strong>"
                 + escapeHtml(roleLabel)
-                + "</strong> account for you. Click the button below to set your password and "
-                + "sign in. This link expires <strong>" + escapeHtml(expiryLabel)
-                + "</strong> and can only be used once.</p>"
-                + "<p style=\"margin:24px 0;\">"
-                + "<a href=\"" + escapeAttr(activationUrl) + "\" "
-                + "style=\"display:inline-block;padding:12px 24px;background:#fb9b47;"
-                + "color:#fff;text-decoration:none;border-radius:6px;font-weight:600;\">"
-                + "Activate your account</a></p>"
-                + "<p style=\"color:#6b7280;font-size:13px;margin:0 0 8px;\">"
-                + "If the button doesn't work, paste this URL into your browser:</p>"
-                + "<p style=\"color:#ff7c20;font-size:13px;word-break:break-all;margin:0 0 16px;\">"
-                + escapeHtml(activationUrl) + "</p>"
+                + "</strong> account. These credentials sign you in to BOTH the "
+                + escapeHtml(brand.getName()) + " careers app AND your internal mailbox.</p>"
+                + "<div style=\"margin:16px 0;padding:14px 16px;background:#EFF7FD;"
+                + "border:1px solid #D8ECFA;border-radius:6px;font-family:monospace;"
+                + "font-size:14px;color:#0f172a;\">"
+                + "<div><strong>Login email:</strong> " + escapeHtml(loginEmail) + "</div>"
+                + "<div style=\"margin-top:6px;\"><strong>Password:</strong> "
+                + escapeHtml(rawPassword) + "</div>"
+                + "</div>"
                 + "<p style=\"color:#6b7280;font-size:13px;margin:0;\">"
-                + "If you weren't expecting this invite, you can ignore this email.</p>";
+                + "Sign in and change your password immediately.</p>";
 
         try {
-            // Use sendBrandedHtml (NOT sendRendered) — sendRendered
-            // escape()s the body and the recipient sees raw <h2>... tags.
-            emailProvider.sendBrandedHtml(email, subject, plain, html);
+            emailProvider.sendBrandedHtml(deliveryEmail, subject, plain, html);
             return true;
         } catch (EmailDeliveryException e) {
-            log.warn("[AdminUserService] activation invite email failed for {} (admin can "
-                    + "still copy-share the URL): {}", email, e.getMessage());
+            log.warn("[AdminUserService] credentials email failed for {} (admin still has "
+                    + "on-screen copy panel): {}", deliveryEmail, e.getMessage());
             return false;
         } catch (Exception e) {
-            log.warn("[AdminUserService] activation invite email unexpected failure for {}: {}",
-                    email, e.getMessage());
+            log.warn("[AdminUserService] credentials email unexpected failure for {}: {}",
+                    deliveryEmail, e.getMessage());
             return false;
         }
     }

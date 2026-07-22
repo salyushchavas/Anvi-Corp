@@ -11,14 +11,14 @@ import java.util.UUID;
 /**
  * Response to {@code POST /api/v1/admin/users}. Mirrors
  * {@link AdminUserResponse} for the list-of-users view AND surfaces the
- * one-time activation URL + expiry so the admin can copy it as a
- * fallback (the same link is also emailed to the user).
+ * mailbox-provisioning outcome so the admin can share the credentials
+ * with the new user.
  *
- * <p>SECURITY — {@link #activationUrl} contains the RAW token; this is
- * the ONLY time it leaves the server. The DB stores only its SHA-256
- * hash, and the email body is the only other delivery channel. Don't
- * log it, don't surface it on subsequent reads, don't put it in audit
- * snapshots.</p>
+ * <p>The credentials themselves (email + password) are NOT echoed in
+ * this response — the admin already knows them (they just typed the
+ * password) and the frontend renders the copyable panel from the form
+ * state. The response only communicates provisioning success and
+ * delivery-email status.</p>
  */
 @Getter
 @Setter
@@ -36,14 +36,27 @@ public class CreateStaffUserResponse {
     /** Always null for admin-created staff (no applicant funnel). Kept for shape parity. */
     private String applicantId;
 
-    /** Full activation URL — frontend renders this in the admin's copy-fallback. */
-    private String activationUrl;
-    /** Wall-clock expiry of the activation token (24h from issue). */
-    private Instant activationExpiresAt;
     /**
-     * TRUE when the invite email was attempted (regardless of delivery
-     * success). FALSE when the email send threw — the admin can still
-     * copy the URL above and share it out-of-band.
+     * TRUE when the paired {@code MailAccount} was successfully created
+     * in the same transaction. Because the dual-write is atomic, this
+     * will always be TRUE on a 200 response — a mailbox failure rolls
+     * the whole request back and surfaces as a non-2xx status.
      */
-    private Boolean inviteEmailSent;
+    private Boolean mailboxProvisioned;
+
+    /**
+     * The full mailbox address ({@code localPart@domain}) — normally the
+     * same as {@link #email}. Surfaced explicitly so the frontend can
+     * render the mailbox line without re-deriving it from the login
+     * email.
+     */
+    private String mailboxAddress;
+
+    /**
+     * TRUE when a credentials handoff email was attempted (regardless
+     * of downstream delivery). FALSE when the send threw. NULL when the
+     * admin left {@code deliveryEmail} blank — the copy-panel is the
+     * only handoff channel in that case.
+     */
+    private Boolean credentialsEmailSent;
 }
