@@ -211,6 +211,13 @@ public final class ErmInterviewDtos {
      * recommendation, then the candidate enters
      * {@code managerHireDecision = PENDING} and a Manager actions the
      * hire from the Hire Approvals queue.
+     *
+     * <p>{@code recordingDocumentId} is OPTIONAL — when present, the
+     * ERM uploaded an interview recording via the presign-upload flow
+     * ({@code POST /api/v1/erm/interviews/{id}/recording/presign-upload})
+     * and the service links the resulting {@link com.anvicorp.api.entity.Document}
+     * to {@code Interview.recordingDocumentId} so the manager sees it in
+     * their hire-approval preview. Null when the ERM skipped the upload.</p>
      */
     public record ErmCompleteRequest(
             Integer technicalScore,
@@ -218,7 +225,37 @@ public final class ErmInterviewDtos {
             Integer culturalFitScore,
             String overallRecommendation,          // STRONG_HIRE | HIRE | NO_HIRE | STRONG_NO_HIRE
             String applicantVisibleNotes,
-            String internalNotes
+            String internalNotes,
+            UUID recordingDocumentId
+    ) {}
+
+    // ── Recording upload (presigned direct-to-S3) ───────────────────────────
+
+    /**
+     * Ask the backend to issue a presigned PUT URL so the browser can
+     * upload an interview recording DIRECTLY to S3 (bypassing the 10 MB
+     * multipart cap). A {@link com.anvicorp.api.entity.Document} row is
+     * created at the same time so the ERM has a stable {@code documentId}
+     * to hand back on {@code /complete}.
+     */
+    public record RecordingPresignUploadRequest(
+            /** Original file name from the browser (used for display + key suffix). */
+            String fileName,
+            /** MIME type (must start with {@code video/}). */
+            String contentType,
+            /** Size in bytes (used for the size cap check). */
+            Long fileSize
+    ) {}
+
+    public record RecordingPresignUploadResponse(
+            /** The presigned PUT URL. Client PUTs the bytes directly. */
+            String uploadUrl,
+            /** The Document row id — pass this back on /complete as recordingDocumentId. */
+            UUID documentId,
+            /** The S3 key that was signed (informational — client does not need to send it back). */
+            String storageKey,
+            /** Wall-clock expiry of the presigned URL. */
+            Instant expiresAt
     ) {}
 
     public record ErmCancelRequest(

@@ -227,6 +227,23 @@ public class Interview {
     @Column(name = "manager_hire_decision_note", columnDefinition = "TEXT")
     private String managerHireDecisionNote;
 
+    /**
+     * FK into {@code documents.id} for the ERM-uploaded interview recording
+     * (mp4 / mov / webm). Nullable — most interviews will not have a
+     * recording attached. Populated by
+     * {@code ErmInterviewService.complete} when the ERM includes
+     * {@code recordingDocumentId} on the scorecard submit; the referenced
+     * {@link com.anvicorp.api.entity.Document} row was created earlier by
+     * the presign-upload endpoint and its bytes uploaded directly to S3
+     * (browser → S3, presigned PUT).
+     *
+     * <p>Kept as a plain UUID column (not a JPA relation) to match the
+     * {@code Application.resume_id}-style convention already used in this
+     * repo — makes the DDL migration and hard-delete cleanup simpler.</p>
+     */
+    @Column(name = "recording_document_id")
+    private UUID recordingDocumentId;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

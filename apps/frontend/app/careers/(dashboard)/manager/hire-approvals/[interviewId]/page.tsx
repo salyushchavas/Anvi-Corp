@@ -164,15 +164,29 @@ export default function HireApprovalDetailPage() {
             <ResumePreview resume={d.resume} />
           </section>
 
-          <section className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5">
-            <h2 className="text-sm font-semibold text-slate-700">
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-sm font-semibold text-slate-900">
               Interview recording
             </h2>
-            <p className="mt-2 text-xs text-slate-500">
-              The Zoom interview recording will appear here once the
-              recording integration ships (Phase 2). For now, decide from
-              the scorecard and resume above.
-            </p>
+            {d.zoomRecordingUrl ? (
+              <video
+                key={d.zoomRecordingUrl}
+                controls
+                preload="metadata"
+                className="mt-3 aspect-video w-full rounded-md bg-black"
+                src={d.zoomRecordingUrl}
+              >
+                Your browser doesn&rsquo;t support inline video playback.{' '}
+                <a href={d.zoomRecordingUrl} className="underline">
+                  Download the recording
+                </a>{' '}
+                instead.
+              </video>
+            ) : (
+              <p className="mt-2 text-xs text-slate-500">
+                No recording uploaded for this interview.
+              </p>
+            )}
           </section>
         </main>
 

@@ -6,6 +6,7 @@ import com.anvicorp.api.entity.Resume;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.ApplicationStatus;
 import com.anvicorp.api.enums.InterviewStatus;
+import com.anvicorp.api.erm.interview.ErmInterviewRecordingService;
 import com.anvicorp.api.event.ManagerHireDecisionEvent;
 import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ConflictException;
@@ -53,6 +54,7 @@ public class ManagerHireApprovalService {
     private final ApplicationRepository applicationRepository;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final ErmInterviewRecordingService recordingService;
 
     @Transactional(readOnly = true)
     public ManagerHireApprovalDtos.HireApprovalListPage list(
@@ -170,6 +172,15 @@ public class ManagerHireApprovalService {
                     r.getContentType(),
                     "/api/v1/resumes/" + r.getId() + "/download");
         }
+        // Populate the recording playback URL if the ERM attached a
+        // recording to this interview. Presign a fresh GET URL each call
+        // so a stale (30-minute) URL never sticks — the manager just
+        // reloads the page to refresh. Returns null when no recording is
+        // attached, when S3 is not configured, or when the Document row
+        // was soft-deleted; the frontend renders the "no recording
+        // uploaded" empty state in every null case.
+        String recordingUrl = recordingService.presignDownloadUrlFor(
+                iv.getRecordingDocumentId());
         return new ManagerHireApprovalDtos.HireApprovalDetail(
                 iv.getId(),
                 app != null ? app.getId() : null,
@@ -190,7 +201,7 @@ public class ManagerHireApprovalService {
                 iv.getManagerHireDecision(),
                 iv.getManagerHireDecisionAt(),
                 iv.getManagerHireDecisionNote(),
-                null,
+                recordingUrl,
                 resume);
     }
 

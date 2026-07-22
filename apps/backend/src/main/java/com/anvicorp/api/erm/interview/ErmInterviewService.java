@@ -586,6 +586,15 @@ public class ErmInterviewService {
         iv.setFeedbackSubmittedAt(Instant.now());
         iv.setFeedbackSubmittedBy(caller.getId());
         iv.setManagerHireDecision("PENDING");
+        // Optional interview recording — the ERM uploaded the video
+        // directly to S3 (presign-upload flow) and passes the resulting
+        // Document id back here so we can wire it to the manager view.
+        // We don't re-validate ownership of the Document row: the
+        // presign-upload endpoint already checked ERM+interview scope
+        // when it minted the row, and only that ERM has the id.
+        if (req.recordingDocumentId() != null) {
+            iv.setRecordingDocumentId(req.recordingDocumentId());
+        }
         interviewRepository.save(iv);
 
         Application app = iv.getApplication();

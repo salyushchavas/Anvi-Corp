@@ -18,6 +18,7 @@ import java.util.UUID;
 public class ErmInterviewController {
 
     private final ErmInterviewService ermInterviewService;
+    private final ErmInterviewRecordingService recordingService;
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
@@ -96,6 +97,21 @@ public class ErmInterviewController {
             @RequestBody ErmInterviewDtos.ErmCompleteRequest req,
             @AuthenticationPrincipal User caller) {
         return ermInterviewService.complete(id, req, caller);
+    }
+
+    /**
+     * Issue a presigned S3 PUT URL so the browser can upload the interview
+     * recording DIRECTLY to S3 (bypassing the 10 MB backend multipart cap).
+     * Response includes a {@code documentId} the caller passes back on
+     * {@code /complete} as {@code recordingDocumentId}.
+     */
+    @PostMapping("/{id}/recording/presign-upload")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public ErmInterviewDtos.RecordingPresignUploadResponse presignRecordingUpload(
+            @PathVariable UUID id,
+            @RequestBody ErmInterviewDtos.RecordingPresignUploadRequest req,
+            @AuthenticationPrincipal User caller) {
+        return recordingService.presignUpload(id, req, caller);
     }
 
     /**

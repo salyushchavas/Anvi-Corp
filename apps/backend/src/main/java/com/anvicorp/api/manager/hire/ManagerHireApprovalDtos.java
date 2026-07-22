@@ -65,9 +65,12 @@ public final class ManagerHireApprovalDtos {
             String managerHireDecision,
             Instant managerHireDecisionAt,
             String managerHireDecisionNote,
-            /** Placeholder for the future Zoom-recording integration.
-             *  Always null today — the frontend renders a "Recording
-             *  will appear here once the integration lands" card. */
+            /** Presigned S3 GET URL for the ERM-uploaded interview
+             *  recording, or {@code null} when no recording is attached
+             *  / S3 is not configured / the Document row was soft-deleted.
+             *  URL TTL matches
+             *  {@link com.anvicorp.api.erm.interview.ErmInterviewRecordingService#PRESIGN_DOWNLOAD_TTL}
+             *  — the frontend just reloads the page to refresh. */
             String zoomRecordingUrl,
             /** Resume on the application this interview was for. Null when
              *  the candidate applied without one (rare). Drives the

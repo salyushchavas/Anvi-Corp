@@ -26,6 +26,8 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 import java.io.InputStream;
 import java.net.URI;
@@ -280,6 +282,37 @@ public class S3StorageService {
                         .signatureDuration(clamped)
                         .getObjectRequest(GetObjectRequest.builder()
                                 .bucket(bucket).key(key).build())
+                        .build());
+        return signed.url().toString();
+    }
+
+    /**
+     * Presigned PUT URL — the browser can upload bytes DIRECTLY to S3
+     * without proxying through this backend. Required for anything larger
+     * than the multipart cap ({@code spring.servlet.multipart.max-file-size},
+     * currently 10 MB) — notably interview recordings (up to 2 GiB).
+     *
+     * <p>The client MUST send the exact same {@code Content-Type} header
+     * on the PUT that we sign here — S3 rejects the upload with a signature
+     * mismatch otherwise. Callers should pass the client-declared content
+     * type as-is (already validated at the endpoint layer) so the two match.</p>
+     *
+     * <p>TTL clamped to [1 minute, 7 days] (AWS limit). Recommended: 15-30
+     * minutes for large uploads — long enough to survive a slow connection,
+     * short enough to keep leaked URLs harmless.</p>
+     */
+    public String presignPutUrl(String key, String contentType, Duration ttl) {
+        ensureReady();
+        Duration clamped = clampPresignTtl(ttl);
+        PresignedPutObjectRequest signed = presigner().presignPutObject(
+                PutObjectPresignRequest.builder()
+                        .signatureDuration(clamped)
+                        .putObjectRequest(PutObjectRequest.builder()
+                                .bucket(bucket)
+                                .key(key)
+                                .contentType(contentType != null
+                                        ? contentType : "application/octet-stream")
+                                .build())
                         .build());
         return signed.url().toString();
     }
