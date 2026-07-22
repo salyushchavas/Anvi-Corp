@@ -17,26 +17,33 @@ import com.anvicorp.api.intern.DocumentVaultService;
 import com.anvicorp.api.repository.DocumentRepository;
 import com.anvicorp.api.enums.EngagementStatus;
 import com.anvicorp.api.enums.ProjectAssignmentStatus;
+import com.anvicorp.api.enums.TimesheetStatus;
 import com.anvicorp.api.enums.UserRole;
+import com.anvicorp.api.enums.WeeklyReportStatus;
 import com.anvicorp.api.event.ProjectSubmittedEvent;
 import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ForbiddenException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.github.GitHubIntegrationException;
 import com.anvicorp.api.github.GitHubService;
+import com.anvicorp.api.repository.CandidateRepository;
 import com.anvicorp.api.repository.EngagementRepository;
 import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.ProjectAssignmentRepository;
 import com.anvicorp.api.repository.ProjectRepository;
 import com.anvicorp.api.repository.ProjectSubmissionRepository;
+import com.anvicorp.api.repository.TimesheetRepository;
 import com.anvicorp.api.repository.UserRepository;
+import com.anvicorp.api.repository.WeeklyReportRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -79,6 +86,10 @@ public class ProjectAssignmentService {
     private final com.anvicorp.api.config.BrandConfig brand;
     private final DocumentRepository documentRepository;
     private final DocumentVaultService documentVault;
+    private final CandidateRepository candidateRepository;
+    private final WeeklyReportRepository weeklyReportRepository;
+    private final TimesheetRepository timesheetRepository;
+    private final EngagementService engagementService;
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
 
@@ -340,6 +351,7 @@ public class ProjectAssignmentService {
             List<String> deliverableLinks, User actor) {
         ProjectAssignment a = loadAssignment(assignmentId);
         ensureOwningIntern(a, actor);
+        ensureWeeklyReportingCaughtUp(actor);
 
         List<String> validatedLinks = validateLinks(deliverableLinks);
         String trimmedNotes = submissionNotes != null && !submissionNotes.isBlank()
@@ -644,6 +656,71 @@ public class ProjectAssignmentService {
         if (!a.getInternId().equals(actor.getId())) {
             throw new ForbiddenException(
                     "Only the assigned intern may perform this action.");
+        }
+    }
+
+    /**
+     * Weekly-reporting-precedes-project-submit gate. An intern cannot submit a
+     * project until they are caught up on their weekly reports AND timesheets
+     * for every completed work-week between their engagement start and the
+     * Monday of the current week. A missing row OR a row still in DRAFT for
+     * any required week fails the gate. Mirrors the per-week gate on
+     * {@link TimesheetService#ensureWeeklyReportSubmitted} but scans the full
+     * back-log — the operator's rule is "no project submit until the
+     * paperwork is up to date".
+     *
+     * <p>Silently passes when the intern has no candidate row, no active
+     * engagement, no resolvable start date, or hasn't yet completed a full
+     * week since starting. Those edge cases would over-block genuine
+     * pre-onboarding intern flows and aren't the target of this gate.</p>
+     */
+    private void ensureWeeklyReportingCaughtUp(User actor) {
+        Candidate intern = candidateRepository.findByUserId(actor.getId()).orElse(null);
+        if (intern == null) return;
+
+        Engagement engagement = engagementService
+                .resolveActiveForCandidate(intern.getId())
+                .orElse(null);
+        if (engagement == null) return;
+
+        LocalDate startDate = engagement.getActualStartDate() != null
+                ? engagement.getActualStartDate()
+                : engagement.getPlannedStartDate();
+        if (startDate == null) return;
+
+        LocalDate firstMonday = startDate
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate currentMonday = LocalDate.now()
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        // Only require the paperwork for weeks that have fully closed.
+        // The current in-progress week isn't gate-worthy — the intern is
+        // still working on it.
+        LocalDate lastRequired = currentMonday.minusWeeks(1);
+        if (lastRequired.isBefore(firstMonday)) return;
+
+        for (LocalDate weekStart = firstMonday;
+             !weekStart.isAfter(lastRequired);
+             weekStart = weekStart.plusWeeks(1)) {
+            boolean reportOk = weeklyReportRepository
+                    .findByInternIdAndWeekStart(intern.getId(), weekStart)
+                    .map(r -> r.getStatus() != null
+                            && r.getStatus() != WeeklyReportStatus.DRAFT)
+                    .orElse(false);
+            if (!reportOk) {
+                throw new BadRequestException(
+                        "Submit your weekly report for week of " + weekStart
+                                + " before you can submit a project.");
+            }
+            boolean timesheetOk = timesheetRepository
+                    .findByInternIdAndWeekStart(intern.getId(), weekStart)
+                    .map(t -> t.getStatus() != null
+                            && t.getStatus() != TimesheetStatus.DRAFT)
+                    .orElse(false);
+            if (!timesheetOk) {
+                throw new BadRequestException(
+                        "Submit your timesheet for week of " + weekStart
+                                + " before you can submit a project.");
+            }
         }
     }
 
