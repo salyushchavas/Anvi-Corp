@@ -76,7 +76,10 @@ export function SiteHeader() {
           <NavLink href="/#about">About Us</NavLink>
           <NavLink href="/careers">Careers</NavLink>
           <NavLink href="/#blog">Blogs</NavLink>
-          <ButtonLink href="/contact" size="md" className="ml-3">
+          <ButtonLink href="/careers/login" variant="outline" size="md" className="ml-3">
+            Login
+          </ButtonLink>
+          <ButtonLink href="/contact" size="md" className="ml-2">
             Contact Us
           </ButtonLink>
         </nav>
@@ -118,7 +121,15 @@ export function SiteHeader() {
             <MobileLink href="/#about" onClick={() => setMobileOpen(false)}>About Us</MobileLink>
             <MobileLink href="/careers" onClick={() => setMobileOpen(false)}>Careers</MobileLink>
             <MobileLink href="/#blog" onClick={() => setMobileOpen(false)}>Blogs</MobileLink>
-            <div className="pt-2">
+            <div className="pt-2 flex flex-col gap-2">
+              <ButtonLink
+                href="/careers/login"
+                variant="outline"
+                className="w-full"
+                onClick={() => setMobileOpen(false)}
+              >
+                Login
+              </ButtonLink>
               <ButtonLink href="/contact" className="w-full" onClick={() => setMobileOpen(false)}>
                 Contact Us
               </ButtonLink>

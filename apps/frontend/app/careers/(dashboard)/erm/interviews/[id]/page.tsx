@@ -200,7 +200,7 @@ export default function InterviewDetailPage() {
                       Passcode: <span className="font-mono">{data.zoomPassword}</span>
                     </p>
                   )}
-                  {data.zoomMeetingId && (
+                  {data.zoomMeetingId && data.status !== 'COMPLETED' && (
                     <div className="mt-3">
                       <WebexHostStartCard
                         providerMeetingId={data.zoomMeetingId}
