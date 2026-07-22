@@ -454,7 +454,7 @@ public class OfferIdmsSigningService {
                 "SELECT nextval('skyzen_employee_seq')", Long.class);
         long val = n == null ? 1000 : n;
         int year = LocalDate.now(ZoneOffset.UTC).getYear();
-        return String.format("SKZ-EMP-%d-%06d", year, val);
+        return String.format("ANVI-EMP-%d-%06d", year, val);
     }
 
     private Offer mustOwnAsApplicant(UUID offerId, User caller) {

@@ -939,9 +939,11 @@ public class SchemaFixupRunner implements CommandLineRunner {
             log.warn("intern_lifecycles Phase 3 columns add failed (non-fatal): {}", e.getMessage(), e);
         }
 
-        // skyzen_employee_seq — backs SKZ-EMP-YYYY-NNNNNN. CACHE 1 so the
+        // skyzen_employee_seq — backs ANVI-EMP-YYYY-NNNNNN. CACHE 1 so the
         // suffix is monotonic across boots even if pre-cached values would
-        // otherwise be skipped. Mirrors skyzen_applicant_seq.
+        // otherwise be skipped. Mirrors skyzen_applicant_seq. Sequence name
+        // is kept as skyzen_employee_seq to preserve the DB counter across
+        // the Skyzen → Anvi rebrand — only the emitted string prefix moves.
         try {
             jdbcTemplate.execute(
                     "CREATE SEQUENCE IF NOT EXISTS skyzen_employee_seq "
