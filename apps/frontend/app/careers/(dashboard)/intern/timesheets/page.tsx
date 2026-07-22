@@ -12,10 +12,12 @@ import {
 import api from '@/lib/careers/api';
 import InternPageShell from '@/components/intern/InternPageShell';
 import TimesheetStatusTracker from '@/components/intern/TimesheetStatusTracker';
+import WeeklyReportPanel from '@/components/intern/WeeklyReportPanel';
 import PeriodPicker, {
   formatPeriod,
   usePeriodFromUrl,
 } from '@/components/ui/PeriodPicker';
+import type { WeeklyReportResponse } from '@/types';
 
 type DayOfWeek = 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY'
   | 'SATURDAY' | 'SUNDAY';
@@ -68,6 +70,12 @@ export default function InternTimesheetsPage() {
   const [data, setData] = useState<MonthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // Intern's full weekly-report history — fetched once, indexed by
+  // weekStart. Each WeekCard grabs the matching row and passes it into
+  // WeeklyReportPanel. On any panel-side mutation, patchReport() updates
+  // this cache in place so a re-submit on one week doesn't re-fetch the
+  // whole list.
+  const [reports, setReports] = useState<WeeklyReportResponse[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,7 +92,26 @@ export default function InternTimesheetsPage() {
     }
   }, [period.year, period.month]);
 
+  const loadReports = useCallback(async () => {
+    try {
+      const res = await api.get<WeeklyReportResponse[]>('/api/v1/weekly-reports/me');
+      setReports(res.data ?? []);
+    } catch {
+      // Silent — the panels still render (empty form) even if the
+      // history fetch fails; the intern can still create a new report.
+      setReports([]);
+    }
+  }, []);
+
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void loadReports(); }, [loadReports]);
+
+  function patchReport(next: WeeklyReportResponse) {
+    setReports((prev) => {
+      const without = prev.filter((r) => r.id !== next.id);
+      return [...without, next];
+    });
+  }
 
   function patchWeek(weekStart: string, next: TimesheetWeek) {
     setData((prev) => {
@@ -161,11 +188,19 @@ export default function InternTimesheetsPage() {
         </p>
       ) : (
         <ul className="space-y-4">
-          {data.weeks.map((w) => (
-            <li key={w.weekStart}>
-              <WeekCard entry={w} onChange={patchWeek} />
-            </li>
-          ))}
+          {data.weeks.map((w) => {
+            const report = reports.find((r) => r.weekStart === w.weekStart) ?? null;
+            return (
+              <li key={w.weekStart}>
+                <WeekCard
+                  entry={w}
+                  onChange={patchWeek}
+                  weeklyReport={report}
+                  onReportChanged={patchReport}
+                />
+              </li>
+            );
+          })}
         </ul>
       )}
     </InternPageShell>
@@ -175,8 +210,13 @@ export default function InternTimesheetsPage() {
 // ── Week card ─────────────────────────────────────────────────────────────
 
 function WeekCard({
-  entry, onChange,
-}: { entry: WeekEntry; onChange: (weekStart: string, next: TimesheetWeek) => void }) {
+  entry, onChange, weeklyReport, onReportChanged,
+}: {
+  entry: WeekEntry;
+  onChange: (weekStart: string, next: TimesheetWeek) => void;
+  weeklyReport: WeeklyReportResponse | null;
+  onReportChanged: (next: WeeklyReportResponse) => void;
+}) {
   const t = entry.timesheet;
   const status: TimesheetStatus = t?.status ?? 'DRAFT';
   const locked = status === 'SUBMITTED' || status === 'VERIFIED' || status === 'APPROVED';
@@ -237,6 +277,12 @@ function WeekCard({
           );
         })}
       </div>
+
+      <WeeklyReportPanel
+        weekStart={entry.weekStart}
+        initialReport={weeklyReport}
+        onChanged={onReportChanged}
+      />
 
       <footer className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
         <p className="text-xs text-slate-600">
