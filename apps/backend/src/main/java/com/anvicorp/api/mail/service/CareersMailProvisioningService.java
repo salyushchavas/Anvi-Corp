@@ -23,6 +23,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -38,34 +39,37 @@ import java.util.regex.Pattern;
  * handoff email is sent inline here instead, best-effort — mirrors the
  * unified admin-create pattern in {@code AdminUserService.create}.</p>
  *
- * <h2>Dual-write</h2>
+ * <h2>Dual-write — FINAL assignment, no activation step</h2>
  * In one {@code @Transactional} block:
  * <ol>
  *   <li>Create a {@link MailAccount} at {@code localPart@configured-domain}
  *       with the ERM-supplied starting password (BCrypt-encoded once via
- *       the shared {@link PasswordEncoder}). Status ACTIVE, role USER,
- *       {@code mustChangePassword=true} and
- *       {@code requireChangeOnFirstLogin=true} so the intern is forced
- *       to change on first mailbox login.</li>
+ *       the shared {@link PasswordEncoder}). Status ACTIVE, role USER;
+ *       {@code mustChangePassword} and {@code requireChangeOnFirstLogin}
+ *       are BOTH FALSE — the ERM-typed password is the final credential,
+ *       the intern is not asked to change it on first login.</li>
  *   <li>Set {@link User#getMailAccountId()} to link the intern to the
- *       new mailbox and flip {@link User#getMailHandoverState()} from
- *       {@link MailHandoverState#PERSONAL} to
- *       {@link MailHandoverState#PENDING_ACTIVATION}. The tracker's
- *       "Mail ID + joining date" step reads this state and progresses
- *       once the intern activates.</li>
+ *       new mailbox and flip {@link User#getMailHandoverState()} straight
+ *       to {@link MailHandoverState#ACTIVATED} (skipping
+ *       {@code PENDING_ACTIVATION} entirely). Stamp
+ *       {@link User#getMailHandoverAt()} with the current instant so
+ *       downstream code that reads the stamp works.</li>
+ *   <li>Archive the intern's current careers login into
+ *       {@link User#getPersonalEmail()} and set {@link User#getEmail()}
+ *       to the new company address so the dashboard login moves at
+ *       the same moment as the mailbox provisioning. No re-login gate,
+ *       no second step.</li>
  * </ol>
- * If either write throws, the whole transaction rolls back — no
- * half-linked intern with an orphan mailbox.
+ * If any write throws, the whole transaction rolls back — no
+ * half-linked intern with an orphan mailbox and no email swap without
+ * a mailbox.
  *
- * <h2>Pairing rule</h2>
- * The intern's careers login email is NOT moved to the company address
- * here — it stays at their personal Gmail so the credentials email can
- * reach them at that address and the {@code PERSONAL → PENDING → ACTIVATED}
- * state machine can carry the eventual swap. The user's original email
- * is preserved as {@link User#getEmail()} through PENDING_ACTIVATION;
- * a later activation flow (out of scope here) archives it into
- * {@code User.personalEmail} and moves {@code User.email} to the company
- * address.
+ * <h2>Credentials handoff</h2>
+ * A best-effort credentials email is sent to the intern's
+ * <b>previous</b> (personal) address BEFORE the email swap so the
+ * message actually reaches them. Failure to send is non-fatal — the
+ * ERM can still share the credentials out-of-band from the dialog
+ * response.
  */
 @Service
 @RequiredArgsConstructor
@@ -157,46 +161,64 @@ public class CareersMailProvisioningService {
                 .passwordHash(passwordHash)
                 .role(MailRole.USER)
                 .status(MailAccountStatus.ACTIVE)
-                // Intern MUST change on first mailbox login per the
-                // ERM dialog copy: "must change the password on first
-                // mailbox login".
-                .mustChangePassword(true)
-                .requireChangeOnFirstLogin(true)
+                // ERM-assigned credentials are FINAL — no forced change
+                // on first mailbox login. Both flags stay false so the
+                // intern can sign in with the ERM-typed password and
+                // keep using it.
+                .mustChangePassword(false)
+                .requireChangeOnFirstLogin(false)
                 .build();
         mailbox = mailAccountRepository.save(mailbox);
 
         String companyEmail = localPart + "@" + domain.getName();
 
-        // Dual-write side 2: link the User and advance the state
-        // machine. Runs in the same @Transactional so a repo save
-        // failure here rolls back the mailbox insert too.
-        intern.setMailAccountId(mailbox.getId());
-        intern.setMailHandoverState(MailHandoverState.PENDING_ACTIVATION);
-        userRepository.save(intern);
+        // Capture the pre-swap personal address so the credentials
+        // email actually reaches the intern (it must go out BEFORE we
+        // move User.email to the company address, otherwise we'd try
+        // to email a mailbox the intern hasn't logged into yet).
+        String personalEmail = intern.getEmail();
 
-        // Best-effort credentials email to the intern's current login
-        // address (their personal Gmail before the swap-on-activation
-        // happens). Failure to send is non-fatal — the ERM can still
-        // share the credentials out-of-band.
+        // Best-effort credentials email — sent to the intern's current
+        // personal address before the email swap below. Failure is
+        // non-fatal; the ERM copy panel is the backup channel.
         Boolean credentialsEmailSent = null;
-        String deliveryEmail = intern.getEmail();
-        if (deliveryEmail != null && !deliveryEmail.isBlank()) {
+        if (personalEmail != null && !personalEmail.isBlank()) {
             credentialsEmailSent = sendCredentialsEmail(
-                    deliveryEmail.trim().toLowerCase(),
+                    personalEmail.trim().toLowerCase(),
                     displayName,
                     companyEmail,
                     startingPassword);
         }
 
+        // Dual-write side 2: link the mailbox, mark handover complete,
+        // and move the careers login email to the company address in
+        // one shot. No PENDING_ACTIVATION step — ERM assignment is
+        // terminal. Archives the personal address into
+        // User.personalEmail so downstream code (fallback comms,
+        // account recovery) can still reach the intern out-of-band.
+        Instant now = Instant.now();
+        intern.setMailAccountId(mailbox.getId());
+        intern.setMailHandoverState(MailHandoverState.ACTIVATED);
+        intern.setMailHandoverAt(now);
+        if (personalEmail != null && !personalEmail.isBlank()
+                && intern.getPersonalEmail() == null) {
+            // Only stash on the first swap — a re-assignment (if we ever
+            // allow one) shouldn't overwrite the original personal
+            // address with a stale company address.
+            intern.setPersonalEmail(personalEmail);
+        }
+        intern.setEmail(companyEmail);
+        userRepository.save(intern);
+
         log.info("[CareersMailProvisioning] ERM {} assigned company mailbox {} to intern {} "
-                        + "({} → PENDING_ACTIVATION, credentialsEmailSent={})",
+                        + "(personal {} archived; state ACTIVATED; credentialsEmailSent={})",
                 caller != null ? caller.getId() : null, companyEmail, intern.getId(),
-                deliveryEmail, credentialsEmailSent);
+                personalEmail, credentialsEmailSent);
 
         return new ProvisionResult(
                 intern.getId(),
                 companyEmail,
-                MailHandoverState.PENDING_ACTIVATION.name(),
+                MailHandoverState.ACTIVATED.name(),
                 credentialsEmailSent);
     }
 
@@ -208,13 +230,11 @@ public class CareersMailProvisioningService {
         String plain = ""
                 + "Hi " + safeName + ",\n\n"
                 + "A " + brand.getName() + " administrator has provisioned your company "
-                + "mailbox. Sign in to your inbox and change the starting password on "
-                + "first login.\n\n"
-                + "Mailbox: " + companyEmail + "\n"
-                + "Password: " + rawPassword + "\n\n"
+                + "mailbox. These are your final credentials — use them to sign in to "
+                + "both your mailbox at /mail AND your " + brand.getName() + " dashboard.\n\n"
+                + "Login email: " + companyEmail + "\n"
+                + "Password:    " + rawPassword + "\n\n"
                 + "Sign in at: /mail\n\n"
-                + "Once you complete the first login + password change your "
-                + brand.getName() + " dashboard login also moves to this address.\n\n"
                 + "— The " + brand.getName() + " team\n";
 
         String html = ""
@@ -224,17 +244,18 @@ public class CareersMailProvisioningService {
                 + "Hi " + escapeHtml(safeName) + ",</p>"
                 + "<p style=\"margin:0 0 12px;font-size:15px;color:#1f2937;\">"
                 + "A " + escapeHtml(brand.getName()) + " administrator has provisioned your "
-                + "company mailbox. Sign in and change the starting password on first "
-                + "login. Once you do, your dashboard login also moves to this address.</p>"
+                + "company mailbox. These are your <strong>final credentials</strong> — "
+                + "use them to sign in to both your mailbox at /mail AND your "
+                + escapeHtml(brand.getName()) + " dashboard.</p>"
                 + "<div style=\"margin:16px 0;padding:14px 16px;background:#EFF7FD;"
                 + "border:1px solid #D8ECFA;border-radius:6px;font-family:monospace;"
                 + "font-size:14px;color:#0f172a;\">"
-                + "<div><strong>Mailbox:</strong> " + escapeHtml(companyEmail) + "</div>"
+                + "<div><strong>Login email:</strong> " + escapeHtml(companyEmail) + "</div>"
                 + "<div style=\"margin-top:6px;\"><strong>Password:</strong> "
                 + escapeHtml(rawPassword) + "</div>"
                 + "</div>"
                 + "<p style=\"color:#6b7280;font-size:13px;margin:0;\">"
-                + "Sign in at /mail and change your password immediately.</p>";
+                + "Sign in at /mail to reach your inbox.</p>";
 
         try {
             emailProvider.sendBrandedHtml(deliveryEmail, subject, plain, html);
