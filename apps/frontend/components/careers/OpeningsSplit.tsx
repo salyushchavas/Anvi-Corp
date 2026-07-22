@@ -187,7 +187,7 @@ function VerifyEmailPrompt({ email }: { email?: string }) {
       </h2>
       <p className="mb-5 text-sm text-amber-800">
         We sent a 6-digit code to {email ?? 'your inbox'}. Enter it on the next
-        screen to receive your Skyzen Applicant ID and start applying.
+        screen to receive your Anvi Applicant ID and start applying.
       </p>
       <Link
         href={`/careers/verify-email?${params.toString()}`}

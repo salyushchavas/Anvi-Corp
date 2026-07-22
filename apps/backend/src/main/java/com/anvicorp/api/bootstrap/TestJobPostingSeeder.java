@@ -131,12 +131,12 @@ public class TestJobPostingSeeder implements ApplicationRunner {
         List<StaffingEntity> existing = staffingEntityRepository.findAll();
         if (!existing.isEmpty()) return existing.get(0);
         StaffingEntity entity = StaffingEntity.builder()
-                .name("Skyzen USA")
+                .name("Anvi Corp USA")
                 .country("USA")
                 .isActive(true)
                 .build();
         entity = staffingEntityRepository.save(entity);
-        log.info("{} created default StaffingEntity 'Skyzen USA'", LOG_TAG);
+        log.info("{} created default StaffingEntity 'Anvi Corp USA'", LOG_TAG);
         return entity;
     }
 }

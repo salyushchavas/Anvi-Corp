@@ -47,11 +47,11 @@ interface RunResult {
 }
 
 const DEFAULT_SAMPLES: Record<number, string> = {
-  71: "print('Hello, Skyzen!')\n",            // Python (3.8.1)
+  71: "print('Hello, Anvi!')\n",            // Python (3.8.1)
   62: 'public class Main {\n  public static void main(String[] args) {\n    System.out.println(2 + 3);\n  }\n}\n', // Java (OpenJDK 13)
-  63: "console.log('Hello, Skyzen!');\n",     // JavaScript (Node 12)
-  54: '#include <stdio.h>\nint main() {\n  printf("Hello, Skyzen!\\n");\n  return 0;\n}\n', // C++ (GCC 9)
-  60: 'package main\nimport "fmt"\nfunc main() { fmt.Println("Hello, Skyzen!") }\n', // Go
+  63: "console.log('Hello, Anvi!');\n",     // JavaScript (Node 12)
+  54: '#include <stdio.h>\nint main() {\n  printf("Hello, Anvi!\\n");\n  return 0;\n}\n', // C++ (GCC 9)
+  60: 'package main\nimport "fmt"\nfunc main() { fmt.Println("Hello, Anvi!") }\n', // Go
 };
 
 export default function PlaygroundPage() {
@@ -68,7 +68,7 @@ function Body() {
   const [languages, setLanguages] = useState<Language[]>([]);
   const [languageId, setLanguageId] = useState<number | null>(null);
   const [sourceCode, setSourceCode] = useState<string>(
-    "print('Hello, Skyzen!')\n",
+    "print('Hello, Anvi!')\n",
   );
   const [stdin, setStdin] = useState<string>('');
   const [running, setRunning] = useState(false);
@@ -78,7 +78,7 @@ function Body() {
   // Track which source the user last manually-set vs. seeded from a
   // template — only seed a new template if the editor still holds the
   // previous template (no user edits).
-  const seededSourceRef = useRef<string>("print('Hello, Skyzen!')\n");
+  const seededSourceRef = useRef<string>("print('Hello, Anvi!')\n");
 
   // ── Load languages once on mount ───────────────────────────────────────
 

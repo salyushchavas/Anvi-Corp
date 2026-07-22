@@ -20,14 +20,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   try {
     const posting = await fetchJobPosting(params.slug);
     if (!posting) {
-      return { title: 'Position not found — Skyzen Careers' };
+      return { title: 'Position not found — Anvi Careers' };
     }
     return {
-      title: `${posting.title} — Skyzen Careers`,
+      title: `${posting.title} — Anvi Careers`,
       description: posting.description?.slice(0, 200),
     };
   } catch {
-    return { title: 'Skyzen Careers' };
+    return { title: 'Anvi Careers' };
   }
 }
 

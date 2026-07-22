@@ -272,7 +272,7 @@ public class ProjectAssignmentService {
                     + "\n\nAccept the GitHub invitation in your inbox (subject usually "
                     + "starts with \"@<your GitHub handle> invited you\") before you "
                     + "start the assignment from /careers/intern/projects."
-                    + "\n\n— Skyzen";
+                    + "\n\n— Anvi Corp";
             internNotifications.notifyIntern(a.getInternId(), subject, plain, null);
         } catch (Exception ex) {
             log.warn("[ProjectAssignmentService] access-granted intern-mail failed (non-fatal) assignment={}: {}",

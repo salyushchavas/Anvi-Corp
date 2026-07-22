@@ -164,7 +164,7 @@ function ApplyFlow() {
         </h2>
         <p className="mb-5 text-sm text-amber-800">
           We need to confirm your email before you can submit an application
-          and receive your Skyzen Applicant ID.
+          and receive your Anvi Applicant ID.
         </p>
         <Link
           href={`/careers/verify-email?returnTo=${encodeURIComponent(returnTo)}`}

@@ -105,7 +105,7 @@ export default function DecisionModal({
     }
     const firstName = detail.applicant?.firstName || 'Applicant';
     const jobTitle = detail.job?.title || 'the role';
-    const ermName = detail.application.ermOwnerName || 'Skyzen ERM';
+    const ermName = detail.application.ermOwnerName || 'Anvi ERM';
     const fields =
       infoFields.length === 0
         ? '(select fields above)'
@@ -116,26 +116,26 @@ export default function DecisionModal({
             )
             .join(', ');
     if (decision === 'HOLD') {
-      setPreviewSubject('Your Skyzen application — under review');
+      setPreviewSubject('Your Anvi application — under review');
       setPreviewBody(
         `Hello ${firstName},\n\nThank you for applying to ${jobTitle}. ` +
           `Your application is currently under extended review. We will ` +
           `reach out when we have an update.\n\n— ${ermName}`,
       );
     } else if (decision === 'REJECT') {
-      setPreviewSubject('Update on your Skyzen application');
+      setPreviewSubject('Update on your Anvi application');
       setPreviewBody(
         `Hello ${firstName},\n\nThank you for applying to ${jobTitle} at ` +
-          `Skyzen. After careful review, we have decided not to proceed ` +
+          `Anvi. After careful review, we have decided not to proceed ` +
           `with your application at this time. We appreciate your ` +
           `interest and wish you the best.\n\n— ${ermName}`,
       );
     } else if (decision === 'REQUEST_INFO') {
-      setPreviewSubject('Skyzen application — additional information needed');
+      setPreviewSubject('Anvi application — additional information needed');
       setPreviewBody(
         `Hello ${firstName},\n\nWe are reviewing your application for ` +
           `${jobTitle} and need the following information: ${fields}. ` +
-          `Please update your application in your Skyzen dashboard.\n\n— ${ermName}`,
+          `Please update your application in your Anvi dashboard.\n\n— ${ermName}`,
       );
     }
   }, [decision, detail, infoFields]);

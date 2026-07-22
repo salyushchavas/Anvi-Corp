@@ -70,7 +70,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                     "APPLICATION_REJECT", "EMAIL",
                     "Update on your Anvi Corp application",
                     "Hello {{firstName}},\n\n"
-                            + "Thank you for applying to {{jobTitle}} at Skyzen. After careful "
+                            + "Thank you for applying to {{jobTitle}} at Anvi Corp. After careful "
                             + "review, we have decided not to proceed with your application at "
                             + "this time. We appreciate your interest and wish you the best.\n\n"
                             + "— Anvi Corp ERM",
@@ -85,7 +85,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                     "firstName,jobTitle"),
             new Seed(
                     "APPLICATION_REQUEST_INFO", "EMAIL",
-                    "Skyzen application — additional information needed",
+                    "Anvi Corp application — additional information needed",
                     "Hello {{firstName}},\n\n"
                             + "We are reviewing your application for {{jobTitle}} and need the "
                             + "following information: {{infoRequested}}.\n\n"
@@ -101,14 +101,14 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                     "firstName"),
             new Seed(
                     "INTERVIEW_HOLD", "EMAIL",
-                    "Skyzen interview — under consideration",
+                    "Anvi Corp interview — under consideration",
                     "Hello {{firstName}},\n\n"
                             + "Thank you for interviewing with us. We are still in the decision "
                             + "phase and will update you soon.\n\n— Anvi Corp ERM",
                     "firstName"),
             new Seed(
                     "INTERVIEW_REJECTED", "EMAIL",
-                    "Skyzen interview decision",
+                    "Anvi Corp interview decision",
                     "Hello {{firstName}},\n\n"
                             + "Thank you for interviewing for {{jobTitle}}. After careful "
                             + "consideration, we have decided not to proceed at this time. We "
@@ -227,7 +227,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                     "firstName,roleTitle,voidReasonHuman,ermName"),
             new Seed(
                     "REPORTING_STRUCTURE_ASSIGNED", "EMAIL",
-                    "You've been assigned to a new intern at Skyzen",
+                    "You've been assigned to a new intern at Anvi Corp",
                     "Hello {{recipientFirstName}},\n\n"
                             + "You've been assigned as the {{role}} for {{internName}} "
                             + "({{employeeId}}). Internship starts {{tentativeStartDate}}.\n\n"
@@ -455,7 +455,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                     "firstName,templateTitle,reasonHuman,ermComments,deepLink"),
             new Seed(
                     "DOCUMENT_PACKET_COMPLETED", "EMAIL",
-                    "Onboarding complete — welcome to Skyzen!",
+                    "Onboarding complete — welcome to Anvi Corp!",
                     "Hello {{firstName}},\n\n"
                             + "All your onboarding documents have been accepted. "
                             + "Your tentative start date is {{tentativeStartDate}}.\n\n"

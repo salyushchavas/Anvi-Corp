@@ -74,7 +74,7 @@ export default function ApplyCtaCard({ slug }: { slug: string }) {
         </p>
         <p className="mb-4 text-sm text-amber-800">
           We confirm your email before you can submit an application and
-          receive your Skyzen Applicant ID.
+          receive your Anvi Applicant ID.
         </p>
         <Link href={verifyPath} className={buttonClass}>
           Verify email

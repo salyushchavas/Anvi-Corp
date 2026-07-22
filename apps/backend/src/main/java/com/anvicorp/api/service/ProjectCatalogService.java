@@ -360,7 +360,7 @@ public class ProjectCatalogService {
                     + projectLabel + "."
                     + (project.getKtMeetingLink() != null && !project.getKtMeetingLink().isBlank()
                         ? " The KT meeting link is available on the project page." : "")
-                    + "\n\nOpen your projects: /careers/intern/projects\n\n— Skyzen";
+                    + "\n\nOpen your projects: /careers/intern/projects\n\n— Anvi Corp";
             internNotifications.notifyIntern(internUserId, mailSubject, mailPlain, null);
         } catch (Exception e) {
             log.warn("[ProjectCatalogService] KT-done notify failed (non-fatal): {}",

@@ -5,9 +5,9 @@ import AdaptiveCareersLayout from '@/components/careers/AdaptiveCareersLayout';
 import OpeningsSplit from '@/components/careers/OpeningsSplit';
 
 export const metadata: Metadata = {
-  title: 'Open Internships — Skyzen Careers',
+  title: 'Open Internships — Anvi Careers',
   description:
-    'Browse open STEM internship positions at Skyzen Technologies. Apply directly through Skyzen Careers.',
+    'Browse open STEM internship positions at Anvi Corp. Apply directly through Anvi Careers.',
 };
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +29,7 @@ export default async function OpeningsPage() {
         <div className="mb-8">
           <h1 className="mb-2 text-3xl font-semibold text-slate-900">Open Internships</h1>
           <p className="text-sm text-slate-600">
-            Join the Skyzen Careers STEM internship program.
+            Join the Anvi Careers STEM internship program.
           </p>
         </div>
 

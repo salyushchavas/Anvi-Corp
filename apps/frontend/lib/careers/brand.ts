@@ -1,61 +1,55 @@
 /**
  * Brand identity — single source of truth for all chrome that varies
  * per deployment. Reads NEXT_PUBLIC_BRAND_* env vars at build time;
- * defaults to Skyzen so existing deployments are byte-unchanged.
+ * defaults to Anvi so a plain `next build` renders the correct
+ * <title>, sidebar subtitle, support email, etc. without any Vercel
+ * env config.
  *
- * Per-brand deployments (Vercel) set these vars in their project
- * settings; each brand's build snapshot pins its own brand strings into
- * the bundle. For dev, leave the vars unset and Skyzen renders.
- *
- * NOT in scope here: Skyzen-specific marketing pages (`app/page.tsx`,
- * `app/jobs`, `app/terms`, `app/privacy`, `SiteHeader`, `SiteFooter`,
- * `LegalPageShell`). Those are Skyzen LLC company content. A different
- * brand deploying this codebase would either remove those routes or
- * replace the content entirely — they're not generic chrome.
+ * Per-brand deployments (Vercel) can still override each string
+ * individually; the defaults are just what a fresh clone shows on
+ * localhost.
  */
 export const BRAND = {
-  /** Short brand name used in sidebar subtitles, body copy. e.g. "Skyzen Tech". */
-  name: process.env.NEXT_PUBLIC_BRAND_NAME || 'Skyzen Tech',
-  /** "{name} Careers" product noun. e.g. "Skyzen Careers". */
-  productName: process.env.NEXT_PUBLIC_BRAND_PRODUCT_NAME || 'Skyzen Careers',
-  /** Legal entity (for footers, contracts). e.g. "Skyzen Technologies LLC". */
+  /** Short brand name used in sidebar subtitles, body copy. */
+  name: process.env.NEXT_PUBLIC_BRAND_NAME || 'Anvi Corp',
+  /** "{name} Careers" product noun. */
+  productName: process.env.NEXT_PUBLIC_BRAND_PRODUCT_NAME || 'Anvi Careers',
+  /** Legal entity (for footers, contracts). */
   legalName:
-    process.env.NEXT_PUBLIC_BRAND_LEGAL_NAME || 'Skyzen Technologies LLC',
-  /** Logo asset path or absolute URL. Default = bundled Skyzen logo. */
-  logoUrl: process.env.NEXT_PUBLIC_BRAND_LOGO_URL || '/careers/images/skyzen-logo.png',
+    process.env.NEXT_PUBLIC_BRAND_LEGAL_NAME || 'Anvi Corp USA',
+  /** Logo asset path or absolute URL. */
+  logoUrl: process.env.NEXT_PUBLIC_BRAND_LOGO_URL || '/logo.png',
   /** Favicon URL. Empty default = no <link rel="icon"> emitted (current behavior). */
   faviconUrl: process.env.NEXT_PUBLIC_BRAND_FAVICON_URL || '',
   /** Support / contact email (UI + email templates may reference). */
   supportEmail:
-    process.env.NEXT_PUBLIC_BRAND_SUPPORT_EMAIL || 'careers@skyzentech.com',
+    process.env.NEXT_PUBLIC_BRAND_SUPPORT_EMAIL || 'careers@anvicorp.com',
   /** Public marketing site URL. */
   websiteUrl:
-    process.env.NEXT_PUBLIC_BRAND_WEBSITE_URL || 'https://www.skyzentech.com',
+    process.env.NEXT_PUBLIC_BRAND_WEBSITE_URL || 'https://anvicorp.com',
   /**
    * Brand primary color (hex) — informational; the visual rendering uses
    * Tailwind's brand-* ramp baked at build (see tailwind.config.ts which
    * reads the same env var). Exposed here so JS-driven code paths
    * (charts, SVG icons) can use the value directly.
    */
-  primary: process.env.NEXT_PUBLIC_BRAND_PRIMARY || '#fb9b47',
-  /** Brand accent color (hex) — same as above, for the deeper accent. */
-  accent: process.env.NEXT_PUBLIC_BRAND_ACCENT || '#ff7c20',
+  primary: process.env.NEXT_PUBLIC_BRAND_PRIMARY || '#1D6299',
+  /** Brand accent color (hex) — deeper accent for hovers / highlights. */
+  accent: process.env.NEXT_PUBLIC_BRAND_ACCENT || '#174D78',
   /**
-   * <title> default for routes that don't override metadata. Defaults
-   * to the exact Skyzen marketing tagline so existing pages are
-   * byte-unchanged; per-brand deploys override with their own.
+   * <title> default for routes that don't override metadata.
    */
   documentTitle:
     process.env.NEXT_PUBLIC_BRAND_DOCUMENT_TITLE
-      || 'Skyzen Technologies — IT Staffing & STEM Internships',
+      || 'Anvi Careers | Anvi Corp USA',
   /** Document title template (Next.js metadata format). %s = page title. */
   documentTitleTemplate:
     process.env.NEXT_PUBLIC_BRAND_DOCUMENT_TITLE_TEMPLATE
-      || '%s — Skyzen Technologies',
-  /** Meta description default. Same byte-exact preservation rule. */
+      || '%s — Anvi Careers',
+  /** Meta description default. */
   documentDescription:
     process.env.NEXT_PUBLIC_BRAND_DOCUMENT_DESCRIPTION
-      || 'Skyzen Technologies LLC — premier IT consulting, software development, staffing, and STEM internships based in Plano, TX. Trusted by 21+ enterprise clients.',
+      || 'Anvi Corp USA Careers — IT consulting, software development, and STEM internships.',
 };
 
 /**
@@ -66,8 +60,8 @@ export const BRAND = {
  * the tailwind brand-* utilities.
  *
  * <p>Returns null when the primary env is unset so callers can skip
- * injection entirely — the Skyzen defaults in globals.css already
- * render byte-identically.</p>
+ * injection entirely — the defaults in globals.css already render
+ * byte-identically.</p>
  */
 export function brandDsCssVars(): {
   brand: string;

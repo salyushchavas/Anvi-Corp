@@ -134,7 +134,7 @@ public class OfferLifecycleListener {
             vars.put("employeeId", employeeId != null ? employeeId : "(pending)");
             vars.put("tentativeStartDate", startDate);
             renderAndSend("REPORTING_STRUCTURE_ASSIGNED", vars, u,
-                    "You've been assigned to a new intern at Skyzen",
+                    "You've been assigned to a new intern at Anvi Corp",
                     "Hello " + vars.get("recipientFirstName") + ",\n\nYou've been assigned "
                             + "as the " + role + " for " + internName + ".",
                     "REPORTING_STRUCTURE_ASSIGNED",
@@ -204,13 +204,13 @@ public class OfferLifecycleListener {
     }
 
     private String ermName(java.util.UUID actorId) {
-        if (actorId == null) return "Skyzen ERM";
+        if (actorId == null) return "Anvi Corp ERM";
         try {
             return userRepository.findById(actorId)
-                    .map(u -> u.getFullName() != null ? u.getFullName() : "Skyzen ERM")
-                    .orElse("Skyzen ERM");
+                    .map(u -> u.getFullName() != null ? u.getFullName() : "Anvi Corp ERM")
+                    .orElse("Anvi Corp ERM");
         } catch (Exception e) {
-            return "Skyzen ERM";
+            return "Anvi Corp ERM";
         }
     }
 

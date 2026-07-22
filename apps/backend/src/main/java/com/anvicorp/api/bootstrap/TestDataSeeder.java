@@ -97,7 +97,7 @@ public class TestDataSeeder implements CommandLineRunner {
     private static final String EVALUATOR_EMAIL = "test-evaluator@anvicorp.test";
     private static final String MANAGER_EMAIL = "test-manager@anvicorp.test";
 
-    private static final String TEST_ENTITY_NAME = "Skyzen Test Entity (Phase 8.3)";
+    private static final String TEST_ENTITY_NAME = "Anvi Corp Test Entity (Phase 8.3)";
     private static final String TEST_POSTING_SLUG = "skyzen-test-java-fullstack-intern";
 
     private final boolean enabled;

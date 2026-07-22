@@ -90,7 +90,7 @@ public class TestAccountSeeder implements CommandLineRunner {
     private static final String RM_PASSWORD     = "Rm@1234";
     private static final String INTERN_PASSWORD = "Intern@1";
 
-    private static final String TEST_ENTITY_NAME = "Skyzen Test Entity (Seeder)";
+    private static final String TEST_ENTITY_NAME = "Anvi Corp Test Entity (Seeder)";
     private static final String TEST_POSTING_SLUG = "skyzen-test-seeder-posting";
     private static final String TEST_PROJECT_TITLE = "Test Workspace Project";
 
@@ -413,7 +413,7 @@ public class TestAccountSeeder implements CommandLineRunner {
                 .uscisNumber("123456789")
                 .degreeAwarded("Master of Science in Computer Science")
                 .degreeLevel(DegreeLevel.MASTERS)
-                .universityName("Skyzen Test University")
+                .universityName("Anvi Corp Test University")
                 .universityCipCode("11.0701") // Computer Science CIP code
                 .dateOfDegreeAward(today.minusMonths(3))
                 .optStartDate(today.minusMonths(1))
