@@ -14,8 +14,10 @@ import com.anvicorp.api.entity.Engagement;
 import com.anvicorp.api.entity.Timesheet;
 import com.anvicorp.api.entity.TimesheetDay;
 import com.anvicorp.api.entity.User;
+import com.anvicorp.api.entity.WeeklyReport;
 import com.anvicorp.api.enums.TimesheetStatus;
 import com.anvicorp.api.enums.UserRole;
+import com.anvicorp.api.enums.WeeklyReportStatus;
 import com.anvicorp.api.event.TimesheetApprovedEvent;
 import com.anvicorp.api.event.TimesheetRejectedEvent;
 import com.anvicorp.api.event.TimesheetSubmittedEvent;
@@ -26,6 +28,7 @@ import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.repository.CandidateRepository;
 import com.anvicorp.api.repository.TimesheetDayRepository;
 import com.anvicorp.api.repository.TimesheetRepository;
+import com.anvicorp.api.repository.WeeklyReportRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -56,6 +59,32 @@ public class TimesheetService {
     private final EngagementService engagementService;
     private final LifecycleAccessPolicy lifecycleAccessPolicy;
     private final ApplicationEventPublisher eventPublisher;
+    private final WeeklyReportRepository weeklyReportRepository;
+
+    /**
+     * Weekly-report gate: an intern cannot submit the timesheet for a
+     * given week until they have SUBMITTED (or a downstream RETURNED /
+     * APPROVED) the {@link WeeklyReport} for the same {@code weekStart}.
+     * DRAFT reports and missing rows both fail this gate. Message wording
+     * is stable so the frontend can pattern-match if it ever needs to.
+     */
+    private void ensureWeeklyReportSubmitted(Candidate intern, LocalDate weekStart) {
+        if (intern == null || weekStart == null) return;
+        java.util.Optional<WeeklyReport> report = weeklyReportRepository
+                .findByInternIdAndWeekStart(intern.getId(), weekStart);
+        // A missing row means the intern hasn't started the weekly report
+        // at all; a DRAFT row means they started but didn't hit Submit.
+        // Both block the timesheet submit — the operator asked for the
+        // report to precede the timesheet, and DRAFT reports never reach
+        // a reviewer.
+        boolean submitted = report.isPresent()
+                && report.get().getStatus() != null
+                && report.get().getStatus() != WeeklyReportStatus.DRAFT;
+        if (!submitted) {
+            throw new BadRequestException(
+                    "Submit this week's weekly report before submitting the timesheet.");
+        }
+    }
 
     @Transactional
     public TimesheetResponse logHours(LogTimesheetRequest req, User caller) {
@@ -68,6 +97,12 @@ public class TimesheetService {
                         "Candidate profile not found for user " + caller.getId()));
 
         boolean submitNow = Boolean.TRUE.equals(req.getSubmit());
+        // Same gate as the /submit endpoint: if the intern is creating +
+        // submitting in one shot, the week's WeeklyReport must already
+        // be past DRAFT. Doesn't apply to plain draft-save.
+        if (submitNow) {
+            ensureWeeklyReportSubmitted(intern, req.getWeekStart());
+        }
         // Phase 3 step 8 — link to the intern's active engagement when one
         // exists. Null is fine: row stays reachable via the intern-keyed
         // queries; step-11 backfill (opt-in) handles legacy rows.
@@ -115,6 +150,12 @@ public class TimesheetService {
             throw new BadRequestException(
                     "Only DRAFT or REJECTED timesheets can be submitted (current: " + t.getStatus() + ")");
         }
+        // Weekly-report-precedes-timesheet gate: the intern must have
+        // submitted their weekly report for this week before the
+        // timesheet can move to SUBMITTED. Runs after the status
+        // pre-checks so an already-SUBMITTED / APPROVED row stays
+        // idempotent even if the report was later un-done somehow.
+        ensureWeeklyReportSubmitted(t.getIntern(), t.getWeekStart());
         // Clear any stale rejection reason on resubmit.
         t.setReviewNote(null);
         t.setStatus(TimesheetStatus.SUBMITTED);
