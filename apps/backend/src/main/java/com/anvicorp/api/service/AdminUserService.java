@@ -430,23 +430,27 @@ public class AdminUserService {
     }
 
     /**
-     * Hard-delete a candidate-side user (intern/applicant) AND every row
-     * scoped to them. Surgical alternative to the boot-only
-     * {@code CleanSlateRunner} full-wipe — lets the SUPER_ADMIN drop a
-     * single test candidate from the admin panel between runs without
-     * resetting every other candidate.
+     * Hard-delete a user AND every row scoped to them. Surgical alternative
+     * to the boot-only {@code CleanSlateRunner} full-wipe — lets the
+     * SUPER_ADMIN drop a single account (intern OR staff) from the admin
+     * panel without resetting anyone else.
      *
      * <p>Refuses on:</p>
      * <ul>
      *   <li>self-delete (the caller cannot delete themselves)</li>
-     *   <li>any user with a non-INTERN role (staff are protected)</li>
-     *   <li>the last active SUPER_ADMIN (defence in depth — staff are
-     *       already refused above, but the check is cheap)</li>
+     *   <li>the last active SUPER_ADMIN (leaves the org lockable-out)</li>
      * </ul>
+     *
+     * <p>Any other role — INTERN, TRAINER, EVALUATOR, MANAGER, ERM,
+     * REPORTING_MANAGER, non-last SUPER_ADMIN — is fair game once the
+     * caller confirms the DELETE-typed handoff on the UI.</p>
      *
      * <p>The phased delete mirrors {@code CleanSlateRunner}'s table list
      * but scopes every DELETE to this user's {@code candidate_id} /
-     * {@code intern_lifecycle_id} / {@code application_id} chain.
+     * {@code intern_lifecycle_id} / {@code application_id} chain. For
+     * staff-role targets those subquery-scoped DELETEs simply match zero
+     * rows (staff have no candidates / lifecycles / applications) and the
+     * terminal {@code users} DELETE is what actually removes their row.
      * {@code audit_logs} rows referencing the deleted user are PRESERVED
      * so the forensic trail survives — consistent with the boot-time
      * runner's behaviour. Each per-table DELETE is wrapped so a missing
@@ -461,13 +465,11 @@ public class AdminUserService {
             throw new ConflictException("You cannot delete your own account");
         }
         Set<UserRole> roles = target.getRoles();
-        if (roles == null || roles.isEmpty()
-                || roles.stream().anyMatch(r -> r != UserRole.INTERN)) {
-            throw new ConflictException(
-                    "Hard-delete is restricted to candidate/intern users (roles == {INTERN}). "
-                            + "Use Deactivate for staff accounts.");
-        }
-        if (roles.contains(UserRole.SUPER_ADMIN)
+        // Last-SA guard — refuse to leave the org without an active
+        // SUPER_ADMIN. The INTERN-only restriction that used to sit here
+        // has been dropped so admins can hard-delete staff accounts too;
+        // the DELETE-typed confirmation modal is the human backstop.
+        if (roles != null && roles.contains(UserRole.SUPER_ADMIN)
                 && countActiveSuperAdminsExcluding(target.getId()) == 0) {
             throw new ConflictException(LAST_SUPER_ADMIN_MSG);
         }

@@ -390,7 +390,7 @@ function UsersTable() {
                           >
                             {u.active ? 'Deactivate' : 'Activate'}
                           </button>
-                          {role === 'INTERN' && !isSelf && (
+                          {!isSelf && (
                             <button
                               type="button"
                               onClick={() => askDelete(u)}
@@ -960,10 +960,11 @@ function ConfirmDeleteModal({
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
           <p className="font-semibold">This cannot be undone.</p>
           <p className="mt-1">
-            The user account + every record scoped to them (applications, interviews,
-            offers, document packets, projects, evaluations, timesheets, exit
-            records) will be permanently deleted. Audit log entries are preserved
-            for the forensic trail.
+            The user account and every record scoped to them will be permanently
+            deleted — for candidates this covers applications, interviews, offers,
+            document packets, projects, evaluations, timesheets, and exit records;
+            for staff it removes their identity, sessions, and role bindings. Audit
+            log entries are preserved for the forensic trail.
           </p>
         </div>
         <label className="mt-4 block text-sm">
