@@ -173,6 +173,14 @@ public class UserSupervisionResponse {
         private String status;
         private Instant submittedAt;
         private Instant reviewedAt;
+        /**
+         * Stable backend route to stream the attachment; null when the
+         * report has no attachment. Same URL the intern-owner and
+         * assigned supervisor hit — RBAC is at the endpoint.
+         */
+        private String attachmentDownloadUrl;
+        /** Original file name — used as the visible link label. Null when no attachment. */
+        private String attachmentFileName;
     }
 
     @Getter

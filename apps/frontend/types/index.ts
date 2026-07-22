@@ -1254,6 +1254,18 @@ export interface WeeklyReportResponse {
   reviewedAt?: IsoDateTime | null;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
+  // Optional supporting file (PDF / DOC / DOCX). All four fields are
+  // null when no attachment is present.
+  attachmentDocumentId?: Uuid | null;
+  attachmentFileName?: string | null;
+  attachmentFileSize?: number | null;
+  attachmentMimeType?: string | null;
+  /**
+   * Stable backend route (`/api/v1/weekly-reports/{id}/attachment`) that
+   * streams the bytes with RBAC enforced server-side. Same URL for intern
+   * (owner), assigned supervisor, and SUPER_ADMIN.
+   */
+  attachmentDownloadUrl?: string | null;
 }
 
 export interface CreateWeeklyReportRequest {

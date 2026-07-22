@@ -8,6 +8,7 @@ import com.anvicorp.api.dto.report.UpdateWeeklyReportRequest;
 import com.anvicorp.api.dto.report.WeeklyReportResponse;
 import com.anvicorp.api.entity.AuditLog;
 import com.anvicorp.api.entity.Candidate;
+import com.anvicorp.api.entity.Document;
 import com.anvicorp.api.entity.Engagement;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.entity.WeeklyReport;
@@ -18,8 +19,10 @@ import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ConflictException;
 import com.anvicorp.api.exception.ForbiddenException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
+import com.anvicorp.api.intern.DocumentVaultService;
 import com.anvicorp.api.repository.AuditLogRepository;
 import com.anvicorp.api.repository.CandidateRepository;
+import com.anvicorp.api.repository.DocumentRepository;
 import com.anvicorp.api.repository.EngagementRepository;
 import com.anvicorp.api.repository.WeeklyReportRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +30,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -35,6 +39,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -74,6 +79,26 @@ public class WeeklyReportService {
     private final AuditLogRepository auditLogRepository;
     private final com.anvicorp.api.notification.NotificationService notificationService;
     private final ObjectMapper objectMapper;
+    private final DocumentVaultService documentVault;
+    private final DocumentRepository documentRepository;
+
+    // ── Attachment constants ────────────────────────────────────────────────
+
+    /** Max attachment size — matches {@code spring.servlet.multipart.max-file-size}. */
+    private static final long ATTACHMENT_MAX_BYTES = 10L * 1024 * 1024;
+
+    /** Document category for weekly-report attachments. */
+    private static final String ATTACHMENT_CATEGORY = "WEEKLY_REPORT";
+
+    /** Allow-list of MIME types the attachment endpoint accepts. */
+    private static final Set<String> ATTACHMENT_ALLOWED_MIMES = Set.of(
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+
+    /** Filename suffixes accepted when the browser sends a null / generic MIME. */
+    private static final Set<String> ATTACHMENT_ALLOWED_SUFFIXES = Set.of(
+            ".pdf", ".doc", ".docx");
 
     // ── Intern commands ─────────────────────────────────────────────────────
 
@@ -340,13 +365,214 @@ public class WeeklyReportService {
         }
     }
 
+    // ── Attachment (optional supporting file) ───────────────────────────────
+
+    /**
+     * Intern uploads (or replaces) the attachment on their own report.
+     * Reuses the shared {@link DocumentVaultService} multipart-through-backend
+     * path — same 10 MB cap and same {@code Document} row shape as the
+     * document-packet uploads. Replace semantics: any prior attachment is
+     * soft-deleted at the {@code Document} row level so the vault list
+     * shows only the latest one.
+     *
+     * <p>APPROVED reports are locked (same rule as {@link #update} — once
+     * the supervisor's signed off, no more edits). DRAFT / SUBMITTED /
+     * RETURNED are all fine.</p>
+     */
+    @Transactional
+    public WeeklyReportResponse uploadAttachment(UUID reportId,
+                                                 MultipartFile file,
+                                                 User actor) {
+        if (file == null || file.isEmpty()) {
+            throw new BadRequestException("file is required");
+        }
+        if (file.getSize() > ATTACHMENT_MAX_BYTES) {
+            throw new BadRequestException(
+                    "Attachment exceeds " + (ATTACHMENT_MAX_BYTES / (1024 * 1024))
+                            + " MB limit.");
+        }
+        String mime = file.getContentType();
+        String filename = file.getOriginalFilename();
+        boolean mimeOk = mime != null && ATTACHMENT_ALLOWED_MIMES.contains(mime.toLowerCase());
+        boolean suffixOk = filename != null
+                && ATTACHMENT_ALLOWED_SUFFIXES.stream()
+                    .anyMatch(s -> filename.toLowerCase().endsWith(s));
+        if (!mimeOk && !(mime == null && suffixOk)) {
+            throw new BadRequestException(
+                    "Only PDF / DOC / DOCX files are accepted for weekly-report attachments.");
+        }
+
+        WeeklyReport report = reportRepository.findByIdWithGraph(reportId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Weekly report not found: " + reportId));
+        ensureInternOwner(report, actor);
+
+        if (report.getStatus() == WeeklyReportStatus.APPROVED) {
+            throw new ConflictException(
+                    "This report has been approved and is locked. Start a new week's report.");
+        }
+
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (java.io.IOException e) {
+            throw new BadRequestException("Could not read uploaded bytes: " + e.getMessage());
+        }
+
+        // Route through the shared vault so the attachment lives in the
+        // same documents/{ownerUserId}/{uuid}.bin location as everything
+        // else — no per-feature storage sprawl.
+        Document saved = documentVault.saveDocument(
+                actor.getId(),
+                filename != null ? filename : "weekly-report.pdf",
+                mime != null ? mime : "application/pdf",
+                bytes,
+                ATTACHMENT_CATEGORY,
+                "NORMAL",
+                actor.getId());
+
+        UUID previousDocId = report.getAttachmentDocumentId();
+        report.setAttachmentDocumentId(saved.getId());
+        WeeklyReport savedReport = reportRepository.save(report);
+
+        // Soft-delete the previous attachment row so the vault gallery
+        // doesn't accumulate abandoned uploads on replace. Best-effort —
+        // failure here doesn't roll back the pointer swap (the new file
+        // is what the reviewer needs to see).
+        if (previousDocId != null && !previousDocId.equals(saved.getId())) {
+            try {
+                documentRepository.findById(previousDocId).ifPresent(prior -> {
+                    if (prior.getDeletedAt() == null) {
+                        prior.setDeletedAt(Instant.now());
+                        documentRepository.save(prior);
+                    }
+                });
+            } catch (Exception e) {
+                log.warn("[WeeklyReport] prior-attachment soft-delete failed (non-fatal) "
+                        + "for report {} prev doc {}: {}",
+                        savedReport.getId(), previousDocId, e.getMessage());
+            }
+        }
+
+        WeeklyReport refreshed = reportRepository.findByIdWithGraph(savedReport.getId())
+                .orElse(savedReport);
+        return toResponse(refreshed);
+    }
+
+    /**
+     * Load the attachment bytes for streaming. Intern-owner OR
+     * TRAINER (assigned supervisor) OR SUPER_ADMIN. Returns bytes +
+     * the {@link Document} metadata so the controller can set
+     * Content-Type / Content-Disposition on the response.
+     */
+    @Transactional
+    public AttachmentPayload readAttachment(UUID reportId, User actor) {
+        WeeklyReport report = reportRepository.findByIdWithGraph(reportId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Weekly report not found: " + reportId));
+        UUID docId = report.getAttachmentDocumentId();
+        if (docId == null) {
+            throw new ResourceNotFoundException(
+                    "This weekly report has no attachment.");
+        }
+        ensureCanReadAttachment(report, actor);
+
+        Document doc = documentRepository.findById(docId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Attachment document not found: " + docId));
+        if (doc.getDeletedAt() != null) {
+            throw new ResourceNotFoundException(
+                    "Attachment document not found: " + docId);
+        }
+        // Bypass DocumentVaultService's owner/staff RBAC — we already
+        // enforced the weekly-report-scoped access rule (intern-owner OR
+        // assigned supervisor OR SUPER_ADMIN) above.
+        byte[] bytes = documentVault.readDocumentBytesNoAuth(docId);
+        return new AttachmentPayload(doc, bytes);
+    }
+
+    /**
+     * Intern clears the attachment on their own report. Same
+     * APPROVED-lock as {@link #update}. Idempotent — no-op when the
+     * report already has no attachment.
+     */
+    @Transactional
+    public WeeklyReportResponse deleteAttachment(UUID reportId, User actor) {
+        WeeklyReport report = reportRepository.findByIdWithGraph(reportId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Weekly report not found: " + reportId));
+        ensureInternOwner(report, actor);
+        if (report.getStatus() == WeeklyReportStatus.APPROVED) {
+            throw new ConflictException(
+                    "This report has been approved and is locked.");
+        }
+
+        UUID previousDocId = report.getAttachmentDocumentId();
+        if (previousDocId == null) {
+            return toResponse(report);
+        }
+        report.setAttachmentDocumentId(null);
+        WeeklyReport savedReport = reportRepository.save(report);
+        try {
+            documentRepository.findById(previousDocId).ifPresent(prior -> {
+                if (prior.getDeletedAt() == null) {
+                    prior.setDeletedAt(Instant.now());
+                    documentRepository.save(prior);
+                }
+            });
+        } catch (Exception e) {
+            log.warn("[WeeklyReport] attachment soft-delete failed (non-fatal) "
+                    + "for report {} doc {}: {}",
+                    savedReport.getId(), previousDocId, e.getMessage());
+        }
+        WeeklyReport refreshed = reportRepository.findByIdWithGraph(savedReport.getId())
+                .orElse(savedReport);
+        return toResponse(refreshed);
+    }
+
+    /**
+     * Attachment-read RBAC: intern-owner OR SUPER_ADMIN OR the assigned
+     * supervisor (TRAINER) on any of this candidate's engagements. Mirrors
+     * {@link #ensureSupervisorCanReview} but also allows the intern-owner
+     * (who obviously can see their own attachment).
+     */
+    private void ensureCanReadAttachment(WeeklyReport report, User actor) {
+        if (actor == null) throw new ForbiddenException("Authentication required.");
+        // SUPER_ADMIN — full bypass.
+        if (actor.getRoles() != null && actor.getRoles().contains(UserRole.SUPER_ADMIN)) {
+            return;
+        }
+        // Intern-owner path.
+        Candidate ownerIntern = report.getIntern();
+        if (ownerIntern != null) {
+            Candidate mine = candidateRepository.findByUserId(actor.getId()).orElse(null);
+            if (mine != null && ownerIntern.getId().equals(mine.getId())) {
+                return;
+            }
+        }
+        // Supervisor path — any engagement whose supervisor is the actor.
+        if (ownerIntern != null) {
+            List<Engagement> engagements = engagementRepository
+                    .findByCandidateId(ownerIntern.getId());
+            boolean owns = engagements.stream()
+                    .anyMatch(e -> e.getSupervisor() != null
+                            && e.getSupervisor().getId().equals(actor.getId()));
+            if (owns) return;
+        }
+        throw new ForbiddenException(
+                "Only this intern, their supervisor, or SUPER_ADMIN may read this attachment.");
+    }
+
+    /** Bytes + metadata for streaming the attachment out through the controller. */
+    public record AttachmentPayload(Document document, byte[] bytes) {}
+
     // ── Mapping ─────────────────────────────────────────────────────────────
 
     private WeeklyReportResponse toResponse(WeeklyReport r) {
         Candidate intern = r.getIntern();
         User internUser = intern != null ? intern.getUser() : null;
         User reviewer = r.getReviewedBy();
-        return WeeklyReportResponse.builder()
+        WeeklyReportResponse.WeeklyReportResponseBuilder b = WeeklyReportResponse.builder()
                 .id(r.getId())
                 .internCandidateId(intern != null ? intern.getId() : null)
                 .internName(internUser != null ? internUser.getFullName() : null)
@@ -362,8 +588,22 @@ public class WeeklyReportService {
                 .reviewNotes(r.getReviewNotes())
                 .reviewedAt(r.getReviewedAt())
                 .createdAt(r.getCreatedAt())
-                .updatedAt(r.getUpdatedAt())
-                .build();
+                .updatedAt(r.getUpdatedAt());
+        if (r.getAttachmentDocumentId() != null) {
+            b.attachmentDocumentId(r.getAttachmentDocumentId())
+                    .attachmentDownloadUrl(
+                            "/api/v1/weekly-reports/" + r.getId() + "/attachment");
+            // Fetch the Document metadata for filename / size / mime.
+            // findById is cheap (single row) and the response set is small
+            // (one report at a time, or a candidate's history — bounded).
+            documentRepository.findById(r.getAttachmentDocumentId()).ifPresent(doc -> {
+                if (doc.getDeletedAt() != null) return;
+                b.attachmentFileName(doc.getFileName())
+                        .attachmentFileSize(doc.getFileSize())
+                        .attachmentMimeType(doc.getMimeType());
+            });
+        }
+        return b.build();
     }
 
     // ── Audit ───────────────────────────────────────────────────────────────

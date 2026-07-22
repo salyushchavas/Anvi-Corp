@@ -25,6 +25,7 @@ import com.anvicorp.api.repository.ApplicationRepository;
 import com.anvicorp.api.repository.AuditLogRepository;
 import com.anvicorp.api.repository.AuditLogSpecifications;
 import com.anvicorp.api.repository.CandidateRepository;
+import com.anvicorp.api.repository.DocumentRepository;
 import com.anvicorp.api.repository.EVerifyCaseRepository;
 import com.anvicorp.api.repository.EngagementRepository;
 import com.anvicorp.api.repository.EvaluationSessionRepository;
@@ -104,6 +105,7 @@ public class UserSupervisionService {
     private final ApplicationRepository applicationRepository;
     private final EngagementRepository engagementRepository;
     private final WeeklyReportRepository weeklyReportRepository;
+    private final DocumentRepository documentRepository;
     private final TimesheetRepository timesheetRepository;
     // MaterialAcknowledgementRepository removed in Trainer Phase 0.
     private final I9FormRepository i9FormRepository;
@@ -279,13 +281,23 @@ public class UserSupervisionService {
                 Math.min(reports.size(), CANDIDATE_REPORTS_LIMIT));
         for (WeeklyReport r : reports) {
             if (reportSummaries.size() >= CANDIDATE_REPORTS_LIMIT) break;
-            reportSummaries.add(UserSupervisionResponse.ReportSummary.builder()
-                    .id(r.getId())
-                    .weekStart(r.getWeekStart())
-                    .status(r.getStatus() != null ? r.getStatus().name() : null)
-                    .submittedAt(r.getSubmittedAt())
-                    .reviewedAt(r.getReviewedAt())
-                    .build());
+            UserSupervisionResponse.ReportSummary.ReportSummaryBuilder rb =
+                    UserSupervisionResponse.ReportSummary.builder()
+                            .id(r.getId())
+                            .weekStart(r.getWeekStart())
+                            .status(r.getStatus() != null ? r.getStatus().name() : null)
+                            .submittedAt(r.getSubmittedAt())
+                            .reviewedAt(r.getReviewedAt());
+            if (r.getAttachmentDocumentId() != null) {
+                rb.attachmentDownloadUrl(
+                        "/api/v1/weekly-reports/" + r.getId() + "/attachment");
+                documentRepository.findById(r.getAttachmentDocumentId()).ifPresent(doc -> {
+                    if (doc.getDeletedAt() == null) {
+                        rb.attachmentFileName(doc.getFileName());
+                    }
+                });
+            }
+            reportSummaries.add(rb.build());
         }
 
         // Timesheets (newest first, capped).

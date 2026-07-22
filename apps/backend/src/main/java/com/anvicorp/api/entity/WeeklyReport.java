@@ -106,6 +106,20 @@ public class WeeklyReport {
     @Column(name = "reviewed_at")
     private Instant reviewedAt;
 
+    /**
+     * Optional attachment — FK into {@code documents.id} for a supporting
+     * file the intern uploaded (typically the scanned/exported PDF of the
+     * week's work). Nullable — reports were text-only before this column,
+     * and the file is still optional going forward.
+     *
+     * <p>Stored as a bare UUID (not a JPA relation) to match the
+     * {@code Application.resume_id} / {@code Interview.recordingDocumentId}
+     * convention in this repo — keeps the ddl-auto migration additive and
+     * cross-package hard-delete cleanup simpler.</p>
+     */
+    @Column(name = "attachment_document_id")
+    private UUID attachmentDocumentId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

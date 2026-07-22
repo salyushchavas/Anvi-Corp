@@ -88,6 +88,8 @@ interface ReportSummary {
   status: string | null;
   submittedAt: string | null;
   reviewedAt: string | null;
+  attachmentDownloadUrl?: string | null;
+  attachmentFileName?: string | null;
 }
 
 interface TimesheetSummary {
@@ -726,6 +728,17 @@ function CandidateContextCard({ ctx }: { ctx: CandidateContext }) {
                 >
                   <span className="text-gray-700">
                     Week of {formatDateOnly(r.weekStart)}
+                    {r.attachmentDownloadUrl && (
+                      <a
+                        href={r.attachmentDownloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-2 inline-flex items-center gap-1 text-accent hover:underline"
+                      >
+                        <FileText className="h-3 w-3" strokeWidth={2} />
+                        {r.attachmentFileName ?? 'Attachment'}
+                      </a>
+                    )}
                   </span>
                   {r.status && (
                     <span
