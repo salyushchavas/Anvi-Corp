@@ -124,6 +124,8 @@ function UsersTable() {
   const [showCreate, setShowCreate] = useState(false);
   const [menuFor, setMenuFor] = useState<Uuid | null>(null);
   const [changingRoleFor, setChangingRoleFor] = useState<AdminUserResponse | null>(null);
+  const [editingCredentialsFor, setEditingCredentialsFor] =
+    useState<AdminUserResponse | null>(null);
   const [confirmingDeactivateFor, setConfirmingDeactivateFor] =
     useState<AdminUserResponse | null>(null);
   // Hard-delete is restricted to candidate users (roles == {INTERN}) and
@@ -384,6 +386,16 @@ function UsersTable() {
                           </button>
                           <button
                             type="button"
+                            onClick={() => {
+                              setMenuFor(null);
+                              setEditingCredentialsFor(u);
+                            }}
+                            className="block w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                          >
+                            Edit credentials
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => (u.active ? askDeactivate(u) : activate(u))}
                             disabled={isSelf}
                             className="block w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
@@ -434,6 +446,18 @@ function UsersTable() {
           onBlocked={(msg) => {
             setChangingRoleFor(null);
             setBlockedMessage(msg);
+          }}
+        />
+      )}
+
+      {editingCredentialsFor && (
+        <EditCredentialsModal
+          target={editingCredentialsFor}
+          onClose={() => setEditingCredentialsFor(null)}
+          onSaved={() => {
+            setEditingCredentialsFor(null);
+            setToast('Credentials updated.');
+            void load();
           }}
         />
       )}
@@ -857,6 +881,132 @@ function ChangeRoleModal({
             className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-60"
           >
             {submitting ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Update an existing user's email and/or password. Both fields are
+ * optional; at least one must be filled. Server dual-writes to the
+ * paired mailbox (email move + password sync) so careers login + mail
+ * login stay unified. 409 collisions from either side (careers email
+ * uniqueness OR mailbox address collision) render inline.
+ */
+function EditCredentialsModal({
+  target,
+  onClose,
+  onSaved,
+}: {
+  target: AdminUserResponse;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [email, setEmail] = useState(target.email);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const emailChanging = email.trim().length > 0 && email.trim().toLowerCase() !== target.email.toLowerCase();
+  const passwordChanging = password.length > 0;
+  const canSubmit = (emailChanging || passwordChanging) && !submitting;
+
+  const submit = async () => {
+    setError(null);
+    if (passwordChanging && password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (!emailChanging && !passwordChanging) {
+      setError('Change the email, the password, or both.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await api.put(`/api/v1/admin/users/${target.id}/credentials`, {
+        email: emailChanging ? email.trim() : undefined,
+        password: passwordChanging ? password : undefined,
+      });
+      onSaved();
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const msg = err?.response?.data?.error;
+      if (status === 409) {
+        setError(msg ?? 'That email or mailbox address is already taken.');
+      } else if (status === 400) {
+        setError(msg ?? 'Invalid input.');
+      } else {
+        setError(msg ?? 'Could not update credentials.');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+        <h3 className="mb-1 text-lg font-semibold text-gray-900">Edit credentials</h3>
+        <p className="mb-4 text-xs text-gray-500">
+          {target.name} · <span className="font-mono">{target.email}</span>
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Login email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              If the new domain is a provisioned internal domain
+              (e.g. <span className="font-mono">@anvicorp.com</span>), the
+              paired mailbox moves with it. Otherwise only the careers login
+              changes and the mailbox stays where it is.
+            </p>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              New password <span className="text-xs text-gray-500">(leave blank to keep current)</span>
+            </label>
+            <input
+              type="text"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+              placeholder="Min 8 characters"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Same password authenticates against careers AND the paired
+              /mail inbox. Share it out-of-band after saving — the server
+              only stores the BCrypt hash.
+            </p>
+          </div>
+          {error && <div className="text-sm text-red-600">{error}</div>}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!canSubmit}
+            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-60"
+          >
+            {submitting ? 'Saving…' : 'Save changes'}
           </button>
         </div>
       </div>

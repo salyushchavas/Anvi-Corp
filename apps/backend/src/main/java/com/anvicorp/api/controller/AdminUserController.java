@@ -3,6 +3,7 @@ package com.anvicorp.api.controller;
 import com.anvicorp.api.dto.admin.AdminUserResponse;
 import com.anvicorp.api.dto.admin.CreateStaffUserResponse;
 import com.anvicorp.api.dto.admin.CreateUserRequest;
+import com.anvicorp.api.dto.admin.UpdateUserCredentialsRequest;
 import com.anvicorp.api.dto.admin.UpdateUserRoleRequest;
 import com.anvicorp.api.dto.admin.UpdateUserStatusRequest;
 import com.anvicorp.api.entity.User;
@@ -66,6 +67,20 @@ public class AdminUserController {
                                           @Valid @RequestBody UpdateUserStatusRequest req,
                                           @AuthenticationPrincipal User caller) {
         return adminUserService.updateStatus(id, req, caller);
+    }
+
+    /**
+     * Update the target user's email and/or password. Both body fields
+     * are optional; at least one must be non-blank. Dual-writes to the
+     * paired MailAccount when one exists so careers login + mail login
+     * stay unified. 409 on email or mailbox-address collision.
+     */
+    @PutMapping("/{id}/credentials")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public AdminUserResponse updateCredentials(@PathVariable UUID id,
+                                                @Valid @RequestBody UpdateUserCredentialsRequest req,
+                                                @AuthenticationPrincipal User caller) {
+        return adminUserService.updateCredentials(id, req, caller);
     }
 
     /**
