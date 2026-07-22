@@ -6,7 +6,7 @@ import api from '@/lib/careers/api';
 
 /**
  * Mail bridge Phase 5 — ERM dialog for the "Assign company email"
- * action. Calls POST /api/v1/erm/interns/{userId}/assign-company-email
+ * action. Calls PUT /api/v1/erm/interns/{internId}/company-email
  * via the shared axios client. On success the parent refreshes
  * NewHireDetail so the page flips to the PENDING_ACTIVATION chip.
  *
@@ -63,12 +63,12 @@ export default function AssignCompanyEmailDialog({
     }
     setSubmitting(true);
     try {
-      const res = await api.post<{
+      const res = await api.put<{
         userId: string;
         companyEmail: string;
         status: string;
-      }>(`/api/v1/erm/interns/${userId}/assign-company-email`, {
-        localPart: cleanLocal,
+      }>(`/api/v1/erm/interns/${userId}/company-email`, {
+        companyEmailLocalPart: cleanLocal,
         startingPassword: password,
       });
       onAssigned(res.data.companyEmail);
