@@ -1,19 +1,26 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { FileText, Save, Send, Upload, X } from 'lucide-react';
+import { FileText, Send, Upload, X } from 'lucide-react';
 import api from '@/lib/careers/api';
 import type { WeeklyReportResponse, WeeklyReportStatus } from '@/types';
 
 /**
  * Intern-facing weekly-report panel embedded inside a week card on the
  * timesheets page. One instance per week; each panel manages its own
- * report row (create-if-missing, edit, submit, attach a file).
+ * report row (create-if-missing, attach a file, submit).
+ *
+ * <p>The UI is deliberately minimal — the intern uploads a report file
+ * (PDF / DOC / DOCX) and clicks Submit. The narrative-text fields on
+ * the WeeklyReport entity ({@code completedWork} / {@code blockers} /
+ * {@code learningOutcomes} / {@code nextPlan}) still exist on the
+ * backend and can be filled by other clients, but this panel doesn't
+ * surface them — Ops prefers the "attach the doc, submit" flow.</p>
  *
  * <p>The parent (intern timesheets page) fetches the intern's full list
  * of reports once and passes down the row matching this
  * {@code weekStart}, or {@code null} when no row exists yet. On any
- * mutation (save draft / submit / attach / detach) we call
+ * mutation (create / submit / attach / detach) we call
  * {@code onChanged} so the parent can refresh its cache.</p>
  */
 interface Props {
@@ -28,93 +35,79 @@ export default function WeeklyReportPanel({
   onChanged,
 }: Props) {
   const [report, setReport] = useState<WeeklyReportResponse | null>(initialReport);
-  const [completedWork, setCompletedWork] = useState(initialReport?.completedWork ?? '');
-  const [blockers, setBlockers] = useState(initialReport?.blockers ?? '');
-  const [learningOutcomes, setLearningOutcomes] = useState(initialReport?.learningOutcomes ?? '');
-  const [nextPlan, setNextPlan] = useState(initialReport?.nextPlan ?? '');
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // If the parent re-passes a fresh report (e.g. after another WeekCard
-  // mutation triggered a top-level reload), re-seed our local editable
-  // state — but only when the row id or the status changes, so ongoing
-  // edits aren't clobbered mid-type.
+  // Re-seed when the parent hands us a different row (e.g. after a
+  // top-level reload). Keyed on id + status so identity + lifecycle
+  // changes both trigger a refresh.
   const seededKey = `${initialReport?.id ?? 'none'}|${initialReport?.status ?? 'none'}`;
   const [lastSeed, setLastSeed] = useState(seededKey);
   useEffect(() => {
     if (seededKey !== lastSeed) {
       setReport(initialReport);
-      setCompletedWork(initialReport?.completedWork ?? '');
-      setBlockers(initialReport?.blockers ?? '');
-      setLearningOutcomes(initialReport?.learningOutcomes ?? '');
-      setNextPlan(initialReport?.nextPlan ?? '');
       setLastSeed(seededKey);
     }
   }, [seededKey, initialReport, lastSeed]);
 
   const locked = report?.status === 'APPROVED';
-  const past_draft = report != null && report.status !== 'DRAFT';
+  const submitted = report != null && report.status !== 'DRAFT';
+  const hasAttachment = Boolean(report?.attachmentDocumentId);
 
-  async function save(alsoSubmit: boolean) {
-    if (locked) return;
+  /**
+   * Ensure a WeeklyReport row exists for this week. First submit /
+   * attachment upload triggers a lazy POST — no fields required.
+   */
+  async function ensureRow(): Promise<WeeklyReportResponse | null> {
+    if (report) return report;
     setErr(null);
-    setSaving(true);
     try {
-      const body = {
+      const res = await api.post<WeeklyReportResponse>('/api/v1/weekly-reports', {
         weekStart,
-        completedWork: completedWork.trim() || undefined,
-        blockers: blockers.trim() || undefined,
-        learningOutcomes: learningOutcomes.trim() || undefined,
-        nextPlan: nextPlan.trim() || undefined,
-      };
-      let saved: WeeklyReportResponse;
-      if (report) {
-        const res = await api.put<WeeklyReportResponse>(
-          `/api/v1/weekly-reports/${report.id}`,
-          { ...body, submit: alsoSubmit ? true : undefined },
-        );
-        saved = res.data;
-      } else {
-        // Create the row first (DRAFT), then flip to SUBMITTED via PUT
-        // if the intern hit the submit button. Two hops for the initial
-        // submit — but they only happen once per week.
-        const createRes = await api.post<WeeklyReportResponse>(
-          '/api/v1/weekly-reports',
-          body,
-        );
-        saved = createRes.data;
-        if (alsoSubmit) {
-          const putRes = await api.put<WeeklyReportResponse>(
-            `/api/v1/weekly-reports/${saved.id}`,
-            { submit: true },
-          );
-          saved = putRes.data;
-        }
-      }
-      setReport(saved);
-      onChanged?.(saved);
+      });
+      setReport(res.data);
+      onChanged?.(res.data);
+      return res.data;
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      setErr(ax.response?.data?.error ?? ax.message ?? 'Save failed');
+      setErr(ax.response?.data?.error ?? ax.message ?? 'Could not start report');
+      return null;
+    }
+  }
+
+  async function submit() {
+    if (locked) return;
+    setErr(null);
+    setBusy(true);
+    try {
+      const row = await ensureRow();
+      if (!row) return;
+      const res = await api.put<WeeklyReportResponse>(
+        `/api/v1/weekly-reports/${row.id}`,
+        { submit: true },
+      );
+      setReport(res.data);
+      onChanged?.(res.data);
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: string } }; message?: string };
+      setErr(ax.response?.data?.error ?? ax.message ?? 'Submit failed');
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   }
 
   async function onFilePick(file: File) {
-    if (!report) {
-      setErr('Save the report as a draft first, then attach a file.');
-      return;
-    }
     setErr(null);
     setUploading(true);
     try {
+      const row = await ensureRow();
+      if (!row) return;
       const form = new FormData();
       form.append('file', file);
       const res = await api.post<WeeklyReportResponse>(
-        `/api/v1/weekly-reports/${report.id}/attachment`,
+        `/api/v1/weekly-reports/${row.id}/attachment`,
         form,
         { headers: { 'Content-Type': 'multipart/form-data' } },
       );
@@ -167,39 +160,12 @@ export default function WeeklyReportPanel({
         </p>
       )}
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <TextArea
-          label="Completed work"
-          value={completedWork}
-          onChange={setCompletedWork}
-          disabled={locked}
-        />
-        <TextArea
-          label="Blockers"
-          value={blockers}
-          onChange={setBlockers}
-          disabled={locked}
-        />
-        <TextArea
-          label="Learning outcomes"
-          value={learningOutcomes}
-          onChange={setLearningOutcomes}
-          disabled={locked}
-        />
-        <TextArea
-          label="Next plan"
-          value={nextPlan}
-          onChange={setNextPlan}
-          disabled={locked}
-        />
-      </div>
-
-      <div className="mt-3">
+      <div>
         <label className="text-xs font-medium text-slate-700">
-          Attachment{' '}
-          <span className="text-slate-500">(optional — PDF / DOC / DOCX, ≤ 10 MB)</span>
+          Report file{' '}
+          <span className="text-slate-500">(PDF / DOC / DOCX, ≤ 10 MB)</span>
         </label>
-        {report?.attachmentDownloadUrl ? (
+        {hasAttachment && report?.attachmentDownloadUrl ? (
           <div className="mt-1 flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs">
             <FileText className="h-3.5 w-3.5 shrink-0 text-slate-500" strokeWidth={2} />
             <a
@@ -237,12 +203,7 @@ export default function WeeklyReportPanel({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={locked || uploading || !report}
-              title={
-                !report
-                  ? 'Save the report as draft first, then attach a file'
-                  : undefined
-              }
+              disabled={locked || uploading}
               className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Upload className="h-3 w-3" strokeWidth={2} />
@@ -262,54 +223,20 @@ export default function WeeklyReportPanel({
         <footer className="mt-3 flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
-            onClick={() => void save(false)}
-            disabled={saving}
-            className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            <Save className="h-3 w-3" strokeWidth={2} />
-            {saving ? 'Saving…' : 'Save draft'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void save(true)}
-            disabled={saving}
+            onClick={() => void submit()}
+            disabled={busy || uploading}
             className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-800 disabled:opacity-50"
           >
             <Send className="h-3 w-3" strokeWidth={2} />
-            {saving
+            {busy
               ? 'Submitting…'
-              : past_draft
+              : submitted
               ? 'Re-submit'
               : 'Submit for review'}
           </button>
         </footer>
       )}
     </section>
-  );
-}
-
-function TextArea({
-  label,
-  value,
-  onChange,
-  disabled,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  disabled: boolean;
-}) {
-  return (
-    <label className="block text-xs">
-      <span className="mb-1 block font-medium text-slate-700">{label}</span>
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        rows={2}
-        className="w-full resize-y rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs disabled:bg-slate-100"
-      />
-    </label>
   );
 }
 
