@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -22,6 +22,7 @@ import {
   ListChecks,
   Lock,
   LogOut,
+  Mail,
   MessagesSquare,
   Package,
   Settings,
@@ -33,6 +34,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/careers/auth-context';
+import { openMailWithSso } from '@/lib/careers/mail-sso';
 import {
   useInternDashboardOptional,
   type InternModulesMap,
@@ -204,10 +206,7 @@ export default function DashboardSidebar({ onNavigate }: Props) {
       </div>
 
       <div className="space-y-1 border-t border-slate-200 px-3 py-3">
-        {/* Mail bridge Phase 5 (revised) — the sidebar Mailbox link
-            moved to a topbar peek (TopBarMailbox) beside the bell +
-            profile, gated on the user actually having a linked
-            mailbox. Sidebar no longer carries a Mailbox entry. */}
+        {user && <MailSidebarItem onAfter={onNavigate} />}
         {user && <SignOutButton variant="sidebar" onAfter={onNavigate} />}
         <Link
           href="/"
@@ -218,6 +217,37 @@ export default function DashboardSidebar({ onNavigate }: Props) {
         </Link>
       </div>
     </nav>
+  );
+}
+
+/**
+ * "Mail" entry in the sidebar footer — mirrors the top-bar mail icon
+ * but is always visible on every role's sidebar. Uses the same
+ * careers→mail SSO handoff so a click lands the user in their inbox
+ * without a second login. On 404 (no paired mailbox) the shared helper
+ * surfaces a toast and the user stays put.
+ */
+function MailSidebarItem({ onAfter }: { onAfter?: () => void }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+          await openMailWithSso();
+        } finally {
+          setBusy(false);
+          onAfter?.();
+        }
+      }}
+      disabled={busy}
+      className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-progress disabled:opacity-60"
+    >
+      <Mail className="h-[18px] w-[18px]" strokeWidth={2} />
+      <span className="flex-1 text-left">{busy ? 'Opening…' : 'Mail'}</span>
+    </button>
   );
 }
 

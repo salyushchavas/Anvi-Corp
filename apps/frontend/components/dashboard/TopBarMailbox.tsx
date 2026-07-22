@@ -1,22 +1,23 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { Mail } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { openMailWithSso } from '@/lib/careers/mail-sso';
 
 /**
- * Mail bridge Phase 5 (revised) — read-only mailbox peek mounted in
- * the dashboard topbar beside the bell + profile menu. Polls
- * /api/v1/me/mailbox/summary every 30s, mirroring TopBarBell's
- * cadence.
+ * Mail entry point in the dashboard topbar beside the bell + profile
+ * menu. Always visible for authenticated staff; clicking the icon
+ * either opens a peek popover (for users with a linked mailbox — polled
+ * from /api/v1/me/mailbox/summary every 30s) OR does a direct SSO
+ * handoff (for users whose peek data isn't available). Either path
+ * ultimately routes to /mail via {@link openMailWithSso}, so the user
+ * never sees the mail login form — the careers session mints a fresh
+ * mail JWT on the server and hands it back for the client to persist.
  *
- * <p>Renders nothing for users with no linked mailbox (the summary
- * endpoint returns {@code hasMailbox=false}, which we hide on). Click
- * opens a popover listing the most recent inbox messages (subject +
- * sender + time) with each item — and a footer CTA — deep-linking to
- * {@code /mail} where the user can compose, reply, mark-read, etc.
- * Compose / reply are intentionally NOT in the dashboard.</p>
+ * <p>The peek popover lists recent inbox messages with subject +
+ * sender + time. Clicking any message OR the footer CTA triggers the
+ * SSO handoff and navigates. Compose / reply stay in /mail proper.</p>
  */
 type PeekItem = {
   entryId: string;
@@ -37,6 +38,7 @@ type Summary = {
 export default function TopBarMailbox() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [open, setOpen] = useState(false);
+  const [handoffInFlight, setHandoffInFlight] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -44,7 +46,8 @@ export default function TopBarMailbox() {
       const res = await api.get<Summary>('/api/v1/me/mailbox/summary');
       setSummary(res.data);
     } catch {
-      // Silent — peek hides on absent data
+      // Silent — peek data is optional; the icon still opens the inbox
+      // via SSO even when the summary endpoint is unavailable.
       setSummary(null);
     }
   }, []);
@@ -66,18 +69,43 @@ export default function TopBarMailbox() {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [open]);
 
-  if (!summary || !summary.hasMailbox) return null;
+  // Peek data is optional — when a linked mailbox exists, clicking the
+  // icon opens the popover; when it doesn't (or the summary endpoint
+  // failed), clicking the icon triggers the SSO handoff directly. Both
+  // paths ultimately route to /mail.
+  const hasMailbox = Boolean(summary && summary.hasMailbox);
+  const unread = summary && summary.hasMailbox ? summary.unreadCount : 0;
 
-  const unread = summary.unreadCount;
+  async function handleHandoff() {
+    setOpen(false);
+    if (handoffInFlight) return;
+    setHandoffInFlight(true);
+    try {
+      await openMailWithSso();
+    } finally {
+      setHandoffInFlight(false);
+    }
+  }
+
+  function handleIconClick() {
+    if (hasMailbox) {
+      // Toggle peek popover — user sees recent messages and can pick
+      // one to open (each item also triggers the SSO handoff).
+      setOpen((v) => !v);
+    } else {
+      void handleHandoff();
+    }
+  }
 
   return (
     <div ref={wrapRef} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label="Mailbox peek"
-        aria-expanded={open}
-        className="relative rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
+        onClick={handleIconClick}
+        aria-label={hasMailbox ? 'Mailbox peek' : 'Open mail'}
+        aria-expanded={hasMailbox ? open : undefined}
+        disabled={handoffInFlight}
+        className="relative rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-progress disabled:opacity-60"
       >
         <Mail className="h-4 w-4" strokeWidth={2} />
         {unread > 0 && (
@@ -87,7 +115,7 @@ export default function TopBarMailbox() {
         )}
       </button>
 
-      {open && (
+      {open && hasMailbox && summary && (
         <div className="absolute right-0 z-40 mt-1 w-80 overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
           <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
             <div>
@@ -111,10 +139,11 @@ export default function TopBarMailbox() {
             )}
             {summary.items.map((it) => (
               <li key={it.entryId}>
-                <Link
-                  href="/mail"
-                  onClick={() => setOpen(false)}
-                  className="block px-3 py-2 transition-colors hover:bg-slate-50"
+                <button
+                  type="button"
+                  onClick={handleHandoff}
+                  disabled={handoffInFlight}
+                  className="block w-full px-3 py-2 text-left transition-colors hover:bg-slate-50 disabled:cursor-progress disabled:opacity-60"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className={
@@ -133,18 +162,19 @@ export default function TopBarMailbox() {
                   }>
                     {it.subject || '(no subject)'}
                   </p>
-                </Link>
+                </button>
               </li>
             ))}
           </ul>
 
-          <Link
-            href="/mail"
-            onClick={() => setOpen(false)}
-            className="block border-t border-slate-200 px-3 py-2 text-center text-xs font-medium text-brand-700 hover:bg-brand-50"
+          <button
+            type="button"
+            onClick={handleHandoff}
+            disabled={handoffInFlight}
+            className="block w-full border-t border-slate-200 px-3 py-2 text-center text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:cursor-progress disabled:opacity-60"
           >
-            Open in /mail →
-          </Link>
+            {handoffInFlight ? 'Opening…' : 'Open in /mail →'}
+          </button>
         </div>
       )}
     </div>
