@@ -5,6 +5,7 @@ import { CheckCircle2, FileText, Loader2, RotateCcw } from 'lucide-react';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import WeeklyReportAttachmentPreview from '@/components/report/WeeklyReportAttachmentPreview';
 
 /**
  * ERM verify queue for weekly reports — stage 1 of the two-stage review.
@@ -12,9 +13,11 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
  * the ERM verify or return each. Once verified, the row leaves this queue
  * and lands on the Evaluator's queue.
  *
- * <p>Attachments (when present) open in a new tab via the shared
- * {@code /api/v1/weekly-reports/{id}/attachment} route — the intern and
- * every reviewer hit the same URL.</p>
+ * <p>The review modal is a 2-column layout: narrative text on the left,
+ * inline attachment preview + download on the right (via
+ * {@link WeeklyReportAttachmentPreview} — same blob-URL pattern the
+ * resume viewer uses so the file actually loads under the ERM's Bearer
+ * token instead of 404'ing on a raw {@code <a href>}).</p>
  */
 
 interface WeeklyReportRow {
@@ -32,8 +35,11 @@ interface WeeklyReportRow {
   ermNotes: string | null;
   verifiedByName: string | null;
   verifiedAt: string | null;
+  attachmentDocumentId: string | null;
   attachmentDownloadUrl: string | null;
   attachmentFileName: string | null;
+  attachmentFileSize: number | null;
+  attachmentMimeType: string | null;
 }
 
 export default function ErmWeeklyReportsPage() {
@@ -127,17 +133,17 @@ function ErmWeeklyReportsInner() {
                     {r.submittedAt ? new Date(r.submittedAt).toLocaleString() : '—'}
                   </td>
                   <td className="px-3 py-2 text-xs">
-                    {r.attachmentDownloadUrl ? (
-                      <a
-                        href={r.attachmentDownloadUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-brand-700 hover:underline"
+                    {r.attachmentDocumentId ? (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-slate-700"
+                        title={r.attachmentFileName ?? undefined}
                       >
                         <FileText className="h-3 w-3" />
                         {r.attachmentFileName ?? 'file'}
-                      </a>
-                    ) : <span className="text-slate-400">—</span>}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <button
@@ -166,7 +172,6 @@ function ErmWeeklyReportsInner() {
 
       {returnFor && (
         <ReturnModal
-          reportId={returnFor}
           endpoint={`/api/v1/erm/weekly-reports/${returnFor}/return`}
           onClose={() => setReturnFor(null)}
           onDone={async () => { setReturnFor(null); await load(); }}
@@ -195,7 +200,7 @@ function ReviewModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}>
-      <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white shadow-xl"
+      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col rounded-lg bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}>
         <header className="border-b border-slate-200 px-5 py-3">
           <h2 className="text-base font-semibold text-slate-900">
@@ -206,38 +211,47 @@ function ReviewModal({
           </p>
         </header>
 
-        <div className="space-y-3 p-5 text-sm">
-          <NarrativeBlock label="Completed work" value={report.completedWork} />
-          <NarrativeBlock label="Blockers" value={report.blockers} />
-          <NarrativeBlock label="Learning outcomes" value={report.learningOutcomes} />
-          <NarrativeBlock label="Next plan" value={report.nextPlan} />
-          {report.attachmentDownloadUrl && (
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Attachment</p>
-              <a
-                href={report.attachmentDownloadUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-1 inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-brand-700 hover:bg-slate-50"
-              >
-                <FileText className="h-3 w-3" />
-                {report.attachmentFileName ?? 'Open file'}
-              </a>
-            </div>
-          )}
+        <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-5 lg:grid-cols-2">
+          {/* LEFT — narrative + ERM note textarea */}
+          <section className="space-y-3">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Report content
+            </h3>
+            <NarrativeBlock label="Completed work" value={report.completedWork} />
+            <NarrativeBlock label="Blockers" value={report.blockers} />
+            <NarrativeBlock label="Learning outcomes" value={report.learningOutcomes} />
+            <NarrativeBlock label="Next plan" value={report.nextPlan} />
 
-          <label className="block">
-            <span className="text-xs font-semibold text-slate-700">
-              ERM verification note (optional)
-            </span>
-            <textarea
-              value={ermNotes}
-              onChange={(e) => setErmNotes(e.target.value)}
-              rows={3}
-              placeholder="Any context to hand off to the Evaluator."
-              className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+            <label className="block pt-1">
+              <span className="text-xs font-semibold text-slate-700">
+                ERM verification note (optional)
+              </span>
+              <textarea
+                value={ermNotes}
+                onChange={(e) => setErmNotes(e.target.value)}
+                rows={3}
+                placeholder="Any context to hand off to the Evaluator."
+                className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+              />
+            </label>
+          </section>
+
+          {/* RIGHT — inline attachment preview */}
+          <section className="space-y-3">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Attachment
+            </h3>
+            <WeeklyReportAttachmentPreview
+              attachment={{
+                documentId: report.attachmentDocumentId,
+                fileName: report.attachmentFileName,
+                fileSize: report.attachmentFileSize,
+                mimeType: report.attachmentMimeType,
+                downloadUrl: report.attachmentDownloadUrl,
+              }}
+              height={620}
             />
-          </label>
+          </section>
         </div>
 
         <footer className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
@@ -260,9 +274,8 @@ function ReviewModal({
 }
 
 function ReturnModal({
-  reportId: _reportId, endpoint, onClose, onDone,
+  endpoint, onClose, onDone,
 }: {
-  reportId: string;
   endpoint: string;
   onClose: () => void;
   onDone: () => Promise<void> | void;
