@@ -3,12 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, FileText, Loader2, RotateCcw } from 'lucide-react';
 import api from '@/lib/careers/api';
+import WeeklyReportAttachmentPreview from '@/components/report/WeeklyReportAttachmentPreview';
 
 /**
  * Evaluator approve queue for weekly reports — stage 2 of the two-stage
  * review. Rows only appear here once an ERM has verified them. Approve is
  * terminal; return sends the row back to the intern (VERIFIED → RETURNED)
  * so a re-submission re-runs the ERM stage.
+ *
+ * <p>The review modal is a 2-column layout: narrative + ERM verification
+ * note on the left, inline attachment preview + download on the right
+ * (via {@link WeeklyReportAttachmentPreview}).</p>
  */
 
 interface WeeklyReportRow {
@@ -26,8 +31,11 @@ interface WeeklyReportRow {
   ermNotes: string | null;
   verifiedByName: string | null;
   verifiedAt: string | null;
+  attachmentDocumentId: string | null;
   attachmentDownloadUrl: string | null;
   attachmentFileName: string | null;
+  attachmentFileSize: number | null;
+  attachmentMimeType: string | null;
 }
 
 export default function EvaluatorWeeklyReportsPage() {
@@ -117,17 +125,17 @@ export default function EvaluatorWeeklyReportsPage() {
                     )}
                   </td>
                   <td className="px-3 py-2 text-xs">
-                    {r.attachmentDownloadUrl ? (
-                      <a
-                        href={r.attachmentDownloadUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-brand-700 hover:underline"
+                    {r.attachmentDocumentId ? (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-slate-700"
+                        title={r.attachmentFileName ?? undefined}
                       >
                         <FileText className="h-3 w-3" />
                         {r.attachmentFileName ?? 'file'}
-                      </a>
-                    ) : <span className="text-slate-400">—</span>}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <button
@@ -184,7 +192,7 @@ function ApproveModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}>
-      <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white shadow-xl"
+      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col rounded-lg bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}>
         <header className="border-b border-slate-200 px-5 py-3">
           <h2 className="text-base font-semibold text-slate-900">
@@ -196,46 +204,58 @@ function ApproveModal({
           </p>
         </header>
 
-        <div className="space-y-3 p-5 text-sm">
-          <NarrativeBlock label="Completed work" value={report.completedWork} />
-          <NarrativeBlock label="Blockers" value={report.blockers} />
-          <NarrativeBlock label="Learning outcomes" value={report.learningOutcomes} />
-          <NarrativeBlock label="Next plan" value={report.nextPlan} />
-          {report.ermNotes && (
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">ERM verification note</p>
-              <p className="mt-1 whitespace-pre-wrap rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
-                {report.ermNotes}
-              </p>
-            </div>
-          )}
-          {report.attachmentDownloadUrl && (
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Attachment</p>
-              <a
-                href={report.attachmentDownloadUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-1 inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-brand-700 hover:bg-slate-50"
-              >
-                <FileText className="h-3 w-3" />
-                {report.attachmentFileName ?? 'Open file'}
-              </a>
-            </div>
-          )}
+        <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-5 lg:grid-cols-2">
+          {/* LEFT — narrative + ERM verification note + approval-note textarea */}
+          <section className="space-y-3">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Report content
+            </h3>
+            <NarrativeBlock label="Completed work" value={report.completedWork} />
+            <NarrativeBlock label="Blockers" value={report.blockers} />
+            <NarrativeBlock label="Learning outcomes" value={report.learningOutcomes} />
+            <NarrativeBlock label="Next plan" value={report.nextPlan} />
 
-          <label className="block">
-            <span className="text-xs font-semibold text-slate-700">
-              Approval note (optional)
-            </span>
-            <textarea
-              value={reviewNotes}
-              onChange={(e) => setReviewNotes(e.target.value)}
-              rows={3}
-              placeholder="Optional wrap-up comment for the intern."
-              className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+            {report.ermNotes && (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  ERM verification note
+                </p>
+                <p className="mt-1 whitespace-pre-wrap rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
+                  {report.ermNotes}
+                </p>
+              </div>
+            )}
+
+            <label className="block pt-1">
+              <span className="text-xs font-semibold text-slate-700">
+                Approval note (optional)
+              </span>
+              <textarea
+                value={reviewNotes}
+                onChange={(e) => setReviewNotes(e.target.value)}
+                rows={3}
+                placeholder="Optional wrap-up comment for the intern."
+                className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+              />
+            </label>
+          </section>
+
+          {/* RIGHT — inline attachment preview */}
+          <section className="space-y-3">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Attachment
+            </h3>
+            <WeeklyReportAttachmentPreview
+              attachment={{
+                documentId: report.attachmentDocumentId,
+                fileName: report.attachmentFileName,
+                fileSize: report.attachmentFileSize,
+                mimeType: report.attachmentMimeType,
+                downloadUrl: report.attachmentDownloadUrl,
+              }}
+              height={620}
             />
-          </label>
+          </section>
         </div>
 
         <footer className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
