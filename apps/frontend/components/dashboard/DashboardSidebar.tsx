@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/careers/auth-context';
 import { openMailWithSso } from '@/lib/careers/mail-sso';
+import { useMailboxSummary } from './MailboxSummaryContext';
 import {
   useInternDashboardOptional,
   type InternModulesMap,
@@ -222,13 +223,15 @@ export default function DashboardSidebar({ onNavigate }: Props) {
 
 /**
  * "Mail" entry in the sidebar footer — mirrors the top-bar mail icon
- * but is always visible on every role's sidebar. Uses the same
- * careers→mail SSO handoff so a click lands the user in their inbox
- * without a second login. On 404 (no paired mailbox) the shared helper
- * surfaces a toast and the user stays put.
+ * on the same visibility contract. Consumes {@link useMailboxSummary}
+ * (the shared context also used by TopBarMailbox), so users with no
+ * linked mailbox see NEITHER entry point and there's no orphan Mail
+ * link that would drop them at an SSO 404.
  */
 function MailSidebarItem({ onAfter }: { onAfter?: () => void }) {
+  const { summary } = useMailboxSummary();
   const [busy, setBusy] = useState(false);
+  if (!summary || !summary.hasMailbox) return null;
   return (
     <button
       type="button"

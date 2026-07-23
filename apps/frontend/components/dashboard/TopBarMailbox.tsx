@@ -1,62 +1,33 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Mail } from 'lucide-react';
-import api from '@/lib/careers/api';
 import { openMailWithSso } from '@/lib/careers/mail-sso';
+import { useMailboxSummary } from './MailboxSummaryContext';
 
 /**
  * Mail entry point in the dashboard topbar beside the bell + profile
- * menu. Always visible for authenticated staff; clicking the icon
- * either opens a peek popover (for users with a linked mailbox — polled
- * from /api/v1/me/mailbox/summary every 30s) OR does a direct SSO
- * handoff (for users whose peek data isn't available). Either path
- * ultimately routes to /mail via {@link openMailWithSso}, so the user
- * never sees the mail login form — the careers session mints a fresh
- * mail JWT on the server and hands it back for the client to persist.
+ * menu. Consumes {@link useMailboxSummary} — the shared context that
+ * polls {@code /api/v1/me/mailbox/summary} once and is also used by
+ * the sidebar Mail item — so both entry points render / hide together
+ * with a single request cadence.
  *
- * <p>The peek popover lists recent inbox messages with subject +
- * sender + time. Clicking any message OR the footer CTA triggers the
- * SSO handoff and navigates. Compose / reply stay in /mail proper.</p>
+ * <p>Visibility rule: the icon renders ONLY when the user has a linked
+ * mailbox ({@code hasMailbox=true}, i.e. ERM has assigned one). Users
+ * with no mailbox see nothing at all — no icon, no popover — and the
+ * SSO handoff is unreachable from this component. Same gate the
+ * sidebar "Mail" item uses.</p>
+ *
+ * <p>Clicking the icon opens a peek popover listing the most recent
+ * inbox messages with subject + sender + time. Clicking any message
+ * OR the footer CTA triggers the SSO handoff and navigates to
+ * {@code /mail} authenticated. Compose / reply stay in /mail proper.</p>
  */
-type PeekItem = {
-  entryId: string;
-  fromAddress: string;
-  subject: string;
-  receivedAt: string | null;
-  unread: boolean;
-};
-
-type Summary = {
-  hasMailbox: boolean;
-  mailAccountId: string | null;
-  mailAddress: string | null;
-  unreadCount: number;
-  items: PeekItem[];
-};
-
 export default function TopBarMailbox() {
-  const [summary, setSummary] = useState<Summary | null>(null);
+  const { summary } = useMailboxSummary();
   const [open, setOpen] = useState(false);
   const [handoffInFlight, setHandoffInFlight] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await api.get<Summary>('/api/v1/me/mailbox/summary');
-      setSummary(res.data);
-    } catch {
-      // Silent — peek data is optional; the icon still opens the inbox
-      // via SSO even when the summary endpoint is unavailable.
-      setSummary(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-    const t = window.setInterval(() => void load(), 30_000);
-    return () => window.clearInterval(t);
-  }, [load]);
 
   // Click-outside to close the popover.
   useEffect(() => {
@@ -69,12 +40,12 @@ export default function TopBarMailbox() {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [open]);
 
-  // Peek data is optional — when a linked mailbox exists, clicking the
-  // icon opens the popover; when it doesn't (or the summary endpoint
-  // failed), clicking the icon triggers the SSO handoff directly. Both
-  // paths ultimately route to /mail.
-  const hasMailbox = Boolean(summary && summary.hasMailbox);
-  const unread = summary && summary.hasMailbox ? summary.unreadCount : 0;
+  // Hide entirely when the user has no linked mailbox — matches the
+  // sidebar Mail item's gate. Same visibility contract for both entry
+  // points, one summary fetch.
+  if (!summary || !summary.hasMailbox) return null;
+
+  const unread = summary.unreadCount;
 
   async function handleHandoff() {
     setOpen(false);
@@ -87,23 +58,13 @@ export default function TopBarMailbox() {
     }
   }
 
-  function handleIconClick() {
-    if (hasMailbox) {
-      // Toggle peek popover — user sees recent messages and can pick
-      // one to open (each item also triggers the SSO handoff).
-      setOpen((v) => !v);
-    } else {
-      void handleHandoff();
-    }
-  }
-
   return (
     <div ref={wrapRef} className="relative">
       <button
         type="button"
-        onClick={handleIconClick}
-        aria-label={hasMailbox ? 'Mailbox peek' : 'Open mail'}
-        aria-expanded={hasMailbox ? open : undefined}
+        onClick={() => setOpen((v) => !v)}
+        aria-label="Mailbox peek"
+        aria-expanded={open}
         disabled={handoffInFlight}
         className="relative rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-progress disabled:opacity-60"
       >
@@ -115,7 +76,7 @@ export default function TopBarMailbox() {
         )}
       </button>
 
-      {open && hasMailbox && summary && (
+      {open && (
         <div className="absolute right-0 z-40 mt-1 w-80 overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
           <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
             <div>
@@ -146,20 +107,24 @@ export default function TopBarMailbox() {
                   className="block w-full px-3 py-2 text-left transition-colors hover:bg-slate-50 disabled:cursor-progress disabled:opacity-60"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className={
-                      'truncate text-xs '
-                      + (it.unread ? 'font-semibold text-slate-900' : 'text-slate-700')
-                    }>
+                    <span
+                      className={
+                        'truncate text-xs ' +
+                        (it.unread ? 'font-semibold text-slate-900' : 'text-slate-700')
+                      }
+                    >
                       {it.fromAddress}
                     </span>
                     <span className="shrink-0 text-[10px] text-slate-400">
                       {it.receivedAt ? formatShort(it.receivedAt) : ''}
                     </span>
                   </div>
-                  <p className={
-                    'truncate text-xs '
-                    + (it.unread ? 'text-slate-800' : 'text-slate-500')
-                  }>
+                  <p
+                    className={
+                      'truncate text-xs ' +
+                      (it.unread ? 'text-slate-800' : 'text-slate-500')
+                    }
+                  >
                     {it.subject || '(no subject)'}
                   </p>
                 </button>
