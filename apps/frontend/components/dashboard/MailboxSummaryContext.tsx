@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import api from '@/lib/careers/api';
+import type { User, UserRole } from '@/types';
 
 /**
  * Shared mailbox-peek context — hoisted out of {@code TopBarMailbox} so
@@ -102,4 +103,44 @@ export function useMailboxSummary(): MailboxSummaryContextValue {
     return { summary: null, refresh: async () => {} };
   }
   return ctx;
+}
+
+/**
+ * Role-aware visibility rule for the mail entry points (top-bar icon +
+ * sidebar item). Staff always see mail — their mailbox is provisioned
+ * at account creation via the unified admin-create dual-write, so the
+ * SSO handoff always resolves via {@code User.email → localPart@domain}
+ * regardless of whether the summary peek could hydrate. Interns start
+ * without a mailbox and only see the entry once the ERM assigns one
+ * (peek reports {@code hasMailbox=true}).
+ *
+ * <p>{@code STAFF_ROLES} is defined as "everything except INTERN".
+ * A user carrying multiple roles counts as staff if ANY of them is a
+ * staff role — e.g. a MANAGER who also holds INTERN keeps the mail UI
+ * visible via the MANAGER side.</p>
+ *
+ * <p>When no user is loaded yet (initial render before auth resolves)
+ * we hide — matches the pre-existing behavior, avoids a flash.</p>
+ */
+const STAFF_ROLES: readonly UserRole[] = [
+  'TRAINER',
+  'EVALUATOR',
+  'REPORTING_MANAGER',
+  'MANAGER',
+  'ERM',
+  'SUPER_ADMIN',
+];
+
+export function shouldShowMailEntry(
+  user: User | null | undefined,
+  summary: MailboxSummary | null,
+): boolean {
+  if (!user) return false;
+  const roles = user.roles ?? [];
+  const isStaff = roles.some((r) => STAFF_ROLES.includes(r));
+  if (isStaff) return true;
+  // Intern path: keep the pre-existing hasMailbox gate. Applicants (no
+  // candidate row) share the INTERN role but never have a mailbox, so
+  // they naturally stay hidden here.
+  return !!summary?.hasMailbox;
 }
