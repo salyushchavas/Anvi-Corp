@@ -30,8 +30,10 @@ import java.util.UUID;
  * a different {@code week_start}.
  *
  * <h2>Lifecycle</h2>
- * {@code DRAFT → SUBMITTED → RETURNED ↔ SUBMITTED → APPROVED}. APPROVED is
- * terminal: edits / return / approve all become no-ops once locked.
+ * Two-stage review (mirrors the timesheet flow):
+ * {@code DRAFT → SUBMITTED → VERIFIED → APPROVED}, with {@code RETURNED}
+ * as the send-back branch from either SUBMITTED (ERM stage) or VERIFIED
+ * (Evaluator stage). APPROVED is terminal.
  */
 @Entity
 @Table(
@@ -96,7 +98,7 @@ public class WeeklyReport {
     private User reviewedBy;
 
     /**
-     * Required when the supervisor returns the report for correction;
+     * Required when a reviewer returns the report for correction;
      * optional when they approve. Stays populated across re-submits so the
      * intern can see what the reviewer last said.
      */
@@ -105,6 +107,27 @@ public class WeeklyReport {
 
     @Column(name = "reviewed_at")
     private Instant reviewedAt;
+
+    /**
+     * ERM who verified the SUBMITTED report. Stamped on the
+     * SUBMITTED → VERIFIED transition; cleared on any RETURNED transition
+     * so the response never carries stale attribution.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "verified_by")
+    private User verifiedBy;
+
+    @Column(name = "verified_at")
+    private Instant verifiedAt;
+
+    /**
+     * Optional ERM verification note ("looks good, forwarding to Evaluator").
+     * Distinct from {@link #reviewNotes}, which is the correction-notes channel
+     * used by the RETURNED path. Kept so the Evaluator can see what the ERM
+     * said when they picked up the row.
+     */
+    @Column(name = "erm_notes", columnDefinition = "TEXT")
+    private String ermNotes;
 
     /**
      * Optional attachment — FK into {@code documents.id} for a supporting

@@ -43,6 +43,14 @@ public class WeeklyReportResponse {
     private String reviewedByName;
     private String reviewNotes;
     private Instant reviewedAt;
+
+    /** ERM who verified the SUBMITTED report. Null until VERIFIED. */
+    private UUID verifiedById;
+    private String verifiedByName;
+    private Instant verifiedAt;
+    /** Optional ERM verification note (distinct from correction {@code reviewNotes}). */
+    private String ermNotes;
+
     private Instant createdAt;
     private Instant updatedAt;
 
