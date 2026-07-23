@@ -7,9 +7,16 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * Supervisor → return-with-notes or approve. {@code reviewNotes} is required
- * on return (the intern needs to know what to fix), optional on approve.
- * Service enforces the required-on-return rule.
+ * Reviewer → return-with-notes, approve, or verify.
+ *
+ * <ul>
+ *   <li>{@code reviewNotes} — required on return (the intern needs to know
+ *       what to fix), optional on approve. Service enforces the
+ *       required-on-return rule.</li>
+ *   <li>{@code ermNotes} — optional, ERM's verification note ("looks good,
+ *       forwarding to Evaluator"). Only meaningful on the verify path;
+ *       ignored elsewhere.</li>
+ * </ul>
  */
 @Getter
 @Setter
@@ -18,4 +25,5 @@ import lombok.Setter;
 @Builder
 public class ReviewWeeklyReportRequest {
     private String reviewNotes;
+    private String ermNotes;
 }

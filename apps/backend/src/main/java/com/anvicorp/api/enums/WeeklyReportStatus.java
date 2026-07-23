@@ -1,19 +1,21 @@
 package com.anvicorp.api.enums;
 
 /**
- * Weekly report lifecycle. Mirrors the timesheet-review flow but on the
- * narrative side of the weekly cycle.
+ * Weekly report lifecycle. Two-stage review, mirrors the timesheet flow:
  *
  * <pre>
- *   DRAFT      Intern is composing; supervisor cannot see it yet.
- *   SUBMITTED  Intern sent for review; supervisor can return or approve.
- *   RETURNED   Supervisor sent back with notes — intern edits and re-submits.
- *   APPROVED   Terminal. Locked — edits are blocked, return/approve no-ops.
+ *   DRAFT      Intern is composing; no reviewer sees it yet.
+ *   SUBMITTED  Intern sent for review; ERM can verify or return.
+ *   VERIFIED   ERM signed off; Evaluator can approve or return.
+ *   RETURNED   Sent back with notes from either review stage; intern
+ *              edits and re-submits (goes back to SUBMITTED).
+ *   APPROVED   Terminal. Locked — edits are blocked, downstream actions no-op.
  * </pre>
  */
 public enum WeeklyReportStatus {
     DRAFT,
     SUBMITTED,
+    VERIFIED,
     RETURNED,
     APPROVED
 }

@@ -23,22 +23,33 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Weekly narrative reports — the second piece of the Phase-2 weekly cycle.
+ * Weekly narrative reports — second piece of the Phase-2 weekly cycle.
+ *
+ * <h2>Two-stage review (mirrors the timesheet flow)</h2>
+ * {@code SUBMITTED → VERIFIED} lives on
+ * {@link com.anvicorp.api.erm.report.ErmWeeklyReportController} ({@code ERM}
+ * + {@code SUPER_ADMIN}). {@code VERIFIED → APPROVED} lives here on the
+ * {@link #approve} endpoint ({@code EVALUATOR} + {@code SUPER_ADMIN}).
+ * Return-for-correction is available at both stages.
  *
  * <h2>Roles per endpoint</h2>
  * <ul>
  *   <li>Intern commands (create / update / submit-via-update / list own):
- *       {@code INTERN} only. APPLICANT can't satisfy the service-level
- *       active-engagement gate either way.</li>
- *   <li>Supervisor commands (read intern roster / return / approve):
- *       {@code TECHNICAL_EVALUATOR} or {@code SUPER_ADMIN}. The service
- *       layer additionally checks that a TECHNICAL_EVALUATOR owns the
- *       intern's engagement; SUPER_ADMIN bypasses ownership.</li>
+ *       {@code INTERN} only.</li>
+ *   <li>Reviewer read (list an intern's reports): {@code ERM},
+ *       {@code EVALUATOR}, {@code SUPER_ADMIN}, or the assigned Trainer
+ *       supervisor — enforced by the service layer.</li>
+ *   <li>Approve (VERIFIED → APPROVED): {@code EVALUATOR} +
+ *       {@code SUPER_ADMIN}. Requires the ERM to have verified first.</li>
+ *   <li>Return-for-correction (VERIFIED → RETURNED, evaluator-stage):
+ *       {@code EVALUATOR} + {@code SUPER_ADMIN}. The ERM-stage return
+ *       (SUBMITTED → RETURNED) lives on
+ *       {@link com.anvicorp.api.erm.report.ErmWeeklyReportController}.</li>
  * </ul>
  *
  * <h2>APPROVED lock</h2>
- * Once a report is APPROVED, PUT returns 409 and the return/approve
- * endpoints become idempotent no-ops.
+ * Once a report is APPROVED, PUT returns 409 and every reviewer action
+ * becomes an idempotent no-op.
  */
 @RestController
 @RequestMapping("/api/v1/weekly-reports")
@@ -80,11 +91,16 @@ public class WeeklyReportController {
         return service.listForMe(user);
     }
 
-    // ── Supervisor commands ─────────────────────────────────────────────────
+    // ── Reviewer commands ───────────────────────────────────────────────────
 
-    /** All reports for a candidate the caller supervises. */
+    /**
+     * All reports for a candidate the caller has read-access to. Role /
+     * ownership enforcement is inside the service — any ERM / EVALUATOR /
+     * SUPER_ADMIN sees any intern, plus the assigned Trainer supervisor
+     * for their own roster.
+     */
     @GetMapping("/intern/{candidateId}")
-    @PreAuthorize("hasAnyRole('TRAINER', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ERM', 'EVALUATOR', 'TRAINER', 'SUPER_ADMIN')")
     public List<WeeklyReportResponse> listForIntern(
             @PathVariable UUID candidateId,
             @AuthenticationPrincipal User user) {
@@ -92,16 +108,16 @@ public class WeeklyReportController {
     }
 
     @PostMapping("/{id}/return")
-    @PreAuthorize("hasAnyRole('TRAINER', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
     public WeeklyReportResponse returnForCorrection(
             @PathVariable UUID id,
             @Valid @RequestBody ReviewWeeklyReportRequest req,
             @AuthenticationPrincipal User user) {
-        return service.returnForCorrection(id, req, user);
+        return service.returnFromEvaluator(id, req, user);
     }
 
     @PostMapping("/{id}/approve")
-    @PreAuthorize("hasAnyRole('TRAINER', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
     public WeeklyReportResponse approve(
             @PathVariable UUID id,
             @RequestBody(required = false) ReviewWeeklyReportRequest req,
@@ -111,13 +127,6 @@ public class WeeklyReportController {
 
     // ── Attachment (optional supporting file) ───────────────────────────────
 
-    /**
-     * Intern uploads (or replaces) the optional supporting file on their
-     * own report. Multipart POST — reuses the standard document upload
-     * pattern (10 MB cap via {@code spring.servlet.multipart.max-file-size}).
-     * Allow-list: {@code application/pdf}, {@code application/msword},
-     * {@code application/vnd.openxmlformats-officedocument.wordprocessingml.document}.
-     */
     @PostMapping(value = "/{id}/attachment",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('INTERN')")
@@ -129,15 +138,12 @@ public class WeeklyReportController {
     }
 
     /**
-     * Stream the attachment for viewing / download. Intern-owner OR the
-     * assigned supervisor (TRAINER) OR SUPER_ADMIN — enforced in the
-     * service so the intern's own view uses the same URL the reviewer
-     * hits. Content-Disposition is {@code inline} so a PDF renders in
-     * the browser tab; {@code filename} carries the original name for
-     * "Save as…".
+     * Stream the attachment for viewing / download. Intern-owner OR any
+     * ERM / EVALUATOR / SUPER_ADMIN OR the assigned Trainer supervisor —
+     * enforced by the service.
      */
     @GetMapping("/{id}/attachment")
-    @PreAuthorize("hasAnyRole('INTERN', 'TRAINER', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('INTERN', 'ERM', 'EVALUATOR', 'TRAINER', 'SUPER_ADMIN')")
     public ResponseEntity<ByteArrayResource> downloadAttachment(
             @PathVariable UUID id,
             @AuthenticationPrincipal User user) {
@@ -155,10 +161,6 @@ public class WeeklyReportController {
                 .body(new ByteArrayResource(payload.bytes()));
     }
 
-    /**
-     * Intern clears the attachment on their own report. Idempotent —
-     * no-op when nothing is attached. APPROVED-lock refuses (409).
-     */
     @DeleteMapping("/{id}/attachment")
     @PreAuthorize("hasRole('INTERN')")
     public WeeklyReportResponse deleteAttachment(

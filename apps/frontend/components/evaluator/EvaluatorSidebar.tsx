@@ -20,6 +20,7 @@ const ITEMS: { href: string; label: string; phase: number }[] = [
   { href: '/careers/evaluator/schedule-session',      label: 'Schedule Session',     phase: 2 },
   { href: '/careers/evaluator/pending-evaluations',   label: 'Pending Evaluations',  phase: 2 },
   { href: '/careers/evaluator/pending-vivas',         label: 'Pending Q&A',          phase: 2 },
+  { href: '/careers/evaluator/weekly-reports',        label: 'Weekly Reports',       phase: 2 },
   { href: '/careers/evaluator/i983-evaluations',      label: 'I-983 Evaluations',    phase: 3 },
   { href: '/careers/evaluator/evaluation-history',    label: 'Evaluation History',   phase: 4 },
   { href: '/careers/evaluator/reports',               label: 'Reports',              phase: 4 },
