@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/careers/auth-context';
 import { openMailWithSso } from '@/lib/careers/mail-sso';
-import { useMailboxSummary } from './MailboxSummaryContext';
+import { shouldShowMailEntry, useMailboxSummary } from './MailboxSummaryContext';
 import {
   useInternDashboardOptional,
   type InternModulesMap,
@@ -224,15 +224,17 @@ export default function DashboardSidebar({ onNavigate }: Props) {
 
 /**
  * "Mail" entry in the sidebar footer — mirrors the top-bar mail icon
- * on the same visibility contract. Consumes {@link useMailboxSummary}
- * (the shared context also used by TopBarMailbox), so users with no
- * linked mailbox see NEITHER entry point and there's no orphan Mail
- * link that would drop them at an SSO 404.
+ * on the same role-aware visibility contract. Both consumers go through
+ * {@link shouldShowMailEntry} so staff never see the item hidden and
+ * interns keep the pre-existing "wait until ERM assigns a mailbox"
+ * gate. If a staff user happens to lack a mailbox (legacy account),
+ * clicking still surfaces a clean toast via {@code openMailWithSso}.
  */
 function MailSidebarItem({ onAfter }: { onAfter?: () => void }) {
   const { summary } = useMailboxSummary();
+  const { user } = useAuth();
   const [busy, setBusy] = useState(false);
-  if (!summary || !summary.hasMailbox) return null;
+  if (!shouldShowMailEntry(user, summary)) return null;
   return (
     <button
       type="button"

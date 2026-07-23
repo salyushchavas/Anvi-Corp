@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -62,16 +63,21 @@ public class MeMailboxController {
     @PreAuthorize("isAuthenticated()")
     @Transactional(readOnly = true)
     public Summary summary(@AuthenticationPrincipal User caller) {
-        if (caller == null || caller.getMailAccountId() == null) {
+        if (caller == null) {
             return Summary.empty();
         }
-        UUID accountId = caller.getMailAccountId();
+        // Resolve the mailbox. Preferred path: the explicit
+        // User.mailAccountId link. Fallback: match by
+        // User.email → localPart@domain, so staff accounts created
+        // through the admin dual-write (which historically forgot to
+        // stamp the link column) still get a real peek instead of a
+        // false hasMailbox=false. Same address-based resolution
+        // MailSsoService uses for its handoff — the two paths now
+        // agree on "does this user have a mailbox".
+        MailAccount account = resolveAccount(caller);
+        if (account == null) return Summary.empty();
+        UUID accountId = account.getId();
         try {
-            // Light sanity: don't surface peek for a mail account that
-            // doesn't exist anymore (the gate on the frontend keys off
-            // hasMailbox, so this prevents a stale link from rendering).
-            MailAccount account = mailAccountRepository.findById(accountId).orElse(null);
-            if (account == null) return Summary.empty();
 
             long unread = mailboxEntryRepository
                     .countByAccountIdAndFolderAndCustomFolderIdIsNullAndDeletedAtIsNullAndIsReadFalse(
@@ -128,6 +134,40 @@ public class MeMailboxController {
                     caller.getId(), ex.getMessage());
             return Summary.empty();
         }
+    }
+
+    /**
+     * Resolve the caller's mailbox with a two-step lookup:
+     * <ol>
+     *   <li>{@code User.mailAccountId} → mailbox by id. Fastest path;
+     *       used by intern accounts and any staff account whose link is
+     *       correctly stamped.</li>
+     *   <li>{@code User.email} → {@code localPart@domain} → mailbox by
+     *       address. Rescue path for staff created via the admin
+     *       dual-write, which historically forgot to stamp
+     *       {@link User#getMailAccountId()} — the MailAccount row is
+     *       there, just unlinked. Same address resolution
+     *       {@code MailSsoService.mintFor} uses, so the two paths agree.</li>
+     * </ol>
+     * Returns {@code null} when neither path finds a mailbox — the caller
+     * turns that into a {@code hasMailbox=false} summary.
+     */
+    private MailAccount resolveAccount(User caller) {
+        UUID linkedId = caller.getMailAccountId();
+        if (linkedId != null) {
+            MailAccount linked = mailAccountRepository.findById(linkedId).orElse(null);
+            if (linked != null) return linked;
+        }
+        String email = caller.getEmail();
+        if (email == null || email.isBlank()) return null;
+        String norm = email.trim().toLowerCase(Locale.ROOT);
+        int at = norm.indexOf('@');
+        if (at <= 0 || at == norm.length() - 1) return null;
+        String localPart = norm.substring(0, at);
+        String domainName = norm.substring(at + 1);
+        return mailAccountRepository
+                .findByLocalPartAndDomain_Name(localPart, domainName)
+                .orElse(null);
     }
 
     /** Compact peek-item DTO. NO body — body is encrypted at rest and

@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mail } from 'lucide-react';
 import { openMailWithSso } from '@/lib/careers/mail-sso';
-import { useMailboxSummary } from './MailboxSummaryContext';
+import { useAuth } from '@/lib/careers/auth-context';
+import { shouldShowMailEntry, useMailboxSummary } from './MailboxSummaryContext';
 
 /**
  * Mail entry point in the dashboard topbar beside the bell + profile
@@ -12,11 +13,12 @@ import { useMailboxSummary } from './MailboxSummaryContext';
  * the sidebar Mail item — so both entry points render / hide together
  * with a single request cadence.
  *
- * <p>Visibility rule: the icon renders ONLY when the user has a linked
- * mailbox ({@code hasMailbox=true}, i.e. ERM has assigned one). Users
- * with no mailbox see nothing at all — no icon, no popover — and the
- * SSO handoff is unreachable from this component. Same gate the
- * sidebar "Mail" item uses.</p>
+ * <p>Visibility rule (role-aware): staff always see the icon — their
+ * mailbox is provisioned at account creation and the SSO handoff works
+ * off {@code User.email}, independent of whether the peek summary
+ * could hydrate. Interns only see the icon after the ERM assigns their
+ * mailbox ({@code hasMailbox=true}). See {@link shouldShowMailEntry}
+ * for the exact rule; same gate the sidebar "Mail" item uses.</p>
  *
  * <p>Clicking the icon opens a peek popover listing the most recent
  * inbox messages with subject + sender + time. Clicking any message
@@ -25,6 +27,7 @@ import { useMailboxSummary } from './MailboxSummaryContext';
  */
 export default function TopBarMailbox() {
   const { summary } = useMailboxSummary();
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [handoffInFlight, setHandoffInFlight] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -40,12 +43,13 @@ export default function TopBarMailbox() {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [open]);
 
-  // Hide entirely when the user has no linked mailbox — matches the
-  // sidebar Mail item's gate. Same visibility contract for both entry
-  // points, one summary fetch.
-  if (!summary || !summary.hasMailbox) return null;
+  // Role-aware gate — staff always see mail; interns see it only after
+  // the ERM assigns them a mailbox. Same rule the sidebar Mail item
+  // uses; centralized in shouldShowMailEntry so the two entry points
+  // can't drift.
+  if (!shouldShowMailEntry(user, summary)) return null;
 
-  const unread = summary.unreadCount;
+  const unread = summary?.unreadCount ?? 0;
 
   async function handleHandoff() {
     setOpen(false);
@@ -81,7 +85,7 @@ export default function TopBarMailbox() {
           <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
             <div>
               <p className="text-xs font-semibold text-slate-900">Company mailbox</p>
-              {summary.mailAddress && (
+              {summary?.mailAddress && (
                 <p className="font-mono text-[11px] text-slate-500">
                   {summary.mailAddress}
                 </p>
@@ -93,12 +97,12 @@ export default function TopBarMailbox() {
           </div>
 
           <ul className="max-h-80 overflow-y-auto divide-y divide-slate-100">
-            {summary.items.length === 0 && (
+            {(summary?.items ?? []).length === 0 && (
               <li className="px-3 py-6 text-center text-xs text-slate-500">
-                No messages yet.
+                {summary ? 'No messages yet.' : 'Peek unavailable — open /mail directly.'}
               </li>
             )}
-            {summary.items.map((it) => (
+            {(summary?.items ?? []).map((it) => (
               <li key={it.entryId}>
                 <button
                   type="button"
