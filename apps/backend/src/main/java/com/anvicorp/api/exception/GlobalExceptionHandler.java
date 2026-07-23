@@ -205,12 +205,29 @@ public class GlobalExceptionHandler {
         // Map the well-known Postgres SQLState codes to a friendly,
         // accurate user message. Unknown / driver-specific states fall
         // through to the generic 409.
+        // For CHECK violations we can usually name the constraint that
+        // tripped (Postgres puts it in the message). Surfacing it in the
+        // response detail turns "A submitted value isn't allowed here"
+        // from a dead-end into something a developer can grep — the
+        // stale weekly_reports_status_check incident that shipped this
+        // handler improvement burned two debugging cycles before the
+        // constraint name gave it away.
+        Map<String, Object> checkDetails = null;
+        if ("23514".equals(sqlState) && constraint != null) {
+            checkDetails = new LinkedHashMap<>();
+            checkDetails.put("constraint", constraint);
+        }
+
         return switch (sqlState == null ? "" : sqlState) {
             case "23505" -> body(HttpStatus.CONFLICT, "UNIQUE_VIOLATION",
                     "A record with these details already exists.", null);
             case "23514" -> body(HttpStatus.BAD_REQUEST, "CHECK_VIOLATION",
-                    "A submitted value isn't allowed here. "
-                            + "Please review the form and try again.", null);
+                    constraint != null
+                            ? "A submitted value isn't allowed here (violates "
+                                    + constraint + "). Please review the form and try again."
+                            : "A submitted value isn't allowed here. "
+                                    + "Please review the form and try again.",
+                    checkDetails);
             case "23503" -> body(HttpStatus.CONFLICT, "FK_VIOLATION",
                     "This action can't be completed because related records "
                             + "still exist, or a referenced record is missing.", null);

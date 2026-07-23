@@ -106,6 +106,12 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // source of truth; the DB CHECK is belt-and-suspenders.
         rebuildTimesheetsStatusCheck();
 
+        // Same story for weekly_reports — VERIFIED was added in the
+        // two-stage review rollout but the legacy CHECK still lists the
+        // pre-VERIFIED set, so every ERM verify write 23514s. Mirror the
+        // timesheets pattern verbatim.
+        rebuildWeeklyReportsStatusCheck();
+
         // ── 8-role finalize: rename HR_COMPLIANCE → HR and
         //                    TECHNICAL_SUPERVISOR → TECHNICAL_EVALUATOR.
         //
@@ -2789,6 +2795,56 @@ public class SchemaFixupRunner implements CommandLineRunner {
                 log.error("[SchemaFixupRunner] {} is MISSING on timesheets after rebuild "
                         + "attempt — ERM verifyBatch will continue to 23514 until this is "
                         + "resolved (check DB user privileges on the timesheets table).",
+                        constraint);
+            }
+        } catch (Exception verifyErr) {
+            log.warn("[SchemaFixupRunner] post-rebuild verify on {} failed (non-fatal): {}",
+                    constraint, verifyErr.getMessage());
+        }
+    }
+
+    /**
+     * Rebuild {@code weekly_reports_status_check} to allow VERIFIED (and
+     * the current {@link com.anvicorp.api.enums.WeeklyReportStatus} set).
+     * Sister of {@link #rebuildTimesheetsStatusCheck} — same problem:
+     * Hibernate's {@code ddl-auto=update} generated the CHECK when the
+     * enum only had DRAFT/SUBMITTED/RETURNED/APPROVED, then refused to
+     * modify it when VERIFIED was added, so every ERM verify UPDATE
+     * fails with SQLSTATE 23514 → surfaced to the user as a generic
+     * "A submitted value isn't allowed here."
+     */
+    private void rebuildWeeklyReportsStatusCheck() {
+        final String constraint = "weekly_reports_status_check";
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE weekly_reports DROP CONSTRAINT IF EXISTS " + constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} DROP failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE weekly_reports ADD CONSTRAINT " + constraint
+                            + " CHECK (status IN ('DRAFT','SUBMITTED','VERIFIED',"
+                            + "'RETURNED','APPROVED'))");
+            log.info("[SchemaFixupRunner] rebuilt {} to current WeeklyReportStatus enum "
+                    + "(DRAFT,SUBMITTED,VERIFIED,RETURNED,APPROVED)", constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} ADD failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM pg_constraint c "
+                            + "JOIN pg_class t ON t.oid = c.conrelid "
+                            + "WHERE t.relname = 'weekly_reports' AND c.conname = ?",
+                    Integer.class, constraint);
+            if (count != null && count > 0) {
+                log.info("[SchemaFixupRunner] verified {} present on weekly_reports", constraint);
+            } else {
+                log.error("[SchemaFixupRunner] {} is MISSING on weekly_reports after rebuild "
+                        + "attempt — ERM verify will continue to 23514 until this is "
+                        + "resolved (check DB user privileges on the weekly_reports table).",
                         constraint);
             }
         } catch (Exception verifyErr) {
