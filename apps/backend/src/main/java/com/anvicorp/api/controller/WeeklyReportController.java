@@ -29,7 +29,7 @@ import java.util.UUID;
  * {@code SUBMITTED → VERIFIED} lives on
  * {@link com.anvicorp.api.erm.report.ErmWeeklyReportController} ({@code ERM}
  * + {@code SUPER_ADMIN}). {@code VERIFIED → APPROVED} lives here on the
- * {@link #approve} endpoint ({@code EVALUATOR} + {@code SUPER_ADMIN}).
+ * {@link #approve} endpoint ({@code MANAGER} + {@code SUPER_ADMIN}).
  * Return-for-correction is available at both stages.
  *
  * <h2>Roles per endpoint</h2>
@@ -37,12 +37,14 @@ import java.util.UUID;
  *   <li>Intern commands (create / update / submit-via-update / list own):
  *       {@code INTERN} only.</li>
  *   <li>Reviewer read (list an intern's reports): {@code ERM},
- *       {@code EVALUATOR}, {@code SUPER_ADMIN}, or the assigned Trainer
- *       supervisor — enforced by the service layer.</li>
- *   <li>Approve (VERIFIED → APPROVED): {@code EVALUATOR} +
+ *       {@code MANAGER}, {@code EVALUATOR}, {@code SUPER_ADMIN}, or the
+ *       assigned Trainer supervisor — enforced by the service layer.
+ *       EVALUATOR retains read access so the Evaluator still sees an
+ *       intern's history when preparing a monthly / final evaluation.</li>
+ *   <li>Approve (VERIFIED → APPROVED): {@code MANAGER} +
  *       {@code SUPER_ADMIN}. Requires the ERM to have verified first.</li>
- *   <li>Return-for-correction (VERIFIED → RETURNED, evaluator-stage):
- *       {@code EVALUATOR} + {@code SUPER_ADMIN}. The ERM-stage return
+ *   <li>Return-for-correction (VERIFIED → RETURNED, approver-stage):
+ *       {@code MANAGER} + {@code SUPER_ADMIN}. The ERM-stage return
  *       (SUBMITTED → RETURNED) lives on
  *       {@link com.anvicorp.api.erm.report.ErmWeeklyReportController}.</li>
  * </ul>
@@ -100,7 +102,7 @@ public class WeeklyReportController {
      * for their own roster.
      */
     @GetMapping("/intern/{candidateId}")
-    @PreAuthorize("hasAnyRole('ERM', 'EVALUATOR', 'TRAINER', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ERM', 'MANAGER', 'EVALUATOR', 'TRAINER', 'SUPER_ADMIN')")
     public List<WeeklyReportResponse> listForIntern(
             @PathVariable UUID candidateId,
             @AuthenticationPrincipal User user) {
@@ -108,16 +110,16 @@ public class WeeklyReportController {
     }
 
     @PostMapping("/{id}/return")
-    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('MANAGER', 'SUPER_ADMIN')")
     public WeeklyReportResponse returnForCorrection(
             @PathVariable UUID id,
             @Valid @RequestBody ReviewWeeklyReportRequest req,
             @AuthenticationPrincipal User user) {
-        return service.returnFromEvaluator(id, req, user);
+        return service.returnFromManager(id, req, user);
     }
 
     @PostMapping("/{id}/approve")
-    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('MANAGER', 'SUPER_ADMIN')")
     public WeeklyReportResponse approve(
             @PathVariable UUID id,
             @RequestBody(required = false) ReviewWeeklyReportRequest req,

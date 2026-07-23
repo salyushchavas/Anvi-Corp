@@ -25,9 +25,9 @@ import java.util.UUID;
  *   <li>Intern submits → notify ERM(s) — owning {@code lifecycle.erm_id}
  *       when set, else broadcast to all users with the ERM role so the
  *       report never sits unclaimed.</li>
- *   <li>ERM verifies → notify the owning {@code lifecycle.evaluator_id},
- *       else broadcast to EVALUATOR role users (single evaluator per the
- *       Phase 0 design, but the fallback keeps the fan-out robust).</li>
+ *   <li>ERM verifies → notify the owning {@code lifecycle.manager_id},
+ *       else broadcast to MANAGER role users so the report never sits
+ *       unclaimed at the approver stage.</li>
  * </ul>
  *
  * <p>Approval / return dispatches stay on {@code NotificationService}'s
@@ -72,7 +72,7 @@ public class WeeklyReportChainListener {
         }
     }
 
-    // ── Verified → Evaluator ────────────────────────────────────────────────
+    // ── Verified → Manager ──────────────────────────────────────────────────
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onVerified(WeeklyReportVerifiedEvent e) {
@@ -81,17 +81,17 @@ public class WeeklyReportChainListener {
             String internName = nameOf(e.getInternUserId(), "An intern");
             InternLifecycle lc = lifecycleRepository.findByUserId(e.getInternUserId())
                     .orElse(null);
-            List<UUID> recipients = evaluatorRecipients(lc);
+            List<UUID> recipients = managerRecipients(lc);
             if (recipients.isEmpty()) {
-                log.debug("[WeeklyReportChain] no Evaluator resolvable for intern {} — verify notify skipped",
+                log.debug("[WeeklyReportChain] no Manager resolvable for intern {} — verify notify skipped",
                         e.getInternUserId());
                 return;
             }
             String title = internName + "'s weekly report is verified";
-            String body  = "Ready for your approval in Evaluator → Weekly Reports.";
+            String body  = "Ready for your approval in Manager → Weekly Reports.";
             for (UUID rid : recipients) {
                 safeDispatch(rid, "WEEKLY_REPORT_VERIFIED", e.getInternUserId(),
-                        title, body, "/careers/evaluator/weekly-reports");
+                        title, body, "/careers/manager/weekly-reports");
             }
         } catch (Exception ex) {
             log.warn("[WeeklyReportChain] onVerified failed (non-fatal): {}", ex.getMessage());
@@ -116,18 +116,18 @@ public class WeeklyReportChainListener {
         }
     }
 
-    private List<UUID> evaluatorRecipients(InternLifecycle lc) {
-        if (lc != null && lc.getEvaluatorId() != null) {
-            return List.of(lc.getEvaluatorId());
+    private List<UUID> managerRecipients(InternLifecycle lc) {
+        if (lc != null && lc.getManagerId() != null) {
+            return List.of(lc.getManagerId());
         }
         try {
-            return userRepository.findByRole(UserRole.EVALUATOR).stream()
+            return userRepository.findByRole(UserRole.MANAGER).stream()
                     .filter(u -> u != null && u.getId() != null
                             && Boolean.TRUE.equals(u.getActive()))
                     .map(User::getId)
                     .toList();
         } catch (Exception e) {
-            log.debug("[WeeklyReportChain] Evaluator role lookup failed (non-fatal): {}", e.getMessage());
+            log.debug("[WeeklyReportChain] Manager role lookup failed (non-fatal): {}", e.getMessage());
             return List.of();
         }
     }

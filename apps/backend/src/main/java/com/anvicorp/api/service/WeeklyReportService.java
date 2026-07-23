@@ -50,11 +50,11 @@ import java.util.UUID;
  * <h2>Two-stage review (mirrors the timesheet flow)</h2>
  * {@code DRAFT → SUBMITTED → VERIFIED → APPROVED}, with {@code RETURNED} as
  * the send-back branch from either SUBMITTED (ERM stage) or VERIFIED
- * (Evaluator stage). Roles per stage:
+ * (Manager stage). Roles per stage:
  * <ul>
  *   <li>{@code SUBMITTED → VERIFIED}: {@code ERM} + {@code SUPER_ADMIN}.
  *       Endpoint: {@code /api/v1/erm/weekly-reports/{id}/verify}.</li>
- *   <li>{@code VERIFIED → APPROVED}: {@code EVALUATOR} + {@code SUPER_ADMIN}.
+ *   <li>{@code VERIFIED → APPROVED}: {@code MANAGER} + {@code SUPER_ADMIN}.
  *       Endpoint: {@code /api/v1/weekly-reports/{id}/approve}.</li>
  *   <li>Return-for-correction: allowed at either stage by the reviewer of
  *       that stage. Endpoint on the per-stage controller.</li>
@@ -71,7 +71,7 @@ import java.util.UUID;
  * RETURN / APPROVE / VERIFY become idempotent no-ops.
  *
  * <h2>Reviewer scope</h2>
- * Both stages are org-wide (any ERM verifies, any Evaluator approves) so a
+ * Both stages are org-wide (any ERM verifies, any Manager approves) so a
  * report never gets stuck behind one reviewer's vacation. Mirrors the
  * timesheet pattern where the ERM verify queue is shared.
  *
@@ -80,7 +80,7 @@ import java.util.UUID;
  *   <li>REPORT_SUBMITTED — DRAFT or RETURNED → SUBMITTED (intern)</li>
  *   <li>REPORT_VERIFIED — SUBMITTED → VERIFIED (ERM)</li>
  *   <li>REPORT_RETURNED — reviewer sent back with notes</li>
- *   <li>REPORT_APPROVED — Evaluator approved (terminal)</li>
+ *   <li>REPORT_APPROVED — Manager approved (terminal)</li>
  * </ul>
  */
 @Service
@@ -336,7 +336,7 @@ public class WeeklyReportService {
 
     /**
      * ERM returns a SUBMITTED report for correction. Distinct entry point
-     * from the Evaluator's return (which acts on VERIFIED) — same target
+     * from the Manager's return (which acts on VERIFIED) — same target
      * status ({@code RETURNED}) but with a stage-specific state check so a
      * misconfigured button can't skip a stage.
      */
@@ -348,11 +348,11 @@ public class WeeklyReportService {
         return returnCommon(reportId, req, actor, WeeklyReportStatus.SUBMITTED, "ERM");
     }
 
-    // ── Stage 2: Evaluator approve ──────────────────────────────────────────
+    // ── Stage 2: Manager approve ────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<WeeklyReportResponse> listVerifiedForEvaluator(User actor) {
-        ensureEvaluatorOrSuperAdmin(actor, "view the Evaluator weekly-report queue");
+    public List<WeeklyReportResponse> listVerifiedForManager(User actor) {
+        ensureManagerOrSuperAdmin(actor, "view the Manager weekly-report queue");
         return reportRepository.findAllByStatusWithGraph(WeeklyReportStatus.VERIFIED)
                 .stream()
                 .map(this::toResponse)
@@ -360,7 +360,7 @@ public class WeeklyReportService {
     }
 
     /**
-     * Evaluator approves a VERIFIED report. Requires the ERM verify stage
+     * Manager approves a VERIFIED report. Requires the ERM verify stage
      * to have happened — a still-SUBMITTED row returns 400 with a clear
      * message. Mirrors the timesheet flow's {@code TimesheetService.approve}
      * VERIFIED-required guard.
@@ -369,7 +369,7 @@ public class WeeklyReportService {
     public WeeklyReportResponse approve(UUID reportId,
                                         ReviewWeeklyReportRequest req,
                                         User actor) {
-        ensureEvaluatorOrSuperAdmin(actor, "approve a weekly report");
+        ensureManagerOrSuperAdmin(actor, "approve a weekly report");
         WeeklyReport report = reportRepository.findByIdWithGraph(reportId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Weekly report not found: " + reportId));
@@ -412,16 +412,16 @@ public class WeeklyReportService {
     }
 
     /**
-     * Evaluator returns a VERIFIED report for correction. Same target
+     * Manager returns a VERIFIED report for correction. Same target
      * status ({@code RETURNED}) as the ERM return, but keyed off the
      * VERIFIED source state so a mis-routed button can't skip stages.
      */
     @Transactional
-    public WeeklyReportResponse returnFromEvaluator(UUID reportId,
-                                                    ReviewWeeklyReportRequest req,
-                                                    User actor) {
-        ensureEvaluatorOrSuperAdmin(actor, "return a weekly report");
-        return returnCommon(reportId, req, actor, WeeklyReportStatus.VERIFIED, "Evaluator");
+    public WeeklyReportResponse returnFromManager(UUID reportId,
+                                                  ReviewWeeklyReportRequest req,
+                                                  User actor) {
+        ensureManagerOrSuperAdmin(actor, "return a weekly report");
+        return returnCommon(reportId, req, actor, WeeklyReportStatus.VERIFIED, "Manager");
     }
 
     // ── Return-for-correction (shared body) ─────────────────────────────────
@@ -515,11 +515,13 @@ public class WeeklyReportService {
 
     /**
      * Read-side gate for a specific candidate's reports. Any ERM /
-     * EVALUATOR / SUPER_ADMIN sees any intern's report list. Legacy
-     * supervisor (engagement.supervisor.id == actor.id, typically the
-     * TRAINER) is also allowed so trainers can still see reports for their
-     * own intern roster — they just can't act on them any more (approve /
-     * return live on the ERM + Evaluator surfaces).
+     * MANAGER / EVALUATOR / SUPER_ADMIN sees any intern's report list.
+     * Legacy supervisor (engagement.supervisor.id == actor.id, typically
+     * the TRAINER) is also allowed so trainers can still see reports for
+     * their own intern roster — they just can't act on them any more
+     * (approve / return live on the ERM + Manager surfaces). EVALUATOR
+     * keeps read access so evaluators still see report history when
+     * preparing monthly / final evaluations.
      */
     private void ensureReviewerCanRead(Candidate candidate, User actor) {
         if (actor == null) {
@@ -528,6 +530,7 @@ public class WeeklyReportService {
         Set<UserRole> roles = actor.getRoles();
         if (roles != null && (roles.contains(UserRole.SUPER_ADMIN)
                 || roles.contains(UserRole.ERM)
+                || roles.contains(UserRole.MANAGER)
                 || roles.contains(UserRole.EVALUATOR))) {
             return;
         }
@@ -537,8 +540,8 @@ public class WeeklyReportService {
                         && e.getSupervisor().getId().equals(actor.getId()));
         if (!owns) {
             throw new ForbiddenException(
-                    "Only this intern's ERM, Evaluator, supervisor, or SUPER_ADMIN "
-                            + "may read their reports.");
+                    "Only this intern's ERM, Manager, Evaluator, supervisor, "
+                            + "or SUPER_ADMIN may read their reports.");
         }
     }
 
@@ -550,12 +553,12 @@ public class WeeklyReportService {
         throw new ForbiddenException("ERM role required to " + action);
     }
 
-    private static void ensureEvaluatorOrSuperAdmin(User actor, String action) {
+    private static void ensureManagerOrSuperAdmin(User actor, String action) {
         if (actor == null) throw new ForbiddenException("Authentication required.");
         Set<UserRole> roles = actor.getRoles();
-        if (roles == null) throw new ForbiddenException("EVALUATOR role required to " + action);
-        if (roles.contains(UserRole.SUPER_ADMIN) || roles.contains(UserRole.EVALUATOR)) return;
-        throw new ForbiddenException("EVALUATOR role required to " + action);
+        if (roles == null) throw new ForbiddenException("MANAGER role required to " + action);
+        if (roles.contains(UserRole.SUPER_ADMIN) || roles.contains(UserRole.MANAGER)) return;
+        throw new ForbiddenException("MANAGER role required to " + action);
     }
 
     private void publishChainEvent(Object event) {
@@ -644,7 +647,8 @@ public class WeeklyReportService {
 
     /**
      * Load the attachment bytes for streaming. Intern-owner OR
-     * ERM / EVALUATOR / SUPER_ADMIN OR the assigned Trainer supervisor.
+     * ERM / MANAGER / EVALUATOR / SUPER_ADMIN OR the assigned Trainer
+     * supervisor.
      */
     @Transactional
     public AttachmentPayload readAttachment(UUID reportId, User actor) {
@@ -705,15 +709,17 @@ public class WeeklyReportService {
 
     /**
      * Attachment-read RBAC: intern-owner OR SUPER_ADMIN OR any ERM /
-     * EVALUATOR (both now have queue surfaces that need to preview the
-     * file) OR the assigned Trainer supervisor. Mirrors
-     * {@link #ensureReviewerCanRead} but also allows the intern-owner.
+     * MANAGER / EVALUATOR (all now have queue or history surfaces that
+     * need to preview the file) OR the assigned Trainer supervisor.
+     * Mirrors {@link #ensureReviewerCanRead} but also allows the
+     * intern-owner.
      */
     private void ensureCanReadAttachment(WeeklyReport report, User actor) {
         if (actor == null) throw new ForbiddenException("Authentication required.");
         Set<UserRole> roles = actor.getRoles();
         if (roles != null && (roles.contains(UserRole.SUPER_ADMIN)
                 || roles.contains(UserRole.ERM)
+                || roles.contains(UserRole.MANAGER)
                 || roles.contains(UserRole.EVALUATOR))) {
             return;
         }
@@ -731,8 +737,8 @@ public class WeeklyReportService {
             if (owns) return;
         }
         throw new ForbiddenException(
-                "Only this intern, an ERM/Evaluator/supervisor, or SUPER_ADMIN "
-                        + "may read this attachment.");
+                "Only this intern, an ERM/Manager/Evaluator/supervisor, "
+                        + "or SUPER_ADMIN may read this attachment.");
     }
 
     /** Bytes + metadata for streaming the attachment out through the controller. */

@@ -6,7 +6,7 @@ import api from '@/lib/careers/api';
 import WeeklyReportAttachmentPreview from '@/components/report/WeeklyReportAttachmentPreview';
 
 /**
- * Evaluator approve queue for weekly reports — stage 2 of the two-stage
+ * Manager approve queue for weekly reports — stage 2 of the two-stage
  * review. Same two-level layout as the ERM queue (intern list →
  * per-intern chronological weeks) so the two screens feel identical.
  *
@@ -14,6 +14,10 @@ import WeeklyReportAttachmentPreview from '@/components/report/WeeklyReportAttac
  * approve is the terminal signoff — no reason to hide individual sign-off
  * behind a batch button when the ERM has already thinned the queue for
  * this stage.</p>
+ *
+ * <p>Wrapping is handled by the {@code /careers/manager} layout
+ * ({@code ProtectedRoute requiredRoles=['MANAGER','SUPER_ADMIN']} +
+ * {@code ManagerSidebar}), so this page renders its own content directly.</p>
  */
 
 interface WeeklyReportRow {
@@ -47,7 +51,7 @@ interface InternGroup {
   rows: WeeklyReportRow[];
 }
 
-export default function EvaluatorWeeklyReportsPage() {
+export default function ManagerWeeklyReportsPage() {
   const [rows, setRows] = useState<WeeklyReportRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -57,7 +61,7 @@ export default function EvaluatorWeeklyReportsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get<WeeklyReportRow[]>('/api/v1/evaluator/weekly-reports/pending');
+      const res = await api.get<WeeklyReportRow[]>('/api/v1/manager/weekly-reports/pending');
       setRows(res.data ?? []);
       setErr(null);
     } catch (e) {
@@ -131,7 +135,7 @@ export default function EvaluatorWeeklyReportsPage() {
 
       {returnFor && (
         <ReturnModal
-          endpoint={`/api/v1/evaluator/weekly-reports/${returnFor.id}/return`}
+          endpoint={`/api/v1/manager/weekly-reports/${returnFor.id}/return`}
           weekStart={returnFor.weekStart}
           onClose={() => setReturnFor(null)}
           onDone={async () => { setReturnFor(null); await load(); }}
