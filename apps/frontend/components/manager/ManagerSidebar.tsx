@@ -22,6 +22,7 @@ const ITEMS: { href: string; label: string; phase: number }[] = [
   { href: '/careers/manager/onboarding-health',     label: 'Onboarding Health',   phase: 2 },
   { href: '/careers/manager/active-interns',        label: 'Active Interns',      phase: 3 },
   { href: '/careers/manager/timesheet-approvals',   label: 'Timesheet Approvals', phase: 3 },
+  { href: '/careers/manager/weekly-reports',        label: 'Weekly Reports',      phase: 3 },
   { href: '/careers/manager/risk-center',           label: 'Risk Center',         phase: 4 },
   { href: '/careers/manager/reports',               label: 'Reports',             phase: 4 },
   { href: '/careers/manager/inactive-interns',      label: 'Inactive Interns',    phase: 4 },

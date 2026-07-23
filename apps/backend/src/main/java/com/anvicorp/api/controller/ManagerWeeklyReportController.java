@@ -19,47 +19,46 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Evaluator-side approval endpoints for the two-stage weekly-report flow.
- * Mirrors the ERM/Manager split on the timesheet flow — the Evaluator
- * approves reports that the ERM has already verified.
+ * Manager-side approval endpoints for the two-stage weekly-report flow.
+ * The Manager approves reports that the ERM has already verified —
+ * mirrors the timesheet approval ownership (Manager stage sits at the
+ * end of the review chain).
  *
- * <p>Approve / return on a specific report ID stays on
- * {@link WeeklyReportController#approve} / {@code /return} (both gated to
- * {@code EVALUATOR} + {@code SUPER_ADMIN}). This controller only adds the
- * queue endpoint the Evaluator's dashboard uses to see all VERIFIED
- * reports awaiting action.</p>
+ * <p>Approve on a specific report id stays on
+ * {@link WeeklyReportController#approve} ({@code hasAnyRole('MANAGER',
+ * 'SUPER_ADMIN')}); this controller adds the queue endpoint the Manager
+ * dashboard uses to see all VERIFIED reports awaiting action, plus a
+ * stable per-role return endpoint under {@code /api/v1/manager/…}.</p>
  */
 @RestController
-@RequestMapping("/api/v1/evaluator/weekly-reports")
+@RequestMapping("/api/v1/manager/weekly-reports")
 @RequiredArgsConstructor
-public class EvaluatorWeeklyReportController {
+public class ManagerWeeklyReportController {
 
     private final WeeklyReportService service;
 
     /**
-     * The Evaluator approve queue — all {@code VERIFIED} weekly reports,
+     * The Manager approve queue — all {@code VERIFIED} weekly reports,
      * FIFO by submitted time. Populated as ERMs verify SUBMITTED rows.
      */
     @GetMapping("/pending")
-    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('MANAGER', 'SUPER_ADMIN')")
     public List<WeeklyReportResponse> listPending(@AuthenticationPrincipal User caller) {
-        return service.listVerifiedForEvaluator(caller);
+        return service.listVerifiedForManager(caller);
     }
 
     /**
-     * Evaluator returns a VERIFIED report for correction. The single-ID
-     * approve endpoint is still exposed on {@link WeeklyReportController}
-     * (kept there for URL back-compat with the intern-facing detail
-     * routes); this endpoint only exists so the queue → return button on
-     * the Evaluator dashboard has a stable POST target under
-     * {@code /api/v1/evaluator/…}.
+     * Manager returns a VERIFIED report for correction. Same operation
+     * as {@link WeeklyReportController#returnForCorrection}; kept here so
+     * the queue → return action on the Manager dashboard has a stable
+     * POST target under {@code /api/v1/manager/…}.
      */
     @PostMapping("/{id}/return")
-    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('MANAGER', 'SUPER_ADMIN')")
     public WeeklyReportResponse returnForCorrection(
             @PathVariable UUID id,
             @Valid @RequestBody ReviewWeeklyReportRequest req,
             @AuthenticationPrincipal User caller) {
-        return service.returnFromEvaluator(id, req, caller);
+        return service.returnFromManager(id, req, caller);
     }
 }
