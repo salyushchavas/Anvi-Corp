@@ -59,10 +59,19 @@ import java.util.regex.Pattern;
  *       to the new company address so the dashboard login moves at
  *       the same moment as the mailbox provisioning. No re-login gate,
  *       no second step.</li>
+ *   <li><b>Write the same BCrypt hash to {@link User#getPasswordHash()}</b>
+ *       so the ERM-typed starting password authenticates against BOTH
+ *       the careers login chain AND the mailbox login chain. The hash
+ *       is encoded ONCE (shared BCrypt encoder) and reused on both rows
+ *       so a single raw string works for both surfaces — this is what
+ *       the credentials email tells the intern, and now it's actually
+ *       true. Also clear {@link User#getMustChangePassword()} to match
+ *       the mailbox side, since the ERM-typed password is the final
+ *       credential on both sides.</li>
  * </ol>
  * If any write throws, the whole transaction rolls back — no
- * half-linked intern with an orphan mailbox and no email swap without
- * a mailbox.
+ * half-linked intern with an orphan mailbox, no email swap without a
+ * mailbox, and no password mismatch between the two rows.
  *
  * <h2>Credentials handoff</h2>
  * A best-effort credentials email is sent to the intern's
@@ -209,11 +218,15 @@ public class CareersMailProvisioningService {
         }
 
         // Dual-write side 2: link the mailbox, mark handover complete,
-        // and move the careers login email to the company address in
-        // one shot. No PENDING_ACTIVATION step — ERM assignment is
-        // terminal. Archives the personal address into
-        // User.personalEmail so downstream code (fallback comms,
-        // account recovery) can still reach the intern out-of-band.
+        // move the careers login email to the company address, AND
+        // sync the password hash so the ERM-typed starting password
+        // authenticates against both surfaces. Reusing the SAME
+        // BCrypt hash that went onto the mailbox above — encoded once,
+        // written twice — so a single raw string logs the intern into
+        // both /mail and the careers dashboard. This is what the
+        // credentials email has always claimed; without this
+        // password-sync line the intern was locked out of careers
+        // (login email swapped, hash left stale).
         Instant now = Instant.now();
         intern.setMailAccountId(mailbox.getId());
         intern.setMailHandoverState(MailHandoverState.ACTIVATED);
@@ -226,6 +239,11 @@ public class CareersMailProvisioningService {
             intern.setPersonalEmail(personalEmail);
         }
         intern.setEmail(companyEmail);
+        intern.setPasswordHash(passwordHash);
+        // ERM-assigned password is terminal on both sides — clear any
+        // legacy must-change flag so the intern can sign in and keep
+        // using the same credential without an unexpected redirect.
+        intern.setMustChangePassword(false);
         userRepository.save(intern);
 
         log.info("[CareersMailProvisioning] ERM {} assigned company mailbox {} to intern {} "
