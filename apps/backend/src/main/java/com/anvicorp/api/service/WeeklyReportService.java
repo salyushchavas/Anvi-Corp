@@ -28,7 +28,9 @@ import com.anvicorp.api.repository.EngagementRepository;
 import com.anvicorp.api.repository.WeeklyReportRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -96,6 +98,19 @@ public class WeeklyReportService {
     private final DocumentRepository documentRepository;
     private final LifecycleAccessPolicy lifecycleAccessPolicy;
     private final ApplicationEventPublisher eventPublisher;
+
+    /**
+     * Self-injected proxy so {@link #verifyBatch} can invoke
+     * {@link #verify} VIA Spring's AOP proxy. A direct call from
+     * {@code verifyBatch} bypasses the proxy (self-invocation) → the
+     * inner method runs INSIDE the outer transaction, so a single
+     * malformed row poisons the whole batch. Routing through the proxy
+     * gives each row its own tx. Same pattern as
+     * {@link com.anvicorp.api.erm.timesheet.ErmTimesheetVerifyService}.
+     */
+    @Autowired
+    @Lazy
+    private WeeklyReportService self;
 
     // ── Attachment constants ────────────────────────────────────────────────
 
@@ -282,6 +297,41 @@ public class WeeklyReportService {
         WeeklyReport refreshed = reportRepository.findByIdWithGraph(saved.getId())
                 .orElse(saved);
         return toResponse(refreshed);
+    }
+
+    /**
+     * Batch-verify a set of ids. Iterates via the self-injected proxy so
+     * each row runs in its OWN transaction — a per-row failure (wrong
+     * state, forbidden, DB check) rolls back only that row and is
+     * reflected in the per-id outcome map instead of poisoning the
+     * commit. Mirrors {@code ErmTimesheetVerifyService.verifyBatch}.
+     *
+     * <p>Deliberately NOT {@code @Transactional} — self-invocation via
+     * the proxy is the whole point.</p>
+     */
+    public Map<UUID, String> verifyBatch(List<UUID> ids, User actor) {
+        // Role gate once up-front so a wholly-forbidden caller doesn't
+        // silently 200 with every id marked FORBIDDEN.
+        ensureErmOrSuperAdmin(actor, "verify weekly reports");
+        Map<UUID, String> out = new LinkedHashMap<>();
+        if (ids == null || ids.isEmpty()) return out;
+        for (UUID id : ids) {
+            try {
+                self.verify(id, null, actor);
+                out.put(id, "VERIFIED");
+            } catch (ForbiddenException fe) {
+                out.put(id, "FORBIDDEN");
+            } catch (BadRequestException br) {
+                // Wrong-state rows land here — surface the state message
+                // so the UI can show which weeks were skipped and why.
+                String m = br.getMessage() == null ? "BAD_REQUEST" : br.getMessage();
+                out.put(id, m.length() > 200 ? m.substring(0, 200) : m);
+            } catch (Exception e) {
+                String m = e.getMessage() == null ? "FAILED" : e.getMessage();
+                out.put(id, m.length() > 200 ? m.substring(0, 200) : m);
+            }
+        }
+        return out;
     }
 
     /**

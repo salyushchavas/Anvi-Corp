@@ -1,6 +1,7 @@
 package com.anvicorp.api.erm.report;
 
 import com.anvicorp.api.dto.report.ReviewWeeklyReportRequest;
+import com.anvicorp.api.dto.report.WeeklyReportBatchRequest;
 import com.anvicorp.api.dto.report.WeeklyReportResponse;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.service.WeeklyReportService;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -59,5 +61,21 @@ public class ErmWeeklyReportController {
             @Valid @RequestBody ReviewWeeklyReportRequest req,
             @AuthenticationPrincipal User caller) {
         return service.returnFromErm(id, req, caller);
+    }
+
+    /**
+     * Bulk-verify N reports in one call — the ERM's escape hatch when an
+     * intern submits a month's worth of catch-up weeks at once. Returns
+     * a per-id outcome map: {@code "VERIFIED"}, {@code "FORBIDDEN"}, or
+     * the wrong-state error text. Each row runs in its own transaction
+     * so a single skipped row doesn't roll back the rest. Mirrors
+     * {@code ErmTimesheetController.verifyBatch}.
+     */
+    @PostMapping("/verify-batch")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public Map<UUID, String> verifyBatch(
+            @Valid @RequestBody WeeklyReportBatchRequest req,
+            @AuthenticationPrincipal User caller) {
+        return service.verifyBatch(req.ids(), caller);
     }
 }
