@@ -119,7 +119,11 @@ export interface VerifyEmailResponse {
 
 // === Job postings ============================================================
 
-export type EmploymentType = 'INTERNSHIP' | 'CONTRACT' | 'FULL_TIME';
+export type EmploymentType =
+  | 'INTERNSHIP'
+  | 'CONTRACT'
+  | 'FULL_TIME'
+  | 'FULL_TIME_INTERNSHIP';
 
 export type JobPostingStatus = 'DRAFT' | 'OPEN' | 'PAUSED' | 'CLOSED';
 

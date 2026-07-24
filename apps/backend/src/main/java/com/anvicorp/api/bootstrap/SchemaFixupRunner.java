@@ -2572,6 +2572,10 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // with sqlState 23514 and the app fails to seed.
         rebuildUserRolesRoleCheckForJobsAdmin();
 
+        // Jobs Admin posting form adds a combined Full-Time / Internship
+        // job_type option. ddl-auto will not refresh the existing CHECK.
+        rebuildJobPostingsJobTypeCheckForCombinedType();
+
         // Evaluator Phase 2 — add recommendation column on intern_evaluations
         // for the monthly evaluation rubric publish flow. Idempotent.
         try {
@@ -4331,6 +4335,72 @@ public class SchemaFixupRunner implements CommandLineRunner {
             } else {
                 log.error("[SchemaFixupRunner] {} does not include JOBS_ADMIN after rebuild: {}",
                         constraint, def);
+            }
+        } catch (Exception verifyErr) {
+            log.error("[SchemaFixupRunner] post-rebuild verify on {} failed: {}",
+                    constraint, verifyErr.getMessage(), verifyErr);
+        }
+    }
+
+    /**
+     * Rebuild {@code job_postings.job_type} CHECK for the Jobs Admin posting
+     * form's combined Full-Time / Internship option.
+     */
+    private void rebuildJobPostingsJobTypeCheckForCombinedType() {
+        final String table = "job_postings";
+        final String column = "job_type";
+        final String constraint = "job_postings_job_type_check";
+        try {
+            List<java.util.Map<String, Object>> existing =
+                    jdbcTemplate.queryForList(
+                            "SELECT con.conname AS name, "
+                                    + "pg_get_constraintdef(con.oid) AS def "
+                                    + "FROM pg_constraint con "
+                                    + "JOIN pg_class cl ON cl.oid = con.conrelid "
+                                    + "JOIN pg_attribute att "
+                                    + "  ON att.attrelid = cl.oid "
+                                    + "  AND att.attnum = ANY(con.conkey) "
+                                    + "WHERE cl.relname = ? "
+                                    + "  AND att.attname = ? "
+                                    + "  AND con.contype = 'c'",
+                            table, column);
+            for (java.util.Map<String, Object> c : existing) {
+                String def = String.valueOf(c.get("def"));
+                if (!def.contains("'")) continue;
+                String name = String.valueOf(c.get("name"));
+                jdbcTemplate.execute(
+                        "ALTER TABLE " + table + " DROP CONSTRAINT IF EXISTS " + name);
+            }
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {}.{} CHECK DROP failed: {} — root: {}",
+                    table, column, e.getMessage(), rootMessage(e), e);
+        }
+
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE " + table + " ADD CONSTRAINT " + constraint
+                            + " CHECK (" + column + " IN ('INTERNSHIP','CONTRACT',"
+                            + "'FULL_TIME','FULL_TIME_INTERNSHIP'))");
+            log.info("[SchemaFixupRunner] rebuilt {} to include FULL_TIME_INTERNSHIP",
+                    constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} ADD failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+
+        try {
+            String def = jdbcTemplate.queryForObject(
+                    "SELECT pg_get_constraintdef(c.oid) "
+                            + "FROM pg_constraint c "
+                            + "JOIN pg_class t ON t.oid = c.conrelid "
+                            + "WHERE t.relname = ? AND c.conname = ?",
+                    String.class, table, constraint);
+            if (def != null && def.contains("FULL_TIME_INTERNSHIP")) {
+                log.info("[SchemaFixupRunner] verified {} includes FULL_TIME_INTERNSHIP",
+                        constraint);
+            } else {
+                log.error("[SchemaFixupRunner] {} does not include FULL_TIME_INTERNSHIP "
+                        + "after rebuild: {}", constraint, def);
             }
         } catch (Exception verifyErr) {
             log.error("[SchemaFixupRunner] post-rebuild verify on {} failed: {}",

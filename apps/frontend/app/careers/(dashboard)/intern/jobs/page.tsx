@@ -44,7 +44,10 @@ export default function InternJobsPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return postings
-      .filter((p) => (p.employmentType as EmploymentType) === tab)
+      .filter((p) => {
+        const type = p.employmentType as EmploymentType;
+        return type === tab || type === 'FULL_TIME_INTERNSHIP';
+      })
       .filter((p) => {
         if (!q) return true;
         return (

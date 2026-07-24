@@ -6,6 +6,13 @@ import api from '@/lib/careers/api';
 import { useAuth } from '@/lib/careers/auth-context';
 import type { JobPostingResponse, ResumeResponse } from '@/types';
 
+const EMPLOYMENT_LABEL: Record<string, string> = {
+  INTERNSHIP: 'Internship',
+  CONTRACT: 'Contract',
+  FULL_TIME: 'Full-time',
+  FULL_TIME_INTERNSHIP: 'Full-Time / Internship',
+};
+
 interface Props {
   posting: JobPostingResponse;
   onClose: () => void;
@@ -110,7 +117,7 @@ export default function ApplyModal({ posting, onClose, onApplied }: Props) {
               {posting.title}
             </h2>
             <p className="mt-0.5 text-xs uppercase tracking-wide text-slate-500">
-              {posting.employmentType === 'INTERNSHIP' ? 'Internship' : 'Full-time'}
+              {EMPLOYMENT_LABEL[posting.employmentType] ?? posting.employmentType}
               {posting.location ? ` · ${posting.location}` : ''}
             </p>
           </div>

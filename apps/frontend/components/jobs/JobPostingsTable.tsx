@@ -24,6 +24,7 @@ const EMPLOYMENT_LABEL: Record<string, string> = {
   INTERNSHIP: 'Internship',
   CONTRACT: 'Contract',
   FULL_TIME: 'Full-time',
+  FULL_TIME_INTERNSHIP: 'Full-Time / Internship',
 };
 
 /**
