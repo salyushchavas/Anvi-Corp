@@ -1,6 +1,6 @@
 import type { User, UserRole } from '@/types';
 
-// Seven-role landing map. Each role lands on its own dashboard. Page-level
+// Eight-role landing map. Each role lands on its own dashboard. Page-level
 // ProtectedRoute gates which screens a role can open from there.
 export const ROLE_DASHBOARDS: Record<UserRole, string> = {
   INTERN: '/careers/intern',
@@ -9,6 +9,7 @@ export const ROLE_DASHBOARDS: Record<UserRole, string> = {
   REPORTING_MANAGER: '/careers/reporting-manager',
   MANAGER: '/careers/manager',
   ERM: '/careers/erm',
+  JOBS_ADMIN: '/careers/adminjobs',
   SUPER_ADMIN: '/careers/admin',
 };
 
@@ -19,6 +20,7 @@ const ROLE_LANDING_PRIORITY: UserRole[] = [
   'SUPER_ADMIN',
   'MANAGER',
   'ERM',
+  'JOBS_ADMIN',
   'TRAINER',
   'EVALUATOR',
   'REPORTING_MANAGER',
@@ -40,14 +42,15 @@ export function getDashboardForUser(user: User): string {
  * sign-out race that previously stamped {@code ?returnTo=<old-role-page>}
  * onto the login URL.
  */
-const PATH_PREFIX_ROLES: ReadonlyArray<[string, UserRole]> = [
-  ['/careers/admin',            'SUPER_ADMIN'],
-  ['/careers/erm',              'ERM'],
-  ['/careers/manager',          'MANAGER'],
-  ['/careers/reporting-manager','REPORTING_MANAGER'],
-  ['/careers/trainer',          'TRAINER'],
-  ['/careers/evaluator',        'EVALUATOR'],
-  ['/careers/intern',           'INTERN'],
+const PATH_PREFIX_ROLES: ReadonlyArray<[string, readonly UserRole[]]> = [
+  ['/careers/adminjobs',        ['JOBS_ADMIN', 'SUPER_ADMIN']],
+  ['/careers/admin',            ['SUPER_ADMIN']],
+  ['/careers/erm',              ['ERM']],
+  ['/careers/manager',          ['MANAGER']],
+  ['/careers/reporting-manager',['REPORTING_MANAGER']],
+  ['/careers/trainer',          ['TRAINER']],
+  ['/careers/evaluator',        ['EVALUATOR']],
+  ['/careers/intern',           ['INTERN']],
 ];
 
 /**
@@ -56,11 +59,11 @@ const PATH_PREFIX_ROLES: ReadonlyArray<[string, UserRole]> = [
  * to a known role prefix (e.g. {@code /careers/jobs}).
  */
 export function returnToIsAllowedForUser(returnTo: string, user: User): boolean {
-  for (const [prefix, role] of PATH_PREFIX_ROLES) {
+  for (const [prefix, roles] of PATH_PREFIX_ROLES) {
     if (returnTo === prefix
         || returnTo.startsWith(prefix + '/')
         || returnTo.startsWith(prefix + '?')) {
-      return user.roles?.includes(role) ?? false;
+      return roles.some((role) => user.roles?.includes(role)) ?? false;
     }
   }
   return true;

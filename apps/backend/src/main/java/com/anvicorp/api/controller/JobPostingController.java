@@ -47,7 +47,7 @@ public class JobPostingController {
      * surface counts without an extra round-trip.
      */
     @GetMapping("/admin/all")
-    @PreAuthorize("hasRole('ERM')")
+    @PreAuthorize("hasAnyRole('ERM', 'JOBS_ADMIN')")
     public PagedResponse<JobPostingResponse> listAll(
             @RequestParam(required = false) String search,
             @RequestParam(required = false) com.anvicorp.api.enums.JobPostingStatus status,
@@ -60,6 +60,12 @@ public class JobPostingController {
                 jobPostingService.listAllForAdmin(search, status, entityId, pageable));
     }
 
+    @GetMapping("/admin/{idOrSlug}")
+    @PreAuthorize("hasAnyRole('ERM', 'JOBS_ADMIN')")
+    public JobPostingResponse getOneForAdmin(@PathVariable String idOrSlug) {
+        return jobPostingService.findAnyByIdOrSlug(idOrSlug);
+    }
+
     @GetMapping("/{idOrSlug}")
     public JobPostingResponse getOne(@PathVariable String idOrSlug,
                                      @AuthenticationPrincipal User user) {
@@ -67,7 +73,7 @@ public class JobPostingController {
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('ERM')")
+    @PreAuthorize("hasAnyRole('ERM', 'JOBS_ADMIN')")
     public ResponseEntity<JobPostingResponse> create(
             @Valid @RequestBody JobPostingCreateRequest req,
             @AuthenticationPrincipal User user) {
@@ -77,14 +83,14 @@ public class JobPostingController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ERM')")
+    @PreAuthorize("hasAnyRole('ERM', 'JOBS_ADMIN')")
     public JobPostingResponse update(@PathVariable UUID id,
                                      @Valid @RequestBody JobPostingUpdateRequest req) {
         return jobPostingService.update(id, req);
     }
 
     @PatchMapping("/{id}/status")
-    @PreAuthorize("hasRole('ERM')")
+    @PreAuthorize("hasAnyRole('ERM', 'JOBS_ADMIN')")
     public JobPostingResponse updateStatus(@PathVariable UUID id,
                                            @Valid @RequestBody JobPostingStatusUpdateRequest req) {
         return jobPostingService.updateStatus(id, req.getStatus());

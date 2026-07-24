@@ -128,6 +128,7 @@ const STAFF_ROLES: readonly UserRole[] = [
   'REPORTING_MANAGER',
   'MANAGER',
   'ERM',
+  'JOBS_ADMIN',
   'SUPER_ADMIN',
 ];
 

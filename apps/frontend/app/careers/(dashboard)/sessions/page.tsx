@@ -25,11 +25,12 @@ export default function SessionsPage() {
   // isAuthenticated().
   const allRoles: UserRole[] = [
     'INTERN',
-    'INTERN',
-    'ERM',
-    'ERM',
     'TRAINER',
+    'EVALUATOR',
+    'REPORTING_MANAGER',
     'MANAGER',
+    'ERM',
+    'JOBS_ADMIN',
     'SUPER_ADMIN',
   ];
   return (

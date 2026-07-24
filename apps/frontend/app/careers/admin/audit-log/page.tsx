@@ -17,6 +17,7 @@ const STAFF_ROLES_FOR_FILTER: UserRole[] = [
   'SUPER_ADMIN',
   'MANAGER',
   'ERM',
+  'JOBS_ADMIN',
   'TRAINER',
   'REPORTING_MANAGER',
 ];
@@ -28,6 +29,7 @@ const ROLE_LABEL: Record<UserRole, string> = {
   REPORTING_MANAGER: 'Reporting Manager',
   MANAGER: 'Manager',
   ERM: 'ERM',
+  JOBS_ADMIN: 'Jobs Admin',
   SUPER_ADMIN: 'Super admin',
 };
 

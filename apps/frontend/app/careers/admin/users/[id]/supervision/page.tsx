@@ -141,6 +141,7 @@ const ROLE_LABEL: Record<UserRole, string> = {
   REPORTING_MANAGER: 'Reporting Manager',
   MANAGER: 'Manager',
   ERM: 'ERM',
+  JOBS_ADMIN: 'Jobs Admin',
   SUPER_ADMIN: 'Super admin',
 };
 
@@ -154,6 +155,7 @@ const ROLE_COLOR: Record<UserRole, string> = {
   REPORTING_MANAGER: 'bg-amber-100 text-amber-800',
   MANAGER: 'bg-amber-100 text-amber-800',
   ERM: 'bg-green-100 text-green-800',
+  JOBS_ADMIN: 'bg-sky-100 text-sky-800',
   SUPER_ADMIN: 'bg-slate-200 text-slate-900',
 };
 

@@ -32,6 +32,7 @@ const STAFF_ROLES: UserRole[] = [
   'SUPER_ADMIN',
   'MANAGER',
   'ERM',
+  'JOBS_ADMIN',
   'TRAINER',
   'EVALUATOR',
   'REPORTING_MANAGER',
@@ -44,6 +45,7 @@ const STAFF_ROLES: UserRole[] = [
 const STAFF_CREATABLE_ROLES: UserRole[] = [
   'MANAGER',
   'ERM',
+  'JOBS_ADMIN',
   'TRAINER',
   'EVALUATOR',
   'REPORTING_MANAGER',
@@ -62,6 +64,7 @@ const ROLE_LABEL: Record<UserRole, string> = {
   REPORTING_MANAGER: 'Reporting Manager',
   MANAGER: 'Manager',
   ERM: 'ERM',
+  JOBS_ADMIN: 'Jobs Admin',
   SUPER_ADMIN: 'Super admin',
 };
 
@@ -75,6 +78,7 @@ const ROLE_COLOR: Record<UserRole, string> = {
   REPORTING_MANAGER: 'bg-amber-100 text-amber-800',
   MANAGER: 'bg-amber-100 text-amber-800',
   ERM: 'bg-green-100 text-green-800',
+  JOBS_ADMIN: 'bg-sky-100 text-sky-800',
   SUPER_ADMIN: 'bg-slate-200 text-slate-900',
 };
 
@@ -87,6 +91,7 @@ function primaryRole(roles: UserRole[] | null | undefined): UserRole {
   if (roles.includes('SUPER_ADMIN')) return 'SUPER_ADMIN';
   if (roles.includes('MANAGER')) return 'MANAGER';
   if (roles.includes('ERM')) return 'ERM';
+  if (roles.includes('JOBS_ADMIN')) return 'JOBS_ADMIN';
   const staff = roles.find((r) => !CANDIDATE_SIDE.includes(r));
   return staff ?? roles[0];
 }

@@ -1,6 +1,7 @@
 package com.anvicorp.api.dto;
 
 import com.anvicorp.api.enums.EmploymentType;
+import com.anvicorp.api.enums.JobPostingStatus;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
@@ -24,6 +25,8 @@ public class JobPostingCreateRequest {
     private String location;
 
     private EmploymentType employmentType = EmploymentType.INTERNSHIP;
+
+    private JobPostingStatus status = JobPostingStatus.DRAFT;
 
     @NotNull(message = "entityId is required")
     private UUID entityId;

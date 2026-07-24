@@ -28,7 +28,7 @@ public class AdminEntityController {
     private final AdminEntityService adminEntityService;
 
     @GetMapping
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ERM', 'JOBS_ADMIN')")
     public List<AdminEntityResponse> list() {
         return adminEntityService.list();
     }

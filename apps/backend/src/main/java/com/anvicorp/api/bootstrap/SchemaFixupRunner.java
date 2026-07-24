@@ -2566,6 +2566,12 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // matches the entity even on environments with ddl-auto disabled.
         migrateEvaluatorPhase0SchemaV1();
 
+        // JOBS_ADMIN Phase 0 — refresh user_roles CHECK a second time to
+        // include the new JOBS_ADMIN value. Without this, INSERT of a
+        // JOBS_ADMIN role trips CHECK constraint user_roles_role_check
+        // with sqlState 23514 and the app fails to seed.
+        rebuildUserRolesRoleCheckForJobsAdmin();
+
         // Evaluator Phase 2 — add recommendation column on intern_evaluations
         // for the monthly evaluation rubric publish flow. Idempotent.
         try {
@@ -4282,6 +4288,53 @@ public class SchemaFixupRunner implements CommandLineRunner {
             return cnt != null && cnt > 0;
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    /**
+     * JOBS_ADMIN Phase 0 — rebuild {@code user_roles_role_check} with the
+     * current 8-role set. Hibernate ddl-auto will add enum values to Java,
+     * but it will not alter an existing Postgres CHECK constraint, so boot
+     * seeders hit SQLSTATE 23514 unless the constraint is refreshed.
+     */
+    private void rebuildUserRolesRoleCheckForJobsAdmin() {
+        final String constraint = "user_roles_role_check";
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE user_roles DROP CONSTRAINT IF EXISTS " + constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} DROP failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE user_roles ADD CONSTRAINT " + constraint
+                            + " CHECK (role IN ('INTERN','TRAINER','EVALUATOR',"
+                            + "'REPORTING_MANAGER','MANAGER','ERM',"
+                            + "'SUPER_ADMIN','JOBS_ADMIN'))");
+            log.info("[SchemaFixupRunner] rebuilt {} to include JOBS_ADMIN", constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} ADD failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+
+        try {
+            String def = jdbcTemplate.queryForObject(
+                    "SELECT pg_get_constraintdef(c.oid) "
+                            + "FROM pg_constraint c "
+                            + "JOIN pg_class t ON t.oid = c.conrelid "
+                            + "WHERE t.relname = 'user_roles' AND c.conname = ?",
+                    String.class, constraint);
+            if (def != null && def.contains("JOBS_ADMIN")) {
+                log.info("[SchemaFixupRunner] verified {} includes JOBS_ADMIN", constraint);
+            } else {
+                log.error("[SchemaFixupRunner] {} does not include JOBS_ADMIN after rebuild: {}",
+                        constraint, def);
+            }
+        } catch (Exception verifyErr) {
+            log.error("[SchemaFixupRunner] post-rebuild verify on {} failed: {}",
+                    constraint, verifyErr.getMessage(), verifyErr);
         }
     }
 }

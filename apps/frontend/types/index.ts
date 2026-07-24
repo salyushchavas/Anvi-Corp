@@ -10,7 +10,7 @@ export type ApiError = {
   details?: unknown;
 };
 
-// Six-role taxonomy. Mirrors backend UserRole.java.
+// Eight-role taxonomy. Mirrors backend UserRole.java.
 //   INTERN            — applies, runs projects, submits timesheets.
 //   TRAINER           — assigns projects, conducts sessions, first sign-off.
 //   REPORTING_MANAGER — post-trainer review, approves timesheets.
@@ -24,6 +24,7 @@ export type UserRole =
   | 'REPORTING_MANAGER'
   | 'MANAGER'
   | 'ERM'
+  | 'JOBS_ADMIN'
   | 'SUPER_ADMIN';
 
 // Phase 1.4 — candidate's neutral self-attestation on expected work-auth

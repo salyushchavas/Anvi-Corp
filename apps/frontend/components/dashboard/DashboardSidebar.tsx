@@ -61,7 +61,7 @@ interface StaffLink {
   children?: StaffLink[];
 }
 
-// Six-role taxonomy. INTERN's 12-item sidebar is the doc-specified order from
+// Eight-role taxonomy. INTERN's 12-item sidebar is the doc-specified order from
 // the Applicant-to-Intern Lifecycle spec. The other five roles will get their
 // sub-nav filled in by per-role prompts; each is a single landing entry today.
 const STAFF_ROLE_LINKS: Record<UserRole, StaffLink[]> = {
@@ -118,6 +118,7 @@ const STAFF_ROLE_LINKS: Record<UserRole, StaffLink[]> = {
     { icon: BarChart3,      label: 'Reports',              href: '/careers/erm/reports' },
     { icon: Settings,       label: 'Settings',             href: '/careers/erm/settings' },
   ],
+  JOBS_ADMIN: [],
   SUPER_ADMIN: [
     { icon: LayoutDashboard, label: 'Super Admin Dashboard', href: '/careers/admin' },
     { icon: Users,           label: 'Users',                 href: '/careers/admin/users' },

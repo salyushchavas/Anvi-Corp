@@ -164,7 +164,8 @@ public class JobPostingService {
         JobPosting posting = lookupByIdOrSlug(idOrSlug);
         boolean privileged = viewer != null
                 && (viewer.getRoles().contains(UserRole.ERM)
-                || viewer.getRoles().contains(UserRole.ERM));
+                || viewer.getRoles().contains(UserRole.JOBS_ADMIN)
+                || viewer.getRoles().contains(UserRole.SUPER_ADMIN));
         if (!privileged && posting.getStatus() != JobPostingStatus.OPEN) {
             throw new ResourceNotFoundException("Job posting not found");
         }
@@ -194,6 +195,9 @@ public class JobPostingService {
                 .jobId(jobIdGenerator.nextJobId())
                 .publishedById(publisher != null ? publisher.getId() : null)
                 .build();
+        if (req.getStatus() != null) {
+            applyStatusTransition(posting, req.getStatus());
+        }
         posting = jobPostingRepository.save(posting);
         return toResponse(posting);
     }
@@ -208,6 +212,12 @@ public class JobPostingService {
         if (req.getRequirements() != null) posting.setRequirements(req.getRequirements());
         if (req.getLocation() != null) posting.setLocation(req.getLocation());
         if (req.getEmploymentType() != null) posting.setEmploymentType(req.getEmploymentType());
+        if (req.getEntityId() != null) {
+            StaffingEntity entity = staffingEntityRepository.findById(req.getEntityId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "StaffingEntity not found: " + req.getEntityId()));
+            posting.setEntity(entity);
+        }
         if (req.getStatus() != null) {
             applyStatusTransition(posting, req.getStatus());
         }

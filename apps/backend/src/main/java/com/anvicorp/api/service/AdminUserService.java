@@ -61,7 +61,8 @@ public class AdminUserService {
             UserRole.ERM,
             UserRole.REPORTING_MANAGER,
             UserRole.EVALUATOR,
-            UserRole.TRAINER);
+            UserRole.TRAINER,
+            UserRole.JOBS_ADMIN);
 
     /**
      * Roles a SUPER_ADMIN may assign at CREATION time via
@@ -75,13 +76,14 @@ public class AdminUserService {
             UserRole.ERM,
             UserRole.REPORTING_MANAGER,
             UserRole.EVALUATOR,
-            UserRole.TRAINER);
+            UserRole.TRAINER,
+            UserRole.JOBS_ADMIN);
 
     private static final String STAFF_ROLE_MSG =
-            "role must be a STAFF role (SUPER_ADMIN / MANAGER / ERM / REPORTING_MANAGER / EVALUATOR / TRAINER)";
+            "role must be a STAFF role (SUPER_ADMIN / MANAGER / ERM / REPORTING_MANAGER / EVALUATOR / TRAINER / JOBS_ADMIN)";
 
     private static final String STAFF_CREATABLE_ROLE_MSG =
-            "role must be a creatable STAFF role (MANAGER / ERM / REPORTING_MANAGER / EVALUATOR / TRAINER). "
+            "role must be a creatable STAFF role (MANAGER / ERM / REPORTING_MANAGER / EVALUATOR / TRAINER / JOBS_ADMIN). "
                     + "Promote an existing user to SUPER_ADMIN via change-role instead of creating one.";
 
     /**
@@ -333,6 +335,7 @@ public class AdminUserService {
         return switch (r) {
             case MANAGER -> "Manager";
             case ERM -> "ERM";
+            case JOBS_ADMIN -> "Jobs Admin";
             case TRAINER -> "Trainer";
             case EVALUATOR -> "Evaluator";
             case REPORTING_MANAGER -> "Reporting Manager";
