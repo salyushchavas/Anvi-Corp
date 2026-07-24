@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/careers/auth-context';
 import { useInternDashboardOptional } from '@/components/intern/InternDashboardContext';
-import { formatRelative } from '@/lib/careers/format-date';
 import type { JobPostingResponse } from '@/types';
 import ApplyNowModal from './ApplyNowModal';
 
@@ -50,7 +49,7 @@ export default function JobPostingsTable({
 
   return (
     <>
-      <div className="space-y-4">
+      <div className="space-y-3">
         {rows.map((posting) => {
           const isExpanded = expandedId === posting.id || hoveredId === posting.id;
           return (
@@ -111,32 +110,31 @@ function JobCard({
       onMouseLeave={onHoverEnd}
       whileHover={{ y: -3 }}
       transition={{ duration: 0.3, ease: 'easeInOut' }}
-      className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-ds-sm transition-colors duration-300 ease-in-out hover:border-brand-200 hover:shadow-cardHover"
+      className="group overflow-hidden rounded-xl border border-slate-200 bg-white shadow-ds-sm transition-colors duration-300 ease-in-out hover:border-brand-200 hover:shadow-cardHover"
     >
-      <div className="grid gap-0 md:grid-cols-[7rem_minmax(0,1fr)]">
+      <div className="grid gap-0 md:grid-cols-[5.5rem_minmax(0,1fr)]">
         <DecorativeRail jobId={posting.jobId} />
-        <div className="min-w-0 p-5 sm:p-6">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 p-4 sm:p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 flex-1">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
                 <JobBadge>{EMPLOYMENT_LABEL[posting.employmentType] ?? posting.employmentType}</JobBadge>
                 {posting.location && <JobBadge>{posting.location}</JobBadge>}
-                {posting.publishedAt && <JobBadge>Posted {formatRelative(posting.publishedAt)}</JobBadge>}
                 {applied && <JobBadge tone="success">Applied</JobBadge>}
               </div>
 
-              <h3 className="text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">
+              <h3 className="text-lg font-semibold tracking-tight text-slate-950 sm:text-xl">
                 {posting.title}
               </h3>
 
               {posting.jobId && (
-                <p className="mt-1 font-mono text-xs font-medium uppercase tracking-wide text-slate-400">
+                <p className="mt-0.5 font-mono text-[11px] font-medium uppercase tracking-wide text-slate-400">
                   {posting.jobId}
                 </p>
               )}
 
               {posting.description && (
-                <p className="mt-4 line-clamp-3 max-w-3xl text-sm leading-6 text-slate-600">
+                <p className="mt-3 line-clamp-2 max-w-3xl text-sm leading-5 text-slate-600">
                   {plainPreview(posting.description)}
                 </p>
               )}
@@ -169,10 +167,10 @@ function DecorativeRail({ jobId }: { jobId?: string }) {
     <div className="relative hidden overflow-hidden border-r border-brand-100 bg-brand-50 md:block">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,theme(colors.brand.200)_1px,transparent_0)] bg-[length:14px_14px] opacity-70" />
       <div className="absolute inset-y-0 right-0 w-px bg-brand-200" />
-      <div className="absolute left-5 top-6 h-16 w-px bg-brand-300" />
-      <div className="absolute bottom-6 left-5 right-5 h-px bg-brand-200" />
-      <div className="relative flex h-full min-h-[12rem] items-end p-5">
-        <span className="break-all font-mono text-[10px] font-semibold uppercase tracking-widest text-brand-700">
+      <div className="absolute left-4 top-5 h-12 w-px bg-brand-300" />
+      <div className="absolute bottom-5 left-4 right-4 h-px bg-brand-200" />
+      <div className="relative flex h-full min-h-[8.75rem] items-end p-4">
+        <span className="break-all font-mono text-[9px] font-semibold uppercase tracking-widest text-brand-700">
           {jobId ?? 'ANVI'}
         </span>
       </div>
@@ -191,7 +189,7 @@ function JobBadge({
     ? 'border-green-200 bg-green-50 text-green-700'
     : 'border-slate-200 bg-slate-50 text-slate-600';
   return (
-    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${cls}`}>
+    <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${cls}`}>
       {children}
     </span>
   );
@@ -199,11 +197,11 @@ function JobBadge({
 
 function JobTags({ tags }: { tags: string[] }) {
   return (
-    <div className="mt-5 flex flex-wrap gap-2">
+    <div className="mt-3 flex flex-wrap gap-1.5">
       {tags.slice(0, 8).map((tag) => (
         <span
           key={tag}
-          className="rounded-full border border-brand-100 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700"
+          className="rounded-full border border-brand-100 bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-700"
         >
           {tag}
         </span>
@@ -258,13 +256,13 @@ function JobActions({
         type="button"
         onClick={apply}
         disabled={applied || isPostApplicant}
-        className="rounded-full bg-brand-700 px-5 py-2 text-sm font-semibold text-white shadow-ds-sm transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+        className="rounded-full bg-brand-700 px-4 py-1.5 text-sm font-semibold text-white shadow-ds-sm transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
       >
         {applied ? 'Applied' : isPostApplicant ? 'Staff view' : 'Apply Now'}
       </button>
       <Link
         href={`/careers/openings/${posting.slug}`}
-        className="rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"
+        className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-semibold text-slate-700 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"
       >
         View Details
       </Link>
@@ -290,13 +288,13 @@ function JobCardExpanded({ items }: { items: Array<{ label: string; lines: strin
       transition={{ duration: 0.3, ease: 'easeInOut' }}
       className="overflow-hidden"
     >
-      <div className="mt-6 grid gap-4 border-t border-slate-100 pt-5 lg:grid-cols-2">
+      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 lg:grid-cols-2">
         {items.map((item) => (
-          <section key={item.label} className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+          <section key={item.label} className="rounded-lg border border-slate-100 bg-slate-50/70 p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               {item.label}
             </p>
-            <div className="mt-3 space-y-2 text-sm leading-6 text-slate-700">
+            <div className="mt-2 space-y-1.5 text-sm leading-5 text-slate-700">
               {item.lines.slice(0, 6).map((line) => (
                 <p key={line}>{line}</p>
               ))}
