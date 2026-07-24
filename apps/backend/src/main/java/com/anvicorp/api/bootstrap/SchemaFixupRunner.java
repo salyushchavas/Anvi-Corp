@@ -2576,6 +2576,10 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // job_type option. ddl-auto will not refresh the existing CHECK.
         rebuildJobPostingsJobTypeCheckForCombinedType();
 
+        // Jobs Admin owns the company/about-company text on the posting
+        // itself now, so job_postings no longer requires a StaffingEntity FK.
+        relaxJobPostingsEntityAndJobIdForJobsAdmin();
+
         // Evaluator Phase 2 — add recommendation column on intern_evaluations
         // for the monthly evaluation rubric publish flow. Idempotent.
         try {
@@ -4405,6 +4409,31 @@ public class SchemaFixupRunner implements CommandLineRunner {
         } catch (Exception verifyErr) {
             log.error("[SchemaFixupRunner] post-rebuild verify on {} failed: {}",
                     constraint, verifyErr.getMessage(), verifyErr);
+        }
+    }
+
+    /**
+     * Jobs Admin posting form no longer uses StaffingEntity and now accepts a
+     * manual Job ID. Keep existing rows intact, but relax the DB constraints
+     * that were tied to the old generated-ID/entity-backed flow.
+     */
+    private void relaxJobPostingsEntityAndJobIdForJobsAdmin() {
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE job_postings ALTER COLUMN entity_id DROP NOT NULL");
+            log.info("[SchemaFixupRunner] relaxed job_postings.entity_id NOT NULL");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] job_postings.entity_id DROP NOT NULL skipped: {}",
+                    e.getMessage());
+        }
+
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE job_postings ALTER COLUMN job_id TYPE VARCHAR(64)");
+            log.info("[SchemaFixupRunner] widened job_postings.job_id to VARCHAR(64)");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] job_postings.job_id widen skipped: {}",
+                    e.getMessage());
         }
     }
 }

@@ -17,14 +17,9 @@ import type {
   Uuid,
 } from '@/types';
 
-interface AdminEntityResponse {
-  id: Uuid;
-  name: string;
-}
-
 interface PostingFormState {
+  jobId: string;
   title: string;
-  entityId: string;
   employmentType: EmploymentType;
   location: string;
   aboutCompany: string;
@@ -67,8 +62,8 @@ const WORK_LOCATION_OPTIONS = [
 ];
 
 const EMPTY_FORM: PostingFormState = {
+  jobId: '',
   title: '',
-  entityId: '',
   employmentType: 'INTERNSHIP',
   location: 'On-site/Hybrid/Remote',
   aboutCompany: '',
@@ -110,11 +105,9 @@ function PostingsTable() {
   const [searchInput, setSearchInput] = useState('');
   const [committedSearch, setCommittedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<JobPostingStatus | 'ALL'>('ALL');
-  const [entityFilter, setEntityFilter] = useState<string>('ALL');
   const [page, setPage] = useState(0);
 
   const [data, setData] = useState<Page<JobPostingResponse> | null>(null);
-  const [entities, setEntities] = useState<AdminEntityResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<Uuid | null>(null);
   const [editing, setEditing] = useState<JobPostingResponse | 'new' | null>(null);
@@ -127,26 +120,12 @@ function PostingsTable() {
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
-  const loadEntities = useCallback(async () => {
-    try {
-      const res = await api.get<AdminEntityResponse[]>('/api/v1/admin/entities');
-      setEntities(res.data ?? []);
-    } catch {
-      setEntities([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadEntities();
-  }, [loadEntities]);
-
   const load = useCallback(async () => {
     setError(null);
     try {
       const params: Record<string, string | number> = { page, size: PAGE_SIZE };
       if (committedSearch) params.search = committedSearch;
       if (statusFilter !== 'ALL') params.status = statusFilter;
-      if (entityFilter !== 'ALL') params.entityId = entityFilter;
       const res = await api.get<Page<JobPostingResponse>>(
         '/api/v1/job-postings/admin/all',
         { params },
@@ -164,7 +143,7 @@ function PostingsTable() {
       setError(err?.response?.data?.error ?? "Couldn't load postings.");
       setData(null);
     }
-  }, [page, committedSearch, statusFilter, entityFilter]);
+  }, [page, committedSearch, statusFilter]);
 
   useEffect(() => {
     void load();
@@ -172,14 +151,12 @@ function PostingsTable() {
 
   useEffect(() => {
     setPage(0);
-  }, [statusFilter, entityFilter]);
+  }, [statusFilter]);
 
   const rows = data?.content ?? [];
   const totalPages = data?.totalPages ?? 0;
   const totalElements = data?.totalElements ?? 0;
   const currentPage = data?.page ?? page;
-  const canCreate = entities.length > 0;
-
   async function toggleStatus(posting: JobPostingResponse) {
     const next: JobPostingStatus =
       posting.status === 'OPEN' ? 'CLOSED' : posting.status === 'CLOSED' ? 'OPEN' : 'OPEN';
@@ -212,19 +189,6 @@ function PostingsTable() {
           </label>
 
           <select
-            value={entityFilter}
-            onChange={(event) => setEntityFilter(event.target.value)}
-            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-          >
-            <option value="ALL">All entities</option>
-            {entities.map((entity) => (
-              <option key={entity.id} value={entity.id}>
-                {entity.name}
-              </option>
-            ))}
-          </select>
-
-          <select
             value={statusFilter}
             onChange={(event) =>
               setStatusFilter(event.target.value as JobPostingStatus | 'ALL')
@@ -243,9 +207,7 @@ function PostingsTable() {
         <button
           type="button"
           onClick={() => setEditing('new')}
-          disabled={!canCreate}
-          className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
-          title={canCreate ? undefined : 'No company/entity is available for posting yet'}
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent/90"
         >
           <Plus className="h-4 w-4" />
           New posting
@@ -270,8 +232,7 @@ function PostingsTable() {
           <thead className="border-b border-gray-200 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
             <tr>
               <th scope="col" className="px-4 py-3 font-medium">Job ID</th>
-              <th scope="col" className="px-4 py-3 font-medium">Role</th>
-              <th scope="col" className="px-4 py-3 font-medium">Company</th>
+              <th scope="col" className="px-4 py-3 font-medium">Job Title</th>
               <th scope="col" className="px-4 py-3 font-medium">Type</th>
               <th scope="col" className="px-4 py-3 font-medium">Status</th>
               <th scope="col" className="px-4 py-3 font-medium">Applicants</th>
@@ -284,9 +245,9 @@ function PostingsTable() {
               <SkeletonRows />
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">
+                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-500">
                   <Briefcase className="mx-auto mb-3 h-8 w-8 text-gray-400" strokeWidth={1.5} />
-                  {committedSearch || statusFilter !== 'ALL' || entityFilter !== 'ALL'
+                  {committedSearch || statusFilter !== 'ALL'
                     ? 'No postings match those filters.'
                     : 'No postings yet.'}
                 </td>
@@ -311,7 +272,6 @@ function PostingsTable() {
                       <div className="mt-0.5 text-xs text-gray-500">{posting.location}</div>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-700">{posting.entityName ?? '-'}</td>
                   <td className="px-4 py-3 text-gray-700">
                     {EMPLOYMENT_LABEL[posting.employmentType] ?? posting.employmentType}
                   </td>
@@ -398,7 +358,6 @@ function PostingsTable() {
         <PostingEditorModal
           mode={editing === 'new' ? 'create' : 'edit'}
           posting={editing === 'new' ? null : editing}
-          entities={entities}
           onClose={() => setEditing(null)}
           onSaved={async () => {
             setEditing(null);
@@ -413,18 +372,16 @@ function PostingsTable() {
 function PostingEditorModal({
   mode,
   posting,
-  entities,
   onClose,
   onSaved,
 }: {
   mode: 'create' | 'edit';
   posting: JobPostingResponse | null;
-  entities: AdminEntityResponse[];
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
   const [form, setForm] = useState<PostingFormState>(() =>
-    posting ? formFromPosting(posting) : { ...EMPTY_FORM, entityId: entities[0]?.id ?? '' },
+    posting ? formFromPosting(posting) : EMPTY_FORM,
   );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -437,12 +394,12 @@ function PostingEditorModal({
   }
 
   async function save() {
-    if (!form.title.trim()) {
-      setError('Job Title is required.');
+    if (!form.jobId.trim()) {
+      setError('Job ID is required.');
       return;
     }
-    if (!form.entityId) {
-      setError('Company is required.');
+    if (!form.title.trim()) {
+      setError('Job Title is required.');
       return;
     }
     if (!form.aboutCompany.trim()) {
@@ -461,8 +418,8 @@ function PostingEditorModal({
     setSaving(true);
     setError(null);
     const payload = {
+      jobId: form.jobId.trim(),
       title: form.title.trim(),
-      entityId: form.entityId,
       employmentType: form.employmentType,
       location: form.location.trim(),
       description: preview.description,
@@ -496,18 +453,19 @@ function PostingEditorModal({
         <div className="border-b border-gray-200 px-6 py-4">
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
           <p className="mt-1 text-xs text-gray-500">
-            Job ID is generated by the system. Use these fields to create the public posting format.
+            Job ID is entered manually by Jobs Admin and must be unique.
           </p>
         </div>
 
         <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto p-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]">
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Job ID">
+              <Field label="Job ID" required>
                 <input
-                  value={posting?.jobId ?? 'Generated after save'}
-                  readOnly
-                  className="w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-600"
+                  value={form.jobId}
+                  onChange={(event) => update('jobId', event.target.value)}
+                  placeholder="ANVI-2026-07-JD"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </Field>
               <Field label="Job Title" required>
@@ -520,21 +478,7 @@ function PostingEditorModal({
               </Field>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-4">
-              <Field label="Company / Entity" required>
-                <select
-                  value={form.entityId}
-                  onChange={(event) => update('entityId', event.target.value)}
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                >
-                  <option value="">Select company</option>
-                  {entities.map((entity) => (
-                    <option key={entity.id} value={entity.id}>
-                      {entity.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+            <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Job Type" required>
                 <select
                   value={form.employmentType}
@@ -633,12 +577,8 @@ function PostingEditorModal({
           <aside className="rounded-lg border border-gray-200 bg-gray-50 p-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Preview</div>
             <div className="mt-3 space-y-3 text-sm text-gray-800">
-              <PreviewRow label="Job ID" value={posting?.jobId ?? 'Generated after save'} mono />
+              <PreviewRow label="Job ID" value={form.jobId || '-'} mono />
               <PreviewRow label="Job Title" value={form.title || '-'} />
-              <PreviewRow
-                label="About Company"
-                value={entities.find((entity) => entity.id === form.entityId)?.name ?? '-'}
-              />
               <PreviewRow label="Job Type" value={EMPLOYMENT_LABEL[form.employmentType]} />
               <PreviewRow label="Work Location" value={form.location || '-'} />
               <div>
@@ -728,7 +668,7 @@ function SkeletonRows() {
     <>
       {[0, 1, 2, 3, 4].map((row) => (
         <tr key={row} className="border-b border-gray-100 last:border-0">
-          {[0, 1, 2, 3, 4, 5, 6, 7].map((cell) => (
+          {[0, 1, 2, 3, 4, 5, 6].map((cell) => (
             <td key={cell} className="px-4 py-3">
               <div className="h-4 w-full animate-pulse rounded bg-gray-100" />
             </td>
@@ -778,8 +718,8 @@ function normalizeLines(value: string): string[] {
 
 function formFromPosting(posting: JobPostingResponse): PostingFormState {
   return {
+    jobId: posting.jobId ?? '',
     title: posting.title ?? '',
-    entityId: posting.entityId ?? '',
     employmentType: posting.employmentType ?? 'INTERNSHIP',
     location: posting.location ?? 'On-site/Hybrid/Remote',
     aboutCompany: extractSection(posting.description, 'About Company'),

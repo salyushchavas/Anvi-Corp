@@ -23,4 +23,6 @@ public interface JobPostingRepository
 
     Optional<JobPosting> findBySlug(String slug);
     boolean existsBySlug(String slug);
+    boolean existsByJobId(String jobId);
+    boolean existsByJobIdAndIdNot(String jobId, UUID id);
 }

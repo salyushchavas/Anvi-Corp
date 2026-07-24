@@ -6,16 +6,15 @@ import com.anvicorp.api.dto.JobPostingUpdateRequest;
 import com.anvicorp.api.entity.Application;
 import com.anvicorp.api.entity.Candidate;
 import com.anvicorp.api.entity.JobPosting;
-import com.anvicorp.api.entity.StaffingEntity;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.JobPostingStatus;
 import com.anvicorp.api.enums.UserRole;
+import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.EmailUnverifiedException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.repository.ApplicationRepository;
 import com.anvicorp.api.repository.CandidateRepository;
 import com.anvicorp.api.repository.JobPostingRepository;
-import com.anvicorp.api.repository.StaffingEntityRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -35,10 +34,8 @@ import java.util.UUID;
 public class JobPostingService {
 
     private final JobPostingRepository jobPostingRepository;
-    private final StaffingEntityRepository staffingEntityRepository;
     private final ApplicationRepository applicationRepository;
     private final CandidateRepository candidateRepository;
-    private final JobIdGenerator jobIdGenerator;
 
     @Transactional(readOnly = true)
     public Page<JobPostingResponse> listOpen(Pageable pageable) {
@@ -179,12 +176,13 @@ public class JobPostingService {
 
     @Transactional
     public JobPostingResponse create(JobPostingCreateRequest req, User publisher) {
-        StaffingEntity entity = staffingEntityRepository.findById(req.getEntityId())
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "StaffingEntity not found: " + req.getEntityId()));
+        String jobId = normalizeJobId(req.getJobId());
+        if (jobPostingRepository.existsByJobId(jobId)) {
+            throw new BadRequestException("Job ID already exists: " + jobId);
+        }
 
         JobPosting posting = JobPosting.builder()
-                .entity(entity)
+                .jobId(jobId)
                 .title(req.getTitle())
                 .description(req.getDescription())
                 .requirements(req.getRequirements())
@@ -192,7 +190,6 @@ public class JobPostingService {
                 .employmentType(req.getEmploymentType())
                 .status(JobPostingStatus.DRAFT)
                 .slug(generateUniqueSlug(req.getTitle()))
-                .jobId(jobIdGenerator.nextJobId())
                 .publishedById(publisher != null ? publisher.getId() : null)
                 .build();
         if (req.getStatus() != null) {
@@ -207,17 +204,18 @@ public class JobPostingService {
         JobPosting posting = jobPostingRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Job posting not found: " + id));
 
+        if (req.getJobId() != null) {
+            String jobId = normalizeJobId(req.getJobId());
+            if (jobPostingRepository.existsByJobIdAndIdNot(jobId, id)) {
+                throw new BadRequestException("Job ID already exists: " + jobId);
+            }
+            posting.setJobId(jobId);
+        }
         if (req.getTitle() != null) posting.setTitle(req.getTitle());
         if (req.getDescription() != null) posting.setDescription(req.getDescription());
         if (req.getRequirements() != null) posting.setRequirements(req.getRequirements());
         if (req.getLocation() != null) posting.setLocation(req.getLocation());
         if (req.getEmploymentType() != null) posting.setEmploymentType(req.getEmploymentType());
-        if (req.getEntityId() != null) {
-            StaffingEntity entity = staffingEntityRepository.findById(req.getEntityId())
-                    .orElseThrow(() -> new ResourceNotFoundException(
-                            "StaffingEntity not found: " + req.getEntityId()));
-            posting.setEntity(entity);
-        }
         if (req.getStatus() != null) {
             applyStatusTransition(posting, req.getStatus());
         }
@@ -290,6 +288,17 @@ public class JobPostingService {
     private String randomSuffix() {
         String hex = Long.toHexString(System.nanoTime() ^ Double.doubleToLongBits(Math.random()));
         return hex.substring(Math.max(0, hex.length() - 4));
+    }
+
+    private String normalizeJobId(String value) {
+        if (value == null || value.isBlank()) {
+            throw new BadRequestException("Job ID is required");
+        }
+        String jobId = value.trim();
+        if (jobId.length() > 64) {
+            throw new BadRequestException("Job ID must be 64 characters or fewer");
+        }
+        return jobId;
     }
 
     public JobPostingResponse toResponse(JobPosting p) {

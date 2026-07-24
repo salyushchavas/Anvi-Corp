@@ -28,24 +28,19 @@ public class JobPosting {
     @GeneratedValue
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "entity_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "entity_id")
     private StaffingEntity entity;
 
     @Column(nullable = false, unique = true)
     private String slug;
 
     /**
-     * Human-readable, immutable, organization-unique Job ID in the format
-     * {@code SKZ-JOB-YYYY-NNNNNN}. NNNNNN is the zero-padded next value from
-     * the Postgres sequence {@code skyzen_job_seq} (created by
-     * {@link com.anvicorp.api.bootstrap.SchemaFixupRunner}), so concurrent
-     * creates can never collide. Stamped at creation time by
-     * {@link com.anvicorp.api.service.JobIdGenerator}; never updated.
+     * Human-readable, organization-unique Job ID entered by Jobs Admin.
      * Surfaced on the candidate-facing listing + detail so candidates can
      * reference a specific posting in correspondence.
      */
-    @Column(name = "job_id", length = 32, unique = true, updatable = false)
+    @Column(name = "job_id", length = 64, unique = true)
     private String jobId;
 
     @Column(nullable = false)
