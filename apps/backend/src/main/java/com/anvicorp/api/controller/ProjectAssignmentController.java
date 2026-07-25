@@ -10,6 +10,8 @@ import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.ProjectAssignmentStatus;
 import com.anvicorp.api.service.ProjectAssignmentService;
 import com.anvicorp.api.service.ProjectAssignmentService.DownloadedProjectFile;
+import com.anvicorp.api.service.ProjectAssignmentService.SubmissionAttachmentDownload;
+import com.anvicorp.api.service.ProjectAssignmentService.SubmissionAttachmentUploadResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -18,6 +20,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
@@ -66,7 +69,47 @@ public class ProjectAssignmentController {
             @AuthenticationPrincipal User caller) {
         String notes = req != null ? req.submissionNotes() : null;
         java.util.List<String> links = req != null ? req.deliverableLinks() : null;
-        return service.submitAssignment(id, notes, links, caller);
+        UUID attachmentId = req != null ? req.attachmentDocumentId() : null;
+        return service.submitAssignment(id, notes, links, attachmentId, caller);
+    }
+
+    /**
+     * Upload an optional supporting file for the intern's submission.
+     * Returns the {@code documentId} the intern must then send in the
+     * follow-up {@code POST /submit} body as {@code attachmentDocumentId}.
+     * Two-step to keep the {@code /submit} endpoint pure-JSON and reuse
+     * the document vault's storage pipeline.
+     */
+    @PostMapping(
+            value = "/{id}/submission-attachment",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('INTERN')")
+    public SubmissionAttachmentUploadResponse uploadSubmissionAttachment(
+            @PathVariable UUID id,
+            @RequestParam("file") MultipartFile file,
+            @AuthenticationPrincipal User caller) {
+        return service.uploadSubmissionAttachment(id, file, caller);
+    }
+
+    /**
+     * Download an intern-uploaded submission attachment. RBAC gates on
+     * the assignment's intern owner + assigned trainer + SUPER_ADMIN
+     * (same shape as the trainer-project-file download above).
+     */
+    @GetMapping("/submissions/{submissionId}/attachment")
+    @PreAuthorize("hasAnyRole('TRAINER', 'SUPER_ADMIN', 'INTERN')")
+    public ResponseEntity<byte[]> downloadSubmissionAttachment(
+            @PathVariable UUID submissionId,
+            @AuthenticationPrincipal User caller) {
+        SubmissionAttachmentDownload f = service.downloadSubmissionAttachment(submissionId, caller);
+        String mime = f.mimeType() != null ? f.mimeType() : "application/octet-stream";
+        String safeName = sanitizeFilename(f.fileName());
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + safeName + "\"")
+                .contentType(MediaType.parseMediaType(mime))
+                .contentLength(f.bytes().length)
+                .body(f.bytes());
     }
 
     @GetMapping("/mine")

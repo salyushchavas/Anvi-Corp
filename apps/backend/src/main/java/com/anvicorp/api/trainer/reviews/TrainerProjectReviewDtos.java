@@ -62,7 +62,19 @@ public final class TrainerProjectReviewDtos {
             String trainerDecision,
             String trainerFeedback,
             String completionStatus,
-            Instant reviewedAt
+            Instant reviewedAt,
+            /** Optional intern-uploaded supporting file for this
+             *  submission. Null when the intern didn't attach one.
+             *  Download at
+             *  {@code GET /api/v1/project-assignments/submissions/{submissionId}/attachment}. */
+            AttachmentRef attachment
+    ) {}
+
+    public record AttachmentRef(
+            UUID documentId,
+            String fileName,
+            String mimeType,
+            Long fileSize
     ) {}
 
     public record PriorRound(

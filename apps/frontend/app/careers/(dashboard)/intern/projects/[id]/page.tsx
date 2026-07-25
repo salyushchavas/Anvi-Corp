@@ -404,13 +404,16 @@ function SubmissionCard({
 }
 
 /**
- * Three-stage gate on the ASSIGNED state, matching the backend's
+ * Two-stage gate on the ASSIGNED state, matching the backend's
  * {@code ProjectAssignmentService.startAssignment} preconditions:
  *   1. intern has a GitHub username on file
- *   2. trainer has flipped {@code accessGranted=true}
- *   3. intern clicks Start
- * Each stage exposes the right action when it's the next step, and the
- * Start button only enables when both upstream stages are satisfied.
+ *   2. intern clicks Start
+ *
+ * <p>The repo-access wait step was removed — the trainer still invites
+ * the intern on GitHub (out-of-band credential path unchanged), but the
+ * platform no longer blocks Start on the {@code accessGranted} flag.
+ * The flag stays visible below as an informational signal ("Trainer has
+ * granted you repo access") but doesn't gate anything.</p>
  */
 function GetStartedCard({
   a, onChanged,
@@ -426,7 +429,10 @@ function GetStartedCard({
 
   const accessGranted = a.accessGranted === true;
   const hasUsername = savedUsername.trim() !== '';
-  const canStart = hasUsername && accessGranted;
+  // Repo-access wait removed — Start is enabled as soon as the intern
+  // has a GitHub username on file. Trainer still invites on GitHub
+  // out-of-band; the accessGranted flag below is now advisory.
+  const canStart = hasUsername;
   const usernameDraftValid = isValidGitHubUsername(usernameDraft);
 
   async function saveUsername() {
@@ -562,38 +568,38 @@ function GetStartedCard({
         )}
       </div>
 
-      {/* Stage 2 — repo access */}
+      {/* Stage 2 — repo access (advisory only; not gating Start) */}
       <div className="mt-4">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-          2. Repo access
+          Repo access <span className="normal-case tracking-normal text-[10px] font-normal text-slate-400">(informational — not required to start)</span>
         </p>
         {accessGranted ? (
           <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-green-700">
-            <CheckCircle2 className="h-4 w-4" /> Trainer has granted you repo access.
+            <CheckCircle2 className="h-4 w-4" /> Trainer has invited you on GitHub.
           </p>
         ) : (
-          <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-amber-700">
+          <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-slate-600">
             <Clock className="h-4 w-4" />
-            {hasUsername
-              ? 'Waiting for your trainer to grant repo access.'
-              : 'Save your GitHub username so your trainer can invite you.'}
+            The trainer will send a GitHub invite separately. You can start
+            the project right now — pushing code requires accepting that
+            invite once it arrives.
           </p>
         )}
       </div>
 
-      {/* Stage 3 — start */}
+      {/* Stage 2 — start */}
       <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
         <p className="text-xs text-slate-500">
           {canStart
             ? 'Everything ready — start the project to enable submissions.'
-            : 'Complete the steps above to enable Start.'}
+            : 'Save your GitHub username above to enable Start.'}
         </p>
         <button
           type="button"
           onClick={startProject}
           disabled={starting || !canStart}
           title={!canStart
-            ? 'Add your GitHub username and wait for trainer access first'
+            ? 'Save your GitHub username first'
             : undefined}
           className="inline-flex items-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
         >
@@ -622,6 +628,7 @@ function isValidGitHubUsername(s: string): boolean {
 }
 
 function ReadOnlySubmission({ sub }: { sub: NonNullable<AssignmentSummary['latestSubmission']> }) {
+  const attachment = sub.attachment ?? null;
   return (
     <div className="mt-3 space-y-3">
       <p className="text-xs text-slate-500">
@@ -643,6 +650,26 @@ function ReadOnlySubmission({ sub }: { sub: NonNullable<AssignmentSummary['lates
           ))}
         </ul>
       )}
+      {attachment && (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            Attached file
+          </p>
+          <a
+            href={`/api/v1/project-assignments/submissions/${sub.id}/attachment`}
+            className="mt-0.5 inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-brand-700 hover:bg-brand-50"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            {attachment.fileName ?? 'attachment'}
+            {typeof attachment.fileSize === 'number' && (
+              <span className="text-slate-500">
+                ({formatBytes(attachment.fileSize)})
+              </span>
+            )}
+            <Download className="h-3 w-3" />
+          </a>
+        </div>
+      )}
       {sub.description && (
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
@@ -655,6 +682,12 @@ function ReadOnlySubmission({ sub }: { sub: NonNullable<AssignmentSummary['lates
       )}
     </div>
   );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function SubmissionForm({
@@ -671,6 +704,7 @@ function SubmissionForm({
   const [notes, setNotes] = useState(initialNotes);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
 
   const trimmedLinks = useMemo(
     () => links.map((l) => l.trim()).filter((l) => l !== ''),
@@ -678,7 +712,8 @@ function SubmissionForm({
   );
   const linkErrors = useMemo(() => trimmedLinks.map(validateUrl), [trimmedLinks]);
   const hasInvalidUrl = linkErrors.some((e) => e !== null);
-  const hasContent = trimmedLinks.length > 0 || notes.trim().length > 0;
+  const hasContent =
+    trimmedLinks.length > 0 || notes.trim().length > 0 || file != null;
 
   function setLinkAt(i: number, v: string) {
     setLinks((prev) => prev.map((p, idx) => (idx === i ? v : p)));
@@ -695,13 +730,29 @@ function SubmissionForm({
     setBusy(true);
     setErr(null);
     try {
+      let attachmentDocumentId: string | null = null;
+      if (file) {
+        if (file.size > 50 * 1024 * 1024) {
+          throw new Error('Attachment exceeds 50 MB limit.');
+        }
+        const form = new FormData();
+        form.append('file', file);
+        const up = await api.post<{ documentId: string }>(
+          `/api/v1/project-assignments/${assignmentId}/submission-attachment`,
+          form,
+          { headers: { 'Content-Type': 'multipart/form-data' } },
+        );
+        attachmentDocumentId = up.data?.documentId ?? null;
+      }
       const res = await api.post<AssignmentSummary>(
         `/api/v1/project-assignments/${assignmentId}/submit`,
         {
           submissionNotes: notes.trim() || null,
           deliverableLinks: trimmedLinks,
+          attachmentDocumentId,
         },
       );
+      setFile(null);
       onSubmitted(res.data);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
@@ -787,6 +838,38 @@ function SubmissionForm({
           placeholder="What you built, what to look at first, known gaps…"
           className="mt-1 w-full resize-y rounded-md border border-slate-200 px-2.5 py-1.5 text-sm"
         />
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-slate-800">
+          Attachment{' '}
+          <span className="font-normal text-slate-500">
+            (optional — PDF, DOC, PPT, ZIP, images, max 50 MB)
+          </span>
+        </label>
+        <div className="mt-1 flex items-center gap-2">
+          <input
+            type="file"
+            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.zip,.png,.jpg,.jpeg,.gif"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="block w-full text-xs text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-slate-100 file:px-2.5 file:py-1 file:text-xs file:font-medium file:text-slate-800 hover:file:bg-slate-200"
+          />
+          {file && (
+            <button
+              type="button"
+              onClick={() => setFile(null)}
+              className="rounded-md border border-slate-200 p-1 text-slate-500 hover:bg-slate-50"
+              aria-label="Remove attachment"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        {file && (
+          <p className="mt-1 text-[11px] text-slate-500">
+            {file.name} · {formatBytes(file.size)}
+          </p>
+        )}
       </div>
 
       {err && (

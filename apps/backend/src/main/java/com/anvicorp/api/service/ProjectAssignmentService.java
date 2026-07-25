@@ -318,11 +318,13 @@ public class ProjectAssignmentService {
             throw new BadRequestException(
                     "Please provide your GitHub username first.");
         }
-        if (!Boolean.TRUE.equals(a.getAccessGranted())) {
-            throw new BadRequestException(
-                    "Repository access has not been granted yet. "
-                            + "The Technical Evaluator will invite you on GitHub.");
-        }
+        // Repo-access gate removed — intern no longer waits for trainer
+        // to flip {@code accessGranted=true} before starting. Trainer
+        // still invites on GitHub out-of-band (that's the real credential
+        // path); the {@code accessGranted} column stays on the entity as
+        // an advisory signal (trainer UI still displays it, and the
+        // {@code markAccessGranted} endpoint still writes it for
+        // reporting) but does not block progression here.
         a.setStatus(ProjectAssignmentStatus.IN_PROGRESS);
         a.setStartedAt(java.time.Instant.now());
         projectAssignmentRepository.save(a);
@@ -348,7 +350,9 @@ public class ProjectAssignmentService {
     @Transactional
     public ProjectAssignmentResponse submitAssignment(
             UUID assignmentId, String submissionNotes,
-            List<String> deliverableLinks, User actor) {
+            List<String> deliverableLinks,
+            UUID attachmentDocumentId,
+            User actor) {
         ProjectAssignment a = loadAssignment(assignmentId);
         ensureOwningIntern(a, actor);
         ensureWeeklyReportingCaughtUp(actor);
@@ -356,9 +360,27 @@ public class ProjectAssignmentService {
         List<String> validatedLinks = validateLinks(deliverableLinks);
         String trimmedNotes = submissionNotes != null && !submissionNotes.isBlank()
                 ? submissionNotes.trim() : null;
-        if (validatedLinks.isEmpty() && trimmedNotes == null) {
+        if (validatedLinks.isEmpty() && trimmedNotes == null && attachmentDocumentId == null) {
             throw new BadRequestException(
-                    "Submission requires at least one deliverable link or notes.");
+                    "Submission requires at least one deliverable link, a file, or notes.");
+        }
+        // If the intern points at an attachment doc, verify it exists +
+        // hasn't been soft-deleted. We don't check owner strictly — the
+        // multipart endpoint that mints the row is intern-only and
+        // scoped to the same assignment, so a valid documentId here
+        // implies ownership.
+        if (attachmentDocumentId != null) {
+            documentRepository.findById(attachmentDocumentId).ifPresentOrElse(
+                    doc -> {
+                        if (doc.getDeletedAt() != null) {
+                            throw new BadRequestException(
+                                    "Attachment document is no longer available.");
+                        }
+                    },
+                    () -> {
+                        throw new BadRequestException(
+                                "Attachment document not found: " + attachmentDocumentId);
+                    });
         }
 
         // Re-submission gate: allow when (a) intern is still IN_PROGRESS
@@ -398,6 +420,7 @@ public class ProjectAssignmentService {
                 .project(project)
                 .description(trimmedNotes)
                 .linksJson(serializeLinks(validatedLinks))
+                .attachmentDocumentId(attachmentDocumentId)
                 .submittedAt(now)
                 .version(nextVersion)
                 .build();
@@ -817,6 +840,7 @@ public class ProjectAssignmentService {
         // surface can render what they sent + any trainer feedback
         // without N+1 round-trips.
         Map<UUID, ProjectSubmission> latestSubByProject = new HashMap<>();
+        Set<UUID> submissionAttachmentIds = new java.util.HashSet<>();
         for (UUID pid : projectIds) {
             List<ProjectSubmission> hist = projectSubmissionRepository
                     .findByProjectIdOrderBySubmittedAtDesc(pid);
@@ -824,6 +848,15 @@ public class ProjectAssignmentService {
                 ProjectSubmission top = hist.get(0);
                 latestSubByProject.put(pid, top);
                 if (top.getReviewedById() != null) userIds.add(top.getReviewedById());
+                if (top.getAttachmentDocumentId() != null) {
+                    submissionAttachmentIds.add(top.getAttachmentDocumentId());
+                }
+            }
+        }
+        Map<UUID, Document> submissionAttachmentsById = new HashMap<>();
+        if (!submissionAttachmentIds.isEmpty()) {
+            for (Document d : documentRepository.findAllById(submissionAttachmentIds)) {
+                if (d.getDeletedAt() == null) submissionAttachmentsById.put(d.getId(), d);
             }
         }
         // Bulk-fetch the active QaSession per project (SCHEDULED or
@@ -912,6 +945,17 @@ public class ProjectAssignmentService {
             String remarks = r.getRemarks() != null && !r.getRemarks().isBlank()
                     ? r.getRemarks() : r.getNotes();
             ProjectSubmission top = p != null ? latestSubByProject.get(p.getId()) : null;
+            ProjectAssignmentResponse.SubmissionAttachmentRef attachmentRef = null;
+            if (top != null && top.getAttachmentDocumentId() != null) {
+                Document attachmentDoc = submissionAttachmentsById.get(top.getAttachmentDocumentId());
+                if (attachmentDoc != null) {
+                    attachmentRef = new ProjectAssignmentResponse.SubmissionAttachmentRef(
+                            attachmentDoc.getId(),
+                            attachmentDoc.getFileName(),
+                            attachmentDoc.getMimeType(),
+                            attachmentDoc.getFileSize());
+                }
+            }
             ProjectAssignmentResponse.LatestSubmission latest = top == null ? null
                     : new ProjectAssignmentResponse.LatestSubmission(
                             top.getId(),
@@ -925,7 +969,8 @@ public class ProjectAssignmentService {
                             top.getReviewedById() != null
                                     && users.get(top.getReviewedById()) != null
                                     ? users.get(top.getReviewedById()).getFullName()
-                                    : null);
+                                    : null,
+                            attachmentRef);
             ProjectAssignmentResponse.KtSummary ktSummary = p == null
                     ? null
                     : buildKtSummary(p, users);
@@ -1070,6 +1115,136 @@ public class ProjectAssignmentService {
 
     /** Trainer-uploaded project file payload returned to the controller for streaming. */
     public record DownloadedProjectFile(UUID documentId, String fileName, String mimeType, byte[] bytes) {}
+
+    /** Intern's submission-attachment upload — echoes what to POST as the
+     *  {@code attachmentDocumentId} on the follow-up {@code /submit} call. */
+    public record SubmissionAttachmentUploadResponse(
+            UUID documentId, String fileName, String mimeType, Long fileSize) {}
+
+    /** Attachment bytes returned to the controller for streaming.
+     *  Emitted by {@link #downloadSubmissionAttachment(UUID, User)}. */
+    public record SubmissionAttachmentDownload(
+            UUID documentId, String fileName, String mimeType, byte[] bytes) {}
+
+    private static final long SUBMISSION_ATTACHMENT_MAX_BYTES = 50L * 1024 * 1024; // 50 MB
+    private static final String SUBMISSION_ATTACHMENT_CATEGORY = "PROJECT_SUBMISSION";
+    private static final Set<String> SUBMISSION_ATTACHMENT_ALLOWED_SUFFIXES = Set.of(
+            ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
+            ".txt", ".md", ".zip", ".png", ".jpg", ".jpeg", ".gif");
+
+    /**
+     * Intern uploads a supporting file for their project submission. The
+     * document row is minted here so the follow-up {@code /submit} call
+     * only needs the returned {@code documentId}. Same through-backend
+     * pattern as {@code WeeklyReportService.uploadAttachment} — we don't
+     * hand the intern a presigned S3 PUT for this size class.
+     *
+     * <p>RBAC: only the owning intern of the assignment may upload. The
+     * assignment must be in a state where a submission is still allowed
+     * (IN_PROGRESS, or SUBMITTED-with-REQUEST_REVISION resubmission
+     * window) — no point letting an intern burn storage on a locked
+     * assignment.</p>
+     */
+    @Transactional
+    public SubmissionAttachmentUploadResponse uploadSubmissionAttachment(
+            UUID assignmentId,
+            org.springframework.web.multipart.MultipartFile file,
+            User actor) {
+        if (file == null || file.isEmpty()) {
+            throw new BadRequestException("file is required");
+        }
+        if (file.getSize() > SUBMISSION_ATTACHMENT_MAX_BYTES) {
+            throw new BadRequestException(
+                    "Attachment exceeds " + (SUBMISSION_ATTACHMENT_MAX_BYTES / (1024 * 1024))
+                            + " MB limit.");
+        }
+        String filename = file.getOriginalFilename();
+        boolean suffixOk = filename != null
+                && SUBMISSION_ATTACHMENT_ALLOWED_SUFFIXES.stream()
+                        .anyMatch(s -> filename.toLowerCase().endsWith(s));
+        if (!suffixOk) {
+            throw new BadRequestException(
+                    "Unsupported file type. Allowed: PDF, DOC(X), PPT(X), XLS(X), TXT, MD, ZIP, PNG, JPG, GIF.");
+        }
+        ProjectAssignment a = loadAssignment(assignmentId);
+        ensureOwningIntern(a, actor);
+        ProjectAssignmentStatus st = a.getStatus();
+        if (st != ProjectAssignmentStatus.IN_PROGRESS
+                && st != ProjectAssignmentStatus.SUBMITTED
+                && st != ProjectAssignmentStatus.ASSIGNED) {
+            throw new BadRequestException(
+                    "Cannot upload a submission attachment in status " + st + ".");
+        }
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (java.io.IOException e) {
+            throw new BadRequestException("Could not read uploaded bytes: " + e.getMessage());
+        }
+        String mime = file.getContentType();
+        Document saved = documentVault.saveDocument(
+                actor.getId(),
+                filename != null ? filename : "submission-attachment.bin",
+                mime != null ? mime : "application/octet-stream",
+                bytes,
+                SUBMISSION_ATTACHMENT_CATEGORY,
+                "NORMAL",
+                actor.getId());
+        log.info("[ProjectAssignmentService] submission-attachment uploaded assignment={} intern={} doc={} size={}",
+                assignmentId, actor.getId(), saved.getId(), saved.getFileSize());
+        return new SubmissionAttachmentUploadResponse(
+                saved.getId(), saved.getFileName(), saved.getMimeType(), saved.getFileSize());
+    }
+
+    /**
+     * Stream an intern-uploaded submission attachment. RBAC: intern
+     * owner of the assignment, the assigned Trainer (any TRAINER role
+     * matches — same policy as {@link #downloadProjectFile}), or
+     * SUPER_ADMIN. The submission's assignment is resolved via
+     * project → assignments; if none match the assignment scope check
+     * refuses.
+     */
+    @Transactional
+    public SubmissionAttachmentDownload downloadSubmissionAttachment(
+            UUID submissionId, User caller) {
+        if (caller == null) throw new ForbiddenException("Authentication required");
+        ProjectSubmission sub = projectSubmissionRepository.findById(submissionId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Submission not found: " + submissionId));
+        UUID docId = sub.getAttachmentDocumentId();
+        if (docId == null) {
+            throw new ResourceNotFoundException("No attachment on this submission");
+        }
+        UUID projectId = sub.getProject() != null ? sub.getProject().getId() : null;
+        if (projectId == null) {
+            throw new ResourceNotFoundException("Submission has no project");
+        }
+        boolean isStaff = caller.getRoles() != null
+                && (caller.getRoles().contains(UserRole.TRAINER)
+                    || caller.getRoles().contains(UserRole.SUPER_ADMIN));
+        boolean isOwner = false;
+        if (!isStaff) {
+            // Owner check: at least one assignment on this project belongs
+            // to the caller. Interns own their assignments, so this is the
+            // narrowest scope check that lets the intern re-download what
+            // they just posted.
+            List<ProjectAssignment> byProject = projectAssignmentRepository
+                    .findByProjectIdOrderByAssignmentDateDescCreatedAtDesc(projectId);
+            for (ProjectAssignment a : byProject) {
+                if (a.getInternId() != null && a.getInternId().equals(caller.getId())) {
+                    isOwner = true;
+                    break;
+                }
+            }
+        }
+        if (!isStaff && !isOwner) {
+            throw new ForbiddenException("Not authorised to download this attachment");
+        }
+        Document doc = documentVault.loadDocumentNoAuth(docId);
+        byte[] bytes = documentVault.readDocumentBytesNoAuth(docId);
+        return new SubmissionAttachmentDownload(
+                doc.getId(), doc.getFileName(), doc.getMimeType(), bytes);
+    }
 
     /**
      * Download a trainer-uploaded project file for an assignment. The

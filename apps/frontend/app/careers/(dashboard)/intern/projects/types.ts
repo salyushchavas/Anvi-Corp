@@ -62,6 +62,13 @@ export interface ProjectRef {
   files?: ProjectFileRef[] | null;
 }
 
+export interface SubmissionAttachmentRef {
+  documentId: string;
+  fileName: string | null;
+  mimeType: string | null;
+  fileSize: number | null;
+}
+
 export interface LatestSubmission {
   id: string;
   version: number;
@@ -72,6 +79,10 @@ export interface LatestSubmission {
   trainerFeedback: string | null;
   reviewedAt: string | null;
   reviewedByName: string | null;
+  /** Intern-uploaded supporting file for this submission (optional).
+   *  Download via
+   *  GET /api/v1/project-assignments/submissions/{submissionId}/attachment */
+  attachment?: SubmissionAttachmentRef | null;
 }
 
 export interface UserRef {

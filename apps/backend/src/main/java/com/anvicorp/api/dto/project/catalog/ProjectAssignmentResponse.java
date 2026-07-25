@@ -143,6 +143,19 @@ public record ProjectAssignmentResponse(
             String trainerDecision,    // ACCEPT | REQUEST_REVISION | ESCALATE | NO_ACTION_YET
             String trainerFeedback,    // verbatim text — shown to intern
             Instant reviewedAt,
-            String reviewedByName
+            String reviewedByName,
+            /** Optional supporting file the intern attached alongside the
+             *  deliverable links. Null when the intern didn't upload one.
+             *  Download via
+             *  {@code GET /api/v1/project-submissions/{submissionId}/attachment}
+             *  — RBAC gates on intern-owner + assigned trainer + SUPER_ADMIN. */
+            SubmissionAttachmentRef attachment
+    ) {}
+
+    public record SubmissionAttachmentRef(
+            UUID documentId,
+            String fileName,
+            String mimeType,
+            Long fileSize
     ) {}
 }

@@ -66,6 +66,12 @@ type SubmissionDetail = {
   trainerFeedback: string | null;
   completionStatus: string | null;
   reviewedAt: string | null;
+  attachment: {
+    documentId: string;
+    fileName: string | null;
+    mimeType: string | null;
+    fileSize: number | null;
+  } | null;
 };
 
 export default function TrainerPendingReviewsPage() {
@@ -359,6 +365,26 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
                     <summary className="cursor-pointer font-semibold">Links</summary>
                     <pre className="mt-2 whitespace-pre-wrap font-mono text-[11px] text-slate-700">{detail.linksJson}</pre>
                   </details>
+                )}
+                {detail.attachment && (
+                  <div className="rounded-md border border-slate-200 bg-white p-2 text-xs">
+                    <p className="mb-1 font-semibold">Attached file</p>
+                    <a
+                      href={`/api/v1/project-assignments/submissions/${detail.submissionId}/attachment`}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-brand-700 hover:bg-brand-50"
+                    >
+                      {detail.attachment.fileName ?? 'attachment'}
+                      {typeof detail.attachment.fileSize === 'number' && (
+                        <span className="text-slate-500">
+                          ({detail.attachment.fileSize < 1024
+                            ? `${detail.attachment.fileSize} B`
+                            : detail.attachment.fileSize < 1024 * 1024
+                              ? `${(detail.attachment.fileSize / 1024).toFixed(1)} KB`
+                              : `${(detail.attachment.fileSize / (1024 * 1024)).toFixed(1)} MB`})
+                        </span>
+                      )}
+                    </a>
+                  </div>
                 )}
                 {detail.projectInstructions && (
                   <details className="rounded-md border border-slate-200 bg-white p-2 text-xs">

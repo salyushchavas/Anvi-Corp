@@ -107,6 +107,21 @@ public class ProjectSubmission {
     @Column(name = "completion_status", length = 24)
     private String completionStatus;
 
+    /**
+     * Optional attachment — FK into {@code documents.id} for a supporting
+     * file the intern uploaded alongside deliverable links (typically the
+     * built deployable, a design brief, or a supporting doc). Nullable —
+     * submissions were link-only before this column, and the file is
+     * still optional going forward.
+     *
+     * <p>Bare UUID column (not a JPA relation) to match the
+     * {@code Interview.recordingDocumentId} / {@code WeeklyReport.attachmentDocumentId}
+     * convention in this repo — keeps the ddl-auto migration additive
+     * and cross-package hard-delete cleanup simpler.</p>
+     */
+    @Column(name = "attachment_document_id")
+    private UUID attachmentDocumentId;
+
     @PrePersist
     void onCreate() {
         if (submittedAt == null) submittedAt = Instant.now();

@@ -17,7 +17,9 @@ import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ConflictException;
 import com.anvicorp.api.exception.ForbiddenException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
+import com.anvicorp.api.entity.Document;
 import com.anvicorp.api.repository.AuditLogRepository;
+import com.anvicorp.api.repository.DocumentRepository;
 import com.anvicorp.api.repository.ExceptionRecordRepository;
 import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.ProjectAssignmentEventLogRepository;
@@ -25,6 +27,7 @@ import com.anvicorp.api.repository.ProjectRepository;
 import com.anvicorp.api.repository.ProjectSubmissionRepository;
 import com.anvicorp.api.repository.UserRepository;
 import com.anvicorp.api.trainer.TrainerScopeGuard;
+import com.anvicorp.api.trainer.reviews.TrainerProjectReviewDtos.AttachmentRef;
 import com.anvicorp.api.trainer.reviews.TrainerProjectReviewDtos.PendingPage;
 import com.anvicorp.api.trainer.reviews.TrainerProjectReviewDtos.PendingRow;
 import com.anvicorp.api.trainer.reviews.TrainerProjectReviewDtos.PriorRound;
@@ -91,6 +94,7 @@ public class TrainerProjectReviewService {
     private final UserRepository userRepository;
     private final AuditLogRepository auditLogRepository;
     private final ExceptionRecordRepository exceptionRepository;
+    private final DocumentRepository documentRepository;
     private final TrainerFeedbackNotificationDispatcher notifier;
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
@@ -201,6 +205,16 @@ public class TrainerProjectReviewService {
         }
         prior.sort(Comparator.comparing(PriorRound::version).reversed());
 
+        AttachmentRef attachment = null;
+        if (s.getAttachmentDocumentId() != null) {
+            Document doc = documentRepository.findById(s.getAttachmentDocumentId()).orElse(null);
+            if (doc != null && doc.getDeletedAt() == null) {
+                attachment = new AttachmentRef(
+                        doc.getId(), doc.getFileName(),
+                        doc.getMimeType(), doc.getFileSize());
+            }
+        }
+
         return new SubmissionDetail(
                 s.getId(), p.getId(), p.getInternLifecycleId(),
                 lc != null ? lc.getUserId() : null,
@@ -214,7 +228,8 @@ public class TrainerProjectReviewService {
                 s.getBlockersNote(), s.getNextAction(),
                 s.getNextActionDueDate(), s.getReviewedLinksCsv(),
                 s.getTrainerDecision(), s.getTrainerFeedback(),
-                s.getCompletionStatus(), s.getReviewedAt());
+                s.getCompletionStatus(), s.getReviewedAt(),
+                attachment);
     }
 
     // ── Submit feedback (the workhorse) ──────────────────────────────────
