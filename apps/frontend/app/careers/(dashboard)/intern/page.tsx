@@ -17,6 +17,7 @@ import InactiveBanner from '@/components/exit/InactiveBanner';
 import ExitSummaryCard from '@/components/exit/ExitSummaryCard';
 import InternProfileCompletionCard from '@/components/intern/InternProfileCompletionCard';
 import UpcomingQaCard from '@/components/intern/UpcomingQaCard';
+import UpcomingGroupSessionsCard from '@/components/intern/UpcomingGroupSessionsCard';
 import InternJourneyStepper, {
   currentMilestoneLabel,
 } from '@/components/intern/InternJourneyStepper';
@@ -107,6 +108,8 @@ export default function InternHomePage() {
               intern can join from the dashboard without drilling into
               the project detail page. Hidden when nothing is scheduled. */}
           <UpcomingQaCard />
+
+          <UpcomingGroupSessionsCard />
 
           <DoThisNextHero action={data.nextAction} />
 

@@ -17,6 +17,7 @@ const ITEMS: { href: string; label: string; phase: number }[] = [
   { href: '/careers/trainer/active-interns',   label: 'Active Interns',   phase: 1 },
   { href: '/careers/trainer/assign-project',   label: 'Assign Project',   phase: 2 },
   { href: '/careers/trainer/weekly-meetings',  label: 'Weekly Meetings',  phase: 3 },
+  { href: '/careers/trainer/group-sessions',   label: 'Group Sessions',   phase: 3 },
   { href: '/careers/trainer/weekly-tracker',   label: 'Weekly Tracker',   phase: 3 },
   { href: '/careers/trainer/doubts',           label: 'Doubt Requests',   phase: 3 },
   { href: '/careers/trainer/pending-reviews',  label: 'Pending Reviews',  phase: 3 },
