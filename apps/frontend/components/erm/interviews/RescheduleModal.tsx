@@ -3,12 +3,14 @@
 import { useEffect, useState } from 'react';
 import api from '@/lib/careers/api';
 import type { InterviewDetail, ReasonGroup, ReasonOption } from './types';
-import TimezoneSelect from '@/components/ui/TimezoneSelect';
+import MeetingTimezoneSelect from '@/components/ui/MeetingTimezoneSelect';
+import { formatInZone } from '@/lib/careers/format-interview-time';
 import {
-  detectBrowserZone,
-  formatInZone,
-  isValidIanaTimezone,
-} from '@/lib/careers/format-interview-time';
+  DEFAULT_MEETING_ZONE,
+  localInZoneToUtcIso,
+  nowPlus30InZone,
+  zoneLabelFor,
+} from '@/lib/careers/meeting-timezones';
 
 interface Props {
   interview: InterviewDetail;
@@ -19,14 +21,17 @@ interface Props {
 
 export default function RescheduleModal({ interview, open, onClose, onApplied }: Props) {
   const [groups, setGroups] = useState<ReasonGroup[]>([]);
-  const [scheduledFor, setScheduledFor] = useState('');
+  // Preserve the interview's stored zone by default; ERM can switch
+  // via the 5-zone dropdown. Default the datetime to now+30 in that
+  // zone so the picker starts on a realistic slot instead of blank.
+  const [timezone, setTimezone] = useState<string>(
+    interview.timezone || DEFAULT_MEETING_ZONE,
+  );
+  const [scheduledFor, setScheduledFor] = useState<string>(
+    () => nowPlus30InZone(interview.timezone || DEFAULT_MEETING_ZONE),
+  );
   const [duration, setDuration] = useState<number>(
     interview.durationMinutes ?? 60,
-  );
-  // Phase 1.7 — preserve the interview's stored zone by default; ERM
-  // can explicitly switch it if the rescheduled slot is in another zone.
-  const [timezone, setTimezone] = useState<string>(
-    interview.timezone || detectBrowserZone(),
   );
   const [reasonCode, setReasonCode] = useState('');
   const [reasonText, setReasonText] = useState('');
@@ -39,8 +44,9 @@ export default function RescheduleModal({ interview, open, onClose, onApplied }:
     if (!open) return;
     setReasonCode('');
     setReasonText('');
-    setScheduledFor('');
-    setTimezone(interview.timezone || detectBrowserZone());
+    const zone = interview.timezone || DEFAULT_MEETING_ZONE;
+    setTimezone(zone);
+    setScheduledFor(nowPlus30InZone(zone));
     setErr(null);
     void (async () => {
       try {
@@ -64,8 +70,8 @@ export default function RescheduleModal({ interview, open, onClose, onApplied }:
       setErr('Pick a new date/time.');
       return;
     }
-    if (!timezone || !isValidIanaTimezone(timezone)) {
-      setErr('Pick a valid timezone for the rescheduled slot.');
+    if (!timezone) {
+      setErr('Pick a timezone for the rescheduled slot.');
       return;
     }
     if (!reasonCode) {
@@ -79,7 +85,8 @@ export default function RescheduleModal({ interview, open, onClose, onApplied }:
     setSubmitting(true);
     try {
       await api.post(`/api/v1/erm/interviews/${interview.id}/reschedule`, {
-        scheduledFor: new Date(scheduledFor).toISOString(),
+        // Interpret the wall-clock string in the picked zone (not browser-local).
+        scheduledFor: localInZoneToUtcIso(scheduledFor, timezone),
         durationMinutes: duration,
         timezone,
         reasonCode,
@@ -128,12 +135,16 @@ export default function RescheduleModal({ interview, open, onClose, onApplied }:
           </div>
           <div>
             <label className="text-sm font-medium text-slate-800">Timezone</label>
-            <TimezoneSelect value={timezone} onChange={setTimezone} />
-            {scheduledFor && isValidIanaTimezone(timezone) && (
+            <MeetingTimezoneSelect value={timezone} onChange={setTimezone} />
+            {scheduledFor && timezone && (
               <p className="mt-1 text-xs text-slate-600">
                 New slot:{' '}
                 <span className="font-medium text-slate-800">
-                  {formatInZone(new Date(scheduledFor).toISOString(), timezone)}
+                  {formatInZone(
+                    localInZoneToUtcIso(scheduledFor, timezone),
+                    timezone,
+                  )}{' '}
+                  {zoneLabelFor(timezone)}
                 </span>
               </p>
             )}

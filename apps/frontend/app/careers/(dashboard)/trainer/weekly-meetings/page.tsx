@@ -5,6 +5,14 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import api from '@/lib/careers/api';
 import WebexHostStartCard from '@/components/meeting/WebexHostStartCard';
+import MeetingTimezoneSelect from '@/components/ui/MeetingTimezoneSelect';
+import { formatInZone } from '@/lib/careers/format-interview-time';
+import {
+  DEFAULT_MEETING_ZONE,
+  localInZoneToUtcIso,
+  nowPlus30InZone,
+  zoneLabelFor,
+} from '@/lib/careers/meeting-timezones';
 import { AlertTriangle, Calendar, CheckCircle2, Clock, Plus, RefreshCw, X, XCircle, AlertOctagon } from 'lucide-react';
 
 type InternRow = { internLifecycleId: string; fullName: string | null; employeeId: string | null };
@@ -226,7 +234,10 @@ function ScheduleModal({ prefillIntern, interns, onClose, onCreated }: {
   onClose: () => void; onCreated: () => void;
 }) {
   const [internLifecycleId, setInternLifecycleId] = useState(prefillIntern);
-  const [datetime, setDatetime] = useState('');
+  const [timezone, setTimezone] = useState<string>(DEFAULT_MEETING_ZONE);
+  const [datetime, setDatetime] = useState<string>(
+    () => nowPlus30InZone(DEFAULT_MEETING_ZONE),
+  );
   const [duration, setDuration] = useState(30);
   const [topic, setTopic] = useState('');
   const [agenda, setAgenda] = useState('');
@@ -243,9 +254,10 @@ function ScheduleModal({ prefillIntern, interns, onClose, onCreated }: {
     try {
       await api.post('/api/v1/trainer/weekly-meetings', {
         internLifecycleId,
-        scheduledFor: new Date(datetime).toISOString(),
+        // Wall-clock interpreted in the picked zone (not browser-local).
+        scheduledFor: localInZoneToUtcIso(datetime, timezone),
         durationMinutes: duration,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timezone,
         topic: topic.trim(),
         agenda: agenda.trim() || null,
         recurrence: recurrence === 'WEEKLY' ? 'WEEKLY' : null,
@@ -271,6 +283,18 @@ function ScheduleModal({ prefillIntern, interns, onClose, onCreated }: {
       <Field label="Date + time*">
         <input type="datetime-local" value={datetime} onChange={(e) => setDatetime(e.target.value)}
           className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+      </Field>
+      <Field label="Timezone">
+        <MeetingTimezoneSelect value={timezone} onChange={setTimezone} />
+        {datetime && (
+          <p className="mt-1 text-[11px] text-slate-500">
+            Scheduled:{' '}
+            <span className="font-medium text-slate-700">
+              {formatInZone(localInZoneToUtcIso(datetime, timezone), timezone)}{' '}
+              {zoneLabelFor(timezone)}
+            </span>
+          </p>
+        )}
       </Field>
       <Field label="Duration (minutes)">
         <select value={duration} onChange={(e) => setDuration(Number(e.target.value))}

@@ -23,7 +23,12 @@ public final class I983WorkflowDtos {
             Integer durationMinutes,
             LocalDate periodStartDate,
             LocalDate periodEndDate,
-            String agenda
+            String agenda,
+            /** IANA zone id (e.g. Asia/Kolkata) — mirrors the parity DTO
+             *  {@code EvaluationWorkflowDtos.ScheduleRequest.timezone}
+             *  so the I-983 form can send the same field the monthly-eval
+             *  form does. Persisted on {@code InternEvaluation.timezone}. */
+            String timezone
     ) {}
 
     public record SaveDraftI983Request(

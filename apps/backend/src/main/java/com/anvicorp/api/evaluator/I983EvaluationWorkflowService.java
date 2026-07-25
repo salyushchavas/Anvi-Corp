@@ -258,7 +258,14 @@ public class I983EvaluationWorkflowService {
                 saved.getId(), null, Map.of(
                         "evaluationType", req.evaluationType(),
                         "scheduledFor", req.scheduledFor() != null
-                                ? req.scheduledFor().toString() : "(none)"));
+                                ? req.scheduledFor().toString() : "(none)",
+                        // NOTE: I983Evaluation entity has no scheduled_for /
+                        // timezone columns yet — request fields ride on the
+                        // audit map for now so the info survives even
+                        // though nothing on the row persists them. Matches
+                        // the parity DTO on the monthly-eval side.
+                        "timezone", req.timezone() != null && !req.timezone().isBlank()
+                                ? req.timezone() : "(none)"));
         fanout.i983Scheduled(saved, lc, caller);
         return toEvaluatorDetail(saved, lc);
     }

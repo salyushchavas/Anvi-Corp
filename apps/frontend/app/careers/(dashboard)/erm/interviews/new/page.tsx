@@ -6,12 +6,14 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
-import TimezoneSelect from '@/components/ui/TimezoneSelect';
+import MeetingTimezoneSelect from '@/components/ui/MeetingTimezoneSelect';
+import { formatInZone } from '@/lib/careers/format-interview-time';
 import {
-  detectBrowserZone,
-  formatInZone,
-  isValidIanaTimezone,
-} from '@/lib/careers/format-interview-time';
+  DEFAULT_MEETING_ZONE,
+  localInZoneToUtcIso,
+  nowPlus30InZone,
+  zoneLabelFor,
+} from '@/lib/careers/meeting-timezones';
 
 // useSearchParams is unsafe outside <Suspense> during static prerendering.
 // Wrap the inner reader so Next 14 build doesn't bail.
@@ -30,11 +32,11 @@ function CreateInterviewPageInner() {
 
   // Phase 8.5 — the ERM scheduling the interview is the interviewer; no
   // picker is shown. Backend sets interview.interviewer_id = caller.id.
-  const [scheduledFor, setScheduledFor] = useState('');
+  const [timezone, setTimezone] = useState<string>(DEFAULT_MEETING_ZONE);
+  const [scheduledFor, setScheduledFor] = useState<string>(
+    () => nowPlus30InZone(DEFAULT_MEETING_ZONE),
+  );
   const [duration, setDuration] = useState<number>(30);
-  // Phase 1.7 — default to the ERM's browser zone (not a hardcoded
-  // Central US guess). They can still pick another from the selector.
-  const [timezone, setTimezone] = useState(() => detectBrowserZone());
   const [prepInstructions, setPrepInstructions] = useState('');
   const [manualZoomLink, setManualZoomLink] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -44,8 +46,8 @@ function CreateInterviewPageInner() {
     setErr(null);
     if (!applicationId) { setErr('applicationId is required (open from an Application).'); return; }
     if (!scheduledFor) { setErr('Pick a date/time.'); return; }
-    if (!timezone || !isValidIanaTimezone(timezone)) {
-      setErr('Pick a valid timezone for the interview.');
+    if (!timezone) {
+      setErr('Pick a timezone for the interview.');
       return;
     }
     setSubmitting(true);
@@ -54,7 +56,11 @@ function CreateInterviewPageInner() {
         '/api/v1/erm/interviews',
         {
           applicationId,
-          scheduledFor: new Date(scheduledFor).toISOString(),
+          // Interpret the wall-clock string as being IN the picked zone,
+          // NOT browser-local. new Date(str).toISOString() would silently
+          // apply the ERM's browser zone, so an India-based ERM scheduling
+          // "3:00 PM ET" would land as 3PM IST on the Instant.
+          scheduledFor: localInZoneToUtcIso(scheduledFor, timezone),
           durationMinutes: duration,
           timezone,
           prepInstructions: prepInstructions.trim() || null,
@@ -116,12 +122,16 @@ function CreateInterviewPageInner() {
 
             <div>
               <label className="text-sm font-medium text-slate-800">Timezone</label>
-              <TimezoneSelect value={timezone} onChange={setTimezone} />
-              {scheduledFor && isValidIanaTimezone(timezone) && (
+              <MeetingTimezoneSelect value={timezone} onChange={setTimezone} />
+              {scheduledFor && timezone && (
                 <p className="mt-1 text-xs text-slate-600">
                   Scheduled:{' '}
                   <span className="font-medium text-slate-800">
-                    {formatInZone(new Date(scheduledFor).toISOString(), timezone)}
+                    {formatInZone(
+                      localInZoneToUtcIso(scheduledFor, timezone),
+                      timezone,
+                    )}{' '}
+                    {zoneLabelFor(timezone)}
                   </span>
                 </p>
               )}

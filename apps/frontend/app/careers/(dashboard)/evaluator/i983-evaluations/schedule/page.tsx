@@ -12,23 +12,20 @@ import type {
   I983ListRow,
 } from '@/components/evaluator/types';
 import { I983_TYPES } from '@/components/evaluator/types';
+import MeetingTimezoneSelect from '@/components/ui/MeetingTimezoneSelect';
+import { formatInZone } from '@/lib/careers/format-interview-time';
+import {
+  DEFAULT_MEETING_ZONE,
+  localInZoneToUtcIso,
+  nowPlus30InZone,
+  zoneLabelFor,
+} from '@/lib/careers/meeting-timezones';
 
 export default function ScheduleI983Page() {
   return (
     <Suspense fallback={<div className="mx-auto max-w-4xl p-6"><div className="h-48 animate-pulse rounded-lg bg-slate-100" /></div>}>
       <ScheduleI983Inner />
     </Suspense>
-  );
-}
-
-function defaultScheduledFor(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 3);
-  d.setHours(15, 0, 0, 0);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return (
-    d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
-    + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes())
   );
 }
 
@@ -40,7 +37,10 @@ function ScheduleI983Inner() {
   const [eligible, setEligible] = useState<I983ListRow[]>([]);
   const [internLifecycleId, setInternLifecycleId] = useState(prefillId);
   const [evaluationType, setEvaluationType] = useState<I983EvaluationType>('ANNUAL_REVIEW');
-  const [scheduledFor, setScheduledFor] = useState(defaultScheduledFor());
+  const [timezone, setTimezone] = useState<string>(DEFAULT_MEETING_ZONE);
+  const [scheduledFor, setScheduledFor] = useState<string>(
+    () => nowPlus30InZone(DEFAULT_MEETING_ZONE),
+  );
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [agenda, setAgenda] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -79,8 +79,10 @@ function ScheduleI983Inner() {
         {
           internLifecycleId,
           evaluationType,
-          scheduledFor: new Date(scheduledFor).toISOString(),
+          // Wall-clock interpreted in the picked zone (not browser-local).
+          scheduledFor: localInZoneToUtcIso(scheduledFor, timezone),
           durationMinutes,
+          timezone,
           periodStartDate: periodStart,
           periodEndDate: periodEnd,
           agenda: agenda.trim() || null,
@@ -182,6 +184,25 @@ function ScheduleI983Inner() {
               </select>
             </label>
           </div>
+
+          <label className="block">
+            <span className="text-xs font-semibold text-slate-700">Timezone</span>
+            <div className="mt-1">
+              <MeetingTimezoneSelect value={timezone} onChange={setTimezone} />
+            </div>
+            {scheduledFor && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Scheduled:{' '}
+                <span className="font-medium text-slate-700">
+                  {formatInZone(
+                    localInZoneToUtcIso(scheduledFor, timezone),
+                    timezone,
+                  )}{' '}
+                  {zoneLabelFor(timezone)}
+                </span>
+              </p>
+            )}
+          </label>
 
           <label className="block">
             <span className="text-xs font-semibold text-slate-700">Agenda (optional)</span>

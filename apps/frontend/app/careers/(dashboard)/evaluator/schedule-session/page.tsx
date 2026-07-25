@@ -10,24 +10,20 @@ import type {
   ActiveEvalueesPage,
   EvaluatorEvaluationDetail,
 } from '@/components/evaluator/types';
+import MeetingTimezoneSelect from '@/components/ui/MeetingTimezoneSelect';
+import { formatInZone } from '@/lib/careers/format-interview-time';
+import {
+  DEFAULT_MEETING_ZONE,
+  localInZoneToUtcIso,
+  nowPlus30InZone,
+  zoneLabelFor,
+} from '@/lib/careers/meeting-timezones';
 
 export default function ScheduleSessionPage() {
   return (
     <Suspense fallback={<div className="mx-auto max-w-4xl p-6"><div className="h-48 animate-pulse rounded-lg bg-slate-100" /></div>}>
       <ScheduleSessionInner />
     </Suspense>
-  );
-}
-
-function defaultScheduledFor(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  d.setHours(14, 0, 0, 0);
-  // ISO local for datetime-local input
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return (
-    d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
-    + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes())
   );
 }
 
@@ -38,7 +34,10 @@ function ScheduleSessionInner() {
 
   const [evaluees, setEvaluees] = useState<ActiveEvalueeRow[]>([]);
   const [internLifecycleId, setInternLifecycleId] = useState(prefillId);
-  const [scheduledFor, setScheduledFor] = useState(defaultScheduledFor());
+  const [timezone, setTimezone] = useState<string>(DEFAULT_MEETING_ZONE);
+  const [scheduledFor, setScheduledFor] = useState<string>(
+    () => nowPlus30InZone(DEFAULT_MEETING_ZONE),
+  );
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [topic, setTopic] = useState('');
   const [agenda, setAgenda] = useState('');
@@ -73,8 +72,10 @@ function ScheduleSessionInner() {
         '/api/v1/evaluator/evaluations',
         {
           internLifecycleId,
-          scheduledFor: new Date(scheduledFor).toISOString(),
+          // Wall-clock interpreted in the picked zone (not browser-local).
+          scheduledFor: localInZoneToUtcIso(scheduledFor, timezone),
           durationMinutes,
+          timezone,
           topic: topic.trim() || null,
           agenda: agenda.trim() || null,
         },
@@ -139,6 +140,22 @@ function ScheduleSessionInner() {
               </select>
             </Field>
           </div>
+
+          <Field label="Timezone">
+            <MeetingTimezoneSelect value={timezone} onChange={setTimezone} />
+            {scheduledFor && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Scheduled:{' '}
+                <span className="font-medium text-slate-700">
+                  {formatInZone(
+                    localInZoneToUtcIso(scheduledFor, timezone),
+                    timezone,
+                  )}{' '}
+                  {zoneLabelFor(timezone)}
+                </span>
+              </p>
+            )}
+          </Field>
 
           <Field label="Topic" required>
             <input
