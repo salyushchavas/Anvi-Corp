@@ -27,10 +27,7 @@ export default async function OpeningsPage() {
     <AdaptiveCareersLayout title="Open Internships">
       <section>
         <div className="mb-8">
-          <h1 className="mb-2 text-3xl font-semibold text-slate-900">Open Internships</h1>
-          <p className="text-sm text-slate-600">
-            Join the Anvi Careers STEM internship program.
-          </p>
+          <h1 className="text-3xl font-semibold text-slate-900">Open Internships</h1>
         </div>
 
         {loadError ? (
