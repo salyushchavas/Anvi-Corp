@@ -11,11 +11,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 
 /**
@@ -30,8 +30,17 @@ import java.util.Optional;
  *
  * <p>Default ON ({@code app.bootstrap.seed-test-jobs-enabled=true}); flip
  * false in production once real postings replace the samples.</p>
+ *
+ * <p>Also gated with {@code @Profile("!prod")} — matches the peer
+ * {@link SeedJobPostingsRunner} + {@link SeedDemoDataRunner} pattern.
+ * The seeder is idempotent by slug, so without this gate a prod
+ * {@code DELETE FROM job_postings WHERE slug='senior-engineer'} would
+ * silently re-appear on the next boot. Belt-and-suspenders alongside
+ * the flag: on prod the profile short-circuits bean creation entirely;
+ * a mis-set profile still falls back to the {@code enabled} check.</p>
  */
 @Component
+@Profile("!prod") // Never seed sample postings in production.
 @Order(15)
 @RequiredArgsConstructor
 @Slf4j
@@ -127,16 +136,26 @@ public class TestJobPostingSeeder implements ApplicationRunner {
                 .build();
     }
 
+    private static final String CANONICAL_ENTITY_NAME = "Anvi Corp USA";
+
+    /**
+     * Look up "Anvi Corp USA" by NAME. The old {@code findAll().get(0)}
+     * lookup was non-deterministic: if a legacy dev DB had a stray
+     * "Stellar USA" row it would win and this seeder would attach the
+     * sample "Senior Engineer" posting to the wrong parent.
+     */
     private StaffingEntity ensureStaffingEntity() {
-        List<StaffingEntity> existing = staffingEntityRepository.findAll();
-        if (!existing.isEmpty()) return existing.get(0);
-        StaffingEntity entity = StaffingEntity.builder()
-                .name("Anvi Corp USA")
-                .country("USA")
-                .isActive(true)
-                .build();
-        entity = staffingEntityRepository.save(entity);
-        log.info("{} created default StaffingEntity 'Anvi Corp USA'", LOG_TAG);
-        return entity;
+        return staffingEntityRepository.findByName(CANONICAL_ENTITY_NAME)
+                .orElseGet(() -> {
+                    StaffingEntity entity = StaffingEntity.builder()
+                            .name(CANONICAL_ENTITY_NAME)
+                            .country("USA")
+                            .isActive(true)
+                            .build();
+                    entity = staffingEntityRepository.save(entity);
+                    log.info("{} created default StaffingEntity '{}'",
+                            LOG_TAG, CANONICAL_ENTITY_NAME);
+                    return entity;
+                });
     }
 }
