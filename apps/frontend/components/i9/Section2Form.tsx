@@ -389,7 +389,7 @@ export default function Section2Form({ form, onSaved }: Props) {
         htmlFor="i9-businessOrganizationName"
         required
         error={errors.businessOrganizationName}
-        helper="The staffing entity employing this intern (e.g. Stellar USA)"
+        helper="The staffing entity employing this intern (e.g. Anvi Corp USA)"
       >
         <input
           id="i9-businessOrganizationName"

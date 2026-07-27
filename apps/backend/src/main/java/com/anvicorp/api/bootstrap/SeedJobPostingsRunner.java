@@ -17,7 +17,8 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Seeds the default StaffingEntity + sample job postings on first boot.
+ * Seeds the canonical StaffingEntity ("Anvi Corp USA") + sample job postings
+ * on first boot.
  *
  * Body is wrapped in try/catch so a seeding failure logs a WARN and never
  * crashes startup. No class-level {@code @Transactional}: {@code saveAll}
@@ -30,6 +31,8 @@ import java.util.List;
 @RequiredArgsConstructor
 @Slf4j
 public class SeedJobPostingsRunner implements CommandLineRunner {
+
+    private static final String CANONICAL_ENTITY_NAME = "Anvi Corp USA";
 
     private final StaffingEntityRepository staffingEntityRepository;
     private final JobPostingRepository jobPostingRepository;
@@ -56,7 +59,7 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
                         .slug("backend-developer-intern")
                         .title("Backend Developer Intern")
                         .description("""
-                                Join the Stellar USA backend team and ship production code in Java and Spring Boot. \
+                                Join the Anvi Corp USA backend team and ship production code in Java and Spring Boot. \
                                 You'll work alongside senior engineers building REST APIs, designing PostgreSQL schemas, \
                                 and integrating with cloud services.
 
@@ -86,7 +89,7 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
                         .slug("frontend-developer-intern")
                         .title("Frontend Developer Intern")
                         .description("""
-                                Build user-facing experiences with React and Next.js on the Stellar USA product team. \
+                                Build user-facing experiences with React and Next.js on the Anvi Corp USA product team. \
                                 You'll own components end-to-end: design hand-off, implementation, accessibility, \
                                 and shipping behind feature flags.
 
@@ -115,7 +118,7 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
                         .slug("cloud-engineer-intern")
                         .title("Cloud Engineer Intern")
                         .description("""
-                                Help Stellar USA's platform team operate the infrastructure that runs every customer \
+                                Help Anvi Corp USA's platform team operate the infrastructure that runs every customer \
                                 workload. You'll work in AWS — ECS, RDS, S3, CloudWatch — and learn what it takes \
                                 to keep a 24x7 service reliable.
 
@@ -144,18 +147,24 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
                 samples.size(), entity.getName());
     }
 
+    /**
+     * Look up "Anvi Corp USA" by NAME (not {@code findAll().get(0)}). The
+     * old first-row lookup was non-deterministic — if a legacy dev DB had
+     * a stray "Stellar USA" row it would win over the canonical entity
+     * and postings would be seeded under the wrong parent.
+     */
     private StaffingEntity ensureStaffingEntity() {
-        List<StaffingEntity> existing = staffingEntityRepository.findAll();
-        if (!existing.isEmpty()) {
-            return existing.get(0);
-        }
-        StaffingEntity entity = StaffingEntity.builder()
-                .name("Stellar USA")
-                .country("USA")
-                .isActive(true)
-                .build();
-        entity = staffingEntityRepository.save(entity);
-        log.info("INFO Default StaffingEntity 'Stellar USA' seeded");
-        return entity;
+        return staffingEntityRepository.findByName(CANONICAL_ENTITY_NAME)
+                .orElseGet(() -> {
+                    StaffingEntity entity = StaffingEntity.builder()
+                            .name(CANONICAL_ENTITY_NAME)
+                            .country("USA")
+                            .isActive(true)
+                            .build();
+                    entity = staffingEntityRepository.save(entity);
+                    log.info("INFO Default StaffingEntity '{}' seeded",
+                            CANONICAL_ENTITY_NAME);
+                    return entity;
+                });
     }
 }
