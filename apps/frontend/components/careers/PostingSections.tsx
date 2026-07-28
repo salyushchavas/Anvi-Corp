@@ -72,8 +72,26 @@ export function parsePostingSections(text?: string | null): PostingSection[] {
   return sections.filter((s) => s.items.length > 0);
 }
 
+/**
+ * Sections that read as a list of responsibilities/points always render as
+ * bullets, even when the admin typed them as plain lines (the form stores
+ * Position Summary without bullet markers). About Company / Qualification stay
+ * as prose paragraphs.
+ */
+const BULLET_HEADINGS = new Set([
+  'position summary',
+  'required skills',
+  'work authorization',
+  'key responsibilities',
+]);
+
+function isBulleted(section: PostingSection): boolean {
+  if (section.bulleted) return true;
+  return section.title ? BULLET_HEADINGS.has(section.title.toLowerCase()) : false;
+}
+
 function SectionBody({ section }: { section: PostingSection }) {
-  if (section.bulleted) {
+  if (isBulleted(section)) {
     return (
       <ul className="space-y-1.5">
         {section.items.map((it, i) => (
