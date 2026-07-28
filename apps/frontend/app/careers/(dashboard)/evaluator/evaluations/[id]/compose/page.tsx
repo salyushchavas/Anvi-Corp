@@ -10,6 +10,9 @@ import { RECOMMENDATIONS, RECOMMENDATIONS_FINAL } from '@/components/evaluator/t
 import WebexHostStartCard from '@/components/meeting/WebexHostStartCard';
 import RecordingUploader from '@/components/dashboard/RecordingUploader';
 import ReferenceQaPanel from '@/components/project/ReferenceQaPanel';
+import ProjectContextPanel from '@/components/evaluator/ProjectContextPanel';
+import RecentWeeklyReportsPanel from '@/components/evaluator/RecentWeeklyReportsPanel';
+import SchedulePostProjectDialog from '@/components/evaluator/SchedulePostProjectDialog';
 
 interface InternProjectOption {
   projectId: string;
@@ -49,6 +52,7 @@ export default function ComposePage() {
   const [savingDraft, setSavingDraft] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
 
   // Session-recording state (independent of the rubric form so it can be
   // uploaded before/after publish — the compose flow doesn't gate on it).
@@ -204,14 +208,24 @@ export default function ComposePage() {
               {data.periodStart && ` · Period: ${data.periodStart} → ${data.periodEnd}`}
             </p>
           </div>
-          {data.zoomMeetingId && (
-            <div className="w-full max-w-md">
-              <WebexHostStartCard
-                providerMeetingId={data.zoomMeetingId}
-                startUrl={data.zoomStartUrl}
-              />
-            </div>
-          )}
+          <div className="flex flex-col items-end gap-2">
+            {data.evaluationType === 'POST_PROJECT'
+              && (data.status === 'DRAFT' || data.status === 'SCHEDULED')
+              && !readOnly && (
+              <button type="button" onClick={() => setScheduleDialogOpen(true)}
+                className="inline-flex items-center gap-1 rounded-md border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-800 hover:bg-brand-100">
+                {data.status === 'SCHEDULED' ? 'Reschedule' : 'Schedule session'}
+              </button>
+            )}
+            {data.zoomMeetingId && (
+              <div className="w-full max-w-md">
+                <WebexHostStartCard
+                  providerMeetingId={data.zoomMeetingId}
+                  startUrl={data.zoomStartUrl}
+                />
+              </div>
+            )}
+          </div>
         </div>
         {readOnly && (
           <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
@@ -223,6 +237,15 @@ export default function ComposePage() {
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Form column */}
         <div className="space-y-4 lg:col-span-2">
+          {/* Per-project context: project panel + weekly reports. Only
+              renders when the evaluation is linked to a project (auto-drafted
+              POST_PROJECT evals always are; MONTHLY evals may or may not be). */}
+          <ProjectContextPanel projectId={selectedProject || data.linkedProjectId || null} />
+
+          {/* Recent weekly reports — reuse the existing per-intern fetch;
+              intern's own account of the work leading into this evaluation. */}
+          <RecentWeeklyReportsPanel lifecycleId={data.internLifecycleId} />
+
           {/* Rubric */}
           <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
@@ -530,6 +553,15 @@ export default function ComposePage() {
           </div>
         </aside>
       </div>
+
+      {scheduleDialogOpen && (
+        <SchedulePostProjectDialog
+          evaluationId={data.evaluationId}
+          projectTitle={data.linkedProject?.title ?? null}
+          onClose={() => setScheduleDialogOpen(false)}
+          onScheduled={() => { setScheduleDialogOpen(false); void load(); }}
+        />
+      )}
     </div>
   );
 }

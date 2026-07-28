@@ -24,7 +24,7 @@ public class EvaluationHistoryService {
     public EvaluatorPhase4Dtos.HistoryPage list(
             User caller,
             String search,
-            String type,        // MONTHLY | FINAL | I983 | null = all
+            String type,        // MONTHLY | FINAL | POST_PROJECT | I983 | null = all
             String status,      // PUBLISHED | ACKNOWLEDGED | AMENDED | null = all
             int page,
             int pageSize) {
@@ -46,10 +46,14 @@ public class EvaluationHistoryService {
         data.append("WITH combined AS (");
         count.append("WITH combined AS (");
 
-        // intern_evaluations branch
+        // intern_evaluations branch — POST_PROJECT gets its own entry_kind
+        // so the frontend can filter/badge it distinctly from MONTHLY.
         String monthlyFinalCte = ""
                 + " SELECT ev.id AS evaluation_id, "
-                + "        CASE WHEN ev.evaluation_type = 'FINAL' THEN 'FINAL' ELSE 'MONTHLY' END AS entry_kind, "
+                + "        CASE "
+                + "          WHEN ev.evaluation_type = 'FINAL' THEN 'FINAL' "
+                + "          WHEN ev.evaluation_type = 'POST_PROJECT' THEN 'POST_PROJECT' "
+                + "          ELSE 'MONTHLY' END AS entry_kind, "
                 + "        ev.intern_lifecycle_id, u.full_name AS intern_name, il.employee_id, "
                 + "        ev.evaluation_type, ev.status, ev.version, "
                 + "        ev.period_start, ev.period_end, ev.scheduled_for, "
@@ -99,14 +103,18 @@ public class EvaluationHistoryService {
         }
 
         boolean includeMonthlyFinal = type == null || type.isBlank()
-                || "MONTHLY".equals(type) || "FINAL".equals(type) || "ALL".equals(type);
+                || "MONTHLY".equals(type) || "FINAL".equals(type)
+                || "POST_PROJECT".equals(type) || "ALL".equals(type);
         boolean includeI983 = type == null || type.isBlank()
                 || "I983".equals(type) || "ALL".equals(type);
 
         if ("MONTHLY".equals(type)) {
-            monthlyBranch.append(" AND ev.evaluation_type <> 'FINAL' ");
+            // Legacy MONTHLY only — exclude FINAL + POST_PROJECT explicitly.
+            monthlyBranch.append(" AND ev.evaluation_type NOT IN ('FINAL','POST_PROJECT') ");
         } else if ("FINAL".equals(type)) {
             monthlyBranch.append(" AND ev.evaluation_type = 'FINAL' ");
+        } else if ("POST_PROJECT".equals(type)) {
+            monthlyBranch.append(" AND ev.evaluation_type = 'POST_PROJECT' ");
         }
 
         boolean appended = false;

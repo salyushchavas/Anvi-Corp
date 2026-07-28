@@ -8,7 +8,7 @@ import api from '@/lib/careers/api';
 
 interface HistoryRow {
   evaluationId: string;
-  entryKind: 'MONTHLY' | 'FINAL' | 'I983';
+  entryKind: 'MONTHLY' | 'FINAL' | 'POST_PROJECT' | 'I983';
   internLifecycleId: string;
   internName: string | null;
   employeeId: string | null;
@@ -128,6 +128,7 @@ function EvaluationHistoryInner() {
               className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
             >
               <option value="ALL">All</option>
+              <option value="POST_PROJECT">Per-project</option>
               <option value="MONTHLY">Monthly</option>
               <option value="FINAL">Final</option>
               <option value="I983">I-983</option>

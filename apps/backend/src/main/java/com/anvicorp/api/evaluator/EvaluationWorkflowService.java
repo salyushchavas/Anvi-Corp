@@ -18,8 +18,10 @@ import com.anvicorp.api.integration.meeting.MeetingResponse;
 import com.anvicorp.api.repository.AuditLogRepository;
 import com.anvicorp.api.repository.EvaluationAmendmentRepository;
 import com.anvicorp.api.repository.ExitRecordRepository;
+import com.anvicorp.api.entity.Project;
 import com.anvicorp.api.repository.InternEvaluationRepository;
 import com.anvicorp.api.repository.InternLifecycleRepository;
+import com.anvicorp.api.repository.ProjectRepository;
 import com.anvicorp.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -54,6 +56,7 @@ public class EvaluationWorkflowService {
     private final InternEvaluationRepository evalRepo;
     private final InternLifecycleRepository lifecycleRepo;
     private final UserRepository userRepo;
+    private final ProjectRepository projectRepository;
     private final EvaluationAmendmentRepository amendmentRepo;
     private final AuditLogRepository auditRepo;
     private final ExitRecordRepository exitRecordRepo;
@@ -739,6 +742,22 @@ public class EvaluationWorkflowService {
                     String.class, lc.getUserId());
         } catch (Exception ignored) {}
         Double avg = averageOf(ev);
+        EvaluationWorkflowDtos.LinkedProjectSummary linkedProject = null;
+        if (ev.getLinkedProjectId() != null) {
+            Project p = projectRepository.findById(ev.getLinkedProjectId()).orElse(null);
+            if (p != null) {
+                linkedProject = new EvaluationWorkflowDtos.LinkedProjectSummary(
+                        p.getId(),
+                        p.getTitle() != null ? p.getTitle() : p.getName(),
+                        p.getTechStack(),
+                        p.getStatus() != null ? p.getStatus().name() : null,
+                        p.getProjectNumber() != null ? p.getProjectNumber().intValue() : null,
+                        p.getMonthYear(),
+                        p.getDueDate(),
+                        p.getSubmittedAt(),
+                        p.getCompletedAt());
+            }
+        }
         return new EvaluationWorkflowDtos.EvaluatorEvaluationDetail(
                 ev.getId(), lc.getId(), lc.getUserId(),
                 intern != null ? intern.getFullName() : null,
@@ -763,7 +782,8 @@ public class EvaluationWorkflowService {
                 ev.getAmendedAt(), ev.getAmendmentReason(),
                 loadAmendmentHistory(ev.getId()),
                 ev.getRecordingDocumentId(),
-                ev.getLinkedProjectId());
+                ev.getLinkedProjectId(),
+                linkedProject);
     }
 
     private List<EvaluationWorkflowDtos.AmendmentEntry> loadAmendmentHistory(UUID evalId) {

@@ -106,7 +106,30 @@ public final class EvaluationWorkflowDtos {
             /** Project the recording pertains to (evaluator-selected on
              *  the compose page). Null for MONTHLY evaluations that haven't
              *  been linked yet. */
-            UUID linkedProjectId
+            UUID linkedProjectId,
+            /** Compact per-project context for POST_PROJECT evaluations.
+             *  Non-null when {@code linkedProjectId} resolves to a project.
+             *  Full context (deliverables, requirements, review notes) is
+             *  available on {@code GET /api/v1/evaluator/projects/{id}}. */
+            LinkedProjectSummary linkedProject
+    ) {}
+
+    /**
+     * Compact linked-project block on the evaluator's evaluation detail.
+     * Enough to render the "which project are we evaluating" chip + basic
+     * metadata inline; the compose page can pull richer detail from
+     * {@code /api/v1/evaluator/projects/{id}} on demand.
+     */
+    public record LinkedProjectSummary(
+            UUID projectId,
+            String title,
+            String techStack,
+            String status,                  // ProjectStatus name
+            Integer projectNumber,
+            String monthYear,
+            LocalDate dueDate,
+            Instant submittedAt,
+            Instant completedAt
     ) {}
 
     /** Intern-facing detail — no internal_notes, no zoom_start_url, no

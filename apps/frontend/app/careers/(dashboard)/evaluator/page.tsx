@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { AlertCircle, ArrowRight } from 'lucide-react';
 import { useEvaluatorDashboard } from '@/components/evaluator/EvaluatorDashboardContext';
 import type { KpiSnapshot } from '@/components/evaluator/types';
+import AwaitingEvaluationCard from '@/components/evaluator/AwaitingEvaluationCard';
 import DashboardRefreshButton from '@/components/ui/DashboardRefreshButton';
 
 export default function EvaluatorHomePage() {
@@ -23,7 +24,7 @@ export default function EvaluatorHomePage() {
             Welcome back, {firstName}.
           </h1>
           <p className="text-xs text-slate-500">
-            Monthly cycle: {monthLabel}
+            Per-project evaluations · {monthLabel}
             {activeEvalueesKpi && pendingAckKpi && (
               <>
                 {' '}· You have <strong>{activeEvalueesKpi.count}</strong> active
@@ -41,6 +42,10 @@ export default function EvaluatorHomePage() {
           {dashboardError}
         </p>
       )}
+
+      {/* Primary worklist — completed projects awaiting this evaluator's
+          action. Sorted oldest-first server-side. */}
+      <AwaitingEvaluationCard />
 
       {dashboardLoading && !dashboard ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">

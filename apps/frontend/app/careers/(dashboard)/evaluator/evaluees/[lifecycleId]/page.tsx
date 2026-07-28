@@ -23,6 +23,7 @@ import type {
   EvalueeDetail,
   EvaluationTimelineEntry,
 } from '@/components/evaluator/types';
+import ProjectTimelineSection from '@/components/evaluator/ProjectTimelineSection';
 
 export default function EvalueeDetailPage() {
   const params = useParams<{ lifecycleId: string }>();
@@ -189,7 +190,14 @@ export default function EvalueeDetailPage() {
         />
       )}
 
-      {/* Timeline */}
+      {/* Per-project timeline — the primary "complete picture" for this
+          intern. Every project + whether it's been evaluated yet, with
+          an inline Evaluate CTA for anything still awaiting action. */}
+      <ProjectTimelineSection lifecycleId={data.profile.lifecycleId} />
+
+      {/* Legacy monthly-evaluation timeline. Left in place so amended /
+          published monthly evaluations remain visible during the
+          MONTHLY→POST_PROJECT parallel-mode transition. */}
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-900">Evaluation timeline</h2>
         {data.timeline.length === 0 ? (

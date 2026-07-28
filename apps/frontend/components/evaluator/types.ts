@@ -194,6 +194,19 @@ export interface EvaluatorEvaluationDetail {
   recordingDocumentId?: string | null;
   /** Project the recording pertains to (evaluator-selected). */
   linkedProjectId?: string | null;
+  /** Compact linked-project summary for POST_PROJECT evaluations —
+   *  populated when {@code linkedProjectId} resolves to a project row. */
+  linkedProject?: {
+    projectId: string;
+    title: string | null;
+    techStack: string | null;
+    status: string | null;
+    projectNumber: number | null;
+    monthYear: string | null;
+    dueDate: string | null;
+    submittedAt: string | null;
+    completedAt: string | null;
+  } | null;
 }
 
 export interface InternEvaluationView {
