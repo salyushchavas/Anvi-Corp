@@ -9,6 +9,7 @@ import type { EvaluatorEvaluationDetail, RecommendationFinal } from '@/component
 import { RECOMMENDATIONS, RECOMMENDATIONS_FINAL } from '@/components/evaluator/types';
 import WebexHostStartCard from '@/components/meeting/WebexHostStartCard';
 import RecordingUploader from '@/components/dashboard/RecordingUploader';
+import ReferenceQaPanel from '@/components/project/ReferenceQaPanel';
 
 interface InternProjectOption {
   projectId: string;
@@ -269,6 +270,11 @@ export default function ComposePage() {
               })}
             </div>
           </section>
+
+          {/* Trainer Reference Q&A — read-only panel resolved via the
+              evaluation's linked project OR the recording project selector
+              (updates live if the evaluator picks a different project). */}
+          <ReferenceQaPanel projectId={selectedProject || data.linkedProjectId || null} />
 
           {/* Session recording */}
           <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">

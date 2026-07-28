@@ -74,6 +74,18 @@ public class Project {
     private String resourceLinksJson;
 
     /**
+     * Trainer-authored reference Q&amp;A pairs for the Evaluator. JSON-encoded
+     * {@code List<{question, answer, order}>}. Written from the trainer's
+     * pending-reviews modal; read (read-only) on the evaluator's evaluation
+     * compose screen for the intern's linked project. Reuses the
+     * {@link #resourceLinksJson} JSON-in-TEXT precedent — one nullable column,
+     * additive ddl-auto migration, whole-list writes (list is small + always
+     * edited as one form). Null / blank = no Q&amp;A attached.
+     */
+    @Column(name = "reference_qa_json", columnDefinition = "TEXT")
+    private String referenceQaJson;
+
+    /**
      * Trainer Phase 2 relaxed engagement_id + intern_id to nullable —
      * lifecycle-tracked projects key off {@link #internLifecycleId}
      * instead. Legacy single-allocation paths still populate both.

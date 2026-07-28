@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import api from '@/lib/careers/api';
 import { AlertOctagon, CheckCircle2, Clock, FileText, RotateCcw, X } from 'lucide-react';
+import ReferenceQaEditor from '@/components/project/ReferenceQaEditor';
 
 type InternRow = { internLifecycleId: string; fullName: string | null };
 
@@ -518,6 +519,11 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
             </div>
           </section>
         </div>
+        {detail && (
+          <div className="border-t border-slate-200 bg-slate-50 p-5">
+            <ReferenceQaEditor projectId={detail.projectId} />
+          </div>
+        )}
       </div>
     </div>
   );
