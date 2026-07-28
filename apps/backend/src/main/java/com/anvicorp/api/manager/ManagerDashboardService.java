@@ -73,6 +73,14 @@ public class ManagerDashboardService {
         ManagerDtos.HeadlineBuckets buckets = computeBuckets(lifecycleCounts, applicationCounts);
         ManagerDtos.ConversionKpis kpis = computeKpis(applicationCounts);
 
+        // Match ManagerHireApprovalService.list() WHERE clause exactly so
+        // the top-of-page KPI never disagrees with the queue's own
+        // "N awaiting your decision" count.
+        long pendingHireApprovals = safeOfferCount(
+                "SELECT COUNT(*) FROM interviews iv "
+                        + " WHERE iv.status = 'COMPLETED' "
+                        + "   AND iv.manager_hire_decision IN ('PENDING','HOLD')");
+
         return new ManagerDtos.OverviewResponse(
                 new ManagerDtos.CallerView(
                         caller.getId(),
@@ -84,6 +92,7 @@ public class ManagerDashboardService {
                 applicationCounts,
                 buckets,
                 kpis,
+                pendingHireApprovals,
                 Instant.now());
     }
 

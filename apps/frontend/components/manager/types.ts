@@ -31,6 +31,10 @@ export interface OverviewResponse {
   applicationCounts: Record<string, number>;
   buckets: HeadlineBuckets;
   kpis: ConversionKpis;
+  /** Interviews with status=COMPLETED and manager_hire_decision IN
+   *  ('PENDING','HOLD') — the actionable Hire Approvals queue count.
+   *  Drives the top-of-page "Action Required" KPI. */
+  pendingHireApprovals: number;
   generatedAt: string;
 }
 

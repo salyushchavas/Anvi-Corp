@@ -79,6 +79,11 @@ export default function ManagerHomePage() {
       {data && (
         <>
           <section>
+            <h2 className="mb-3 text-sm font-semibold text-slate-900">Action required</h2>
+            <HireApprovalsKpi count={data.pendingHireApprovals} />
+          </section>
+
+          <section>
             <h2 className="mb-3 text-sm font-semibold text-slate-900">Funnel</h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <CountCard
@@ -153,13 +158,6 @@ export default function ManagerHomePage() {
             <h2 className="mb-3 text-sm font-semibold text-slate-900">Sections</h2>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <SectionCard
-                href="/careers/manager/hire-approvals"
-                icon={<Gavel className="h-4 w-4" />}
-                title="Hire Approvals"
-                body="Interviewed candidates awaiting your hire / no-hire decision. ERM submits the scorecard; you decide."
-                phase={1}
-              />
-              <SectionCard
                 href="/careers/manager/applicant-pipeline"
                 icon={<Users className="h-4 w-4" />}
                 title="Applicant Pipeline"
@@ -216,6 +214,46 @@ export default function ManagerHomePage() {
         </>
       )}
     </div>
+  );
+}
+
+function HireApprovalsKpi({ count }: { count: number }) {
+  const hasWork = count > 0;
+  const containerCls = hasWork
+    ? 'border-amber-300 bg-amber-50 hover:border-amber-400 hover:shadow'
+    : 'border-slate-200 bg-white hover:border-brand-300 hover:shadow';
+  const numberCls = hasWork ? 'text-amber-800' : 'text-slate-400';
+  const iconCls = hasWork ? 'text-amber-700' : 'text-slate-500';
+  return (
+    <Link
+      href="/careers/manager/hire-approvals"
+      className={`block rounded-lg border p-4 shadow-sm ${containerCls}`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className={`inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide ${iconCls}`}>
+            <Gavel className="h-3.5 w-3.5" />
+            Hire Approvals
+            {hasWork && (
+              <span className="ml-1 rounded-full bg-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
+                Awaiting you
+              </span>
+            )}
+          </p>
+          <p className={`mt-2 text-3xl font-semibold tabular-nums ${numberCls}`}>
+            {count}
+          </p>
+          <p className="mt-1 text-xs text-slate-600">
+            {hasWork
+              ? `${count} interviewed candidate${count === 1 ? '' : 's'} awaiting your hire / no-hire decision.`
+              : 'Nothing waiting on a hire decision right now.'}
+          </p>
+        </div>
+        <span className={`text-xs font-semibold ${hasWork ? 'text-amber-800' : 'text-slate-400'}`}>
+          Review →
+        </span>
+      </div>
+    </Link>
   );
 }
 

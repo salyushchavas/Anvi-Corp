@@ -29,6 +29,16 @@ public final class ManagerDtos {
             HeadlineBuckets buckets,
             /** Conversion-rate KPIs. */
             ConversionKpis kpis,
+            /** Interviews with {@code status=COMPLETED} and
+             *  {@code manager_hire_decision IN ('PENDING','HOLD')} — the
+             *  same set the Hire Approvals queue lists. Drives the
+             *  top-of-page "Action Required" KPI so the manager sees the
+             *  actionable count on landing instead of scrolling to the
+             *  Sections grid. Mirrors
+             *  {@code /api/v1/manager/hire-approvals?pageSize=1}
+             *  .totalElements — kept as a top-level field so no extra
+             *  round-trip is needed. */
+            long pendingHireApprovals,
             Instant generatedAt
     ) {}
 
