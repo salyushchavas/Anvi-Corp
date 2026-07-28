@@ -32,20 +32,94 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 }
 
-function paragraphs(text?: string): string[] {
-  if (!text) return [];
-  return text
-    .split(/\n\s*\n/)
-    .map((p) => p.trim())
-    .filter(Boolean);
+/**
+ * The Jobs Admin form stores several separate boxes inside the two text blocks
+ * (`description`, `requirements`) using the box headings as delimiters. We parse
+ * those back out here so each renders as its own titled section — instead of the
+ * heading label leaking into the body copy and every box being clubbed together.
+ */
+const SECTION_HEADINGS = [
+  'About Company',
+  'Position Summary',
+  'Required Skills',
+  'Work Authorization',
+  'Qualification',
+  'Qualifications',
+  'About the Role',
+  'Key Responsibilities',
+];
+
+interface PostingSection {
+  title: string | null;
+  items: string[];
+  bulleted: boolean;
 }
 
-function requirementLines(text?: string): string[] {
+function parseSections(text?: string): PostingSection[] {
   if (!text) return [];
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*[-•*]\s*/, '').trim())
-    .filter(Boolean);
+  const byLower = new Map(SECTION_HEADINGS.map((h) => [h.toLowerCase(), h]));
+  const sections: PostingSection[] = [];
+  let current: PostingSection | null = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const heading = byLower.get(trimmed.toLowerCase());
+    if (heading) {
+      current = { title: heading, items: [], bulleted: false };
+      sections.push(current);
+      continue;
+    }
+    const bulleted = /^\s*[-•*]\s+/.test(raw);
+    const clean = raw.replace(/^\s*[-•*]\s*/, '').trim();
+    if (!clean) continue;
+    if (!current) {
+      current = { title: null, items: [], bulleted: false };
+      sections.push(current);
+    }
+    if (bulleted) current.bulleted = true;
+    current.items.push(clean);
+  }
+  return sections.filter((s) => s.items.length > 0);
+}
+
+function SectionBody({ section }: { section: PostingSection }) {
+  if (section.bulleted) {
+    return (
+      <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-slate-700">
+        {section.items.map((it, i) => (
+          <li key={i}>{it}</li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <div className="space-y-2 text-sm leading-relaxed text-slate-700">
+      {section.items.map((it, i) => (
+        <p key={i}>{it}</p>
+      ))}
+    </div>
+  );
+}
+
+function SectionGroup({ heading, sections }: { heading: string; sections: PostingSection[] }) {
+  if (sections.length === 0) return null;
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-6">
+      <h2 className="mb-4 text-lg font-semibold text-slate-900">{heading}</h2>
+      <div className="space-y-5">
+        {sections.map((s, i) => (
+          <div key={i}>
+            {s.title && (
+              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-primary-700">
+                {s.title}
+              </h3>
+            )}
+            <SectionBody section={s} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 export default async function JobPostingDetailPage({ params }: Props) {
@@ -95,8 +169,8 @@ export default async function JobPostingDetailPage({ params }: Props) {
     );
   }
 
-  const descParas = paragraphs(posting.description);
-  const reqs = requirementLines(posting.requirements);
+  const aboutSections = parseSections(posting.description);
+  const requirementSections = parseSections(posting.requirements);
   const employment = EMPLOYMENT_LABEL[posting.employmentType] ?? posting.employmentType;
 
   return (
@@ -130,27 +204,8 @@ export default async function JobPostingDetailPage({ params }: Props) {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
-          {descParas.length > 0 && (
-            <section className="rounded-lg border border-slate-200 bg-white p-6">
-              <h2 className="mb-3 text-lg font-semibold text-slate-900">About the role</h2>
-              <div className="space-y-3 text-sm leading-relaxed text-slate-700">
-                {descParas.map((p, i) => (
-                  <p key={i}>{p}</p>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {reqs.length > 0 && (
-            <section className="rounded-lg border border-slate-200 bg-white p-6">
-              <h2 className="mb-3 text-lg font-semibold text-slate-900">Requirements</h2>
-              <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                {reqs.map((r, i) => (
-                  <li key={i}>{r}</li>
-                ))}
-              </ul>
-            </section>
-          )}
+          <SectionGroup heading="About the role" sections={aboutSections} />
+          <SectionGroup heading="Requirements" sections={requirementSections} />
         </div>
 
         <aside className="lg:col-span-1">
