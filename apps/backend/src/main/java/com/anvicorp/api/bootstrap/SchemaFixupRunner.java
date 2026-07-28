@@ -75,16 +75,23 @@ public class SchemaFixupRunner implements CommandLineRunner {
             log.warn("i9_forms_status_check drop failed (non-fatal): {}", e.getMessage(), e);
         }
 
-        // Two-role workflow: TECH_APPROVED + PENDING_VIVA were added to
-        // ProjectStatus. Drop the stale CHECK so the existing projects table
-        // accepts the new values. Java enum is the source of truth.
-        try {
-            jdbcTemplate.execute(
-                    "ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check");
-            log.info("Dropped stale projects_status_check (if present).");
-        } catch (Exception e) {
-            log.warn("projects_status_check drop failed (non-fatal): {}", e.getMessage(), e);
-        }
+        // ProjectStatus grew several values after its initial CHECK was
+        // emitted (TECH_APPROVED, PENDING_VIVA, and the terminal COMPLETED).
+        // A bare DROP CONSTRAINT IF EXISTS was in place here originally,
+        // but it kept getting undone (Hibernate 6 re-emits @Enumerated CHECKs
+        // during schema-update on some deploys, and a silent DROP failure
+        // just logs WARN and moves on) — TestInternLifecycleSeeder tripped
+        // 23514 on the first COMPLETED insert. Mirror the timesheets /
+        // weekly_reports rebuild: DROP + ADD with the full current enum,
+        // verify via pg_constraint. Java @Enumerated(EnumType.STRING) on
+        // ProjectStatus stays the real source of truth; the CHECK is
+        // belt-and-suspenders.
+        rebuildProjectsStatusCheck();
+
+        // Same risk class on the newer project_assignments table.
+        // ProjectAssignmentStatus has the same 7 values and the trainer /
+        // seeder flows write SUBMITTED / COMPLETED / TECH_APPROVED into it.
+        rebuildProjectAssignmentsStatusCheck();
 
         // REPORTING_MANAGER was added to UserRole. The role values live on
         // the user_roles join table; same stale-CHECK reasoning as above.
@@ -2860,6 +2867,108 @@ public class SchemaFixupRunner implements CommandLineRunner {
                         + "attempt — ERM verify will continue to 23514 until this is "
                         + "resolved (check DB user privileges on the weekly_reports table).",
                         constraint);
+            }
+        } catch (Exception verifyErr) {
+            log.warn("[SchemaFixupRunner] post-rebuild verify on {} failed (non-fatal): {}",
+                    constraint, verifyErr.getMessage());
+        }
+    }
+
+    /**
+     * Rebuild {@code projects_status_check} to allow the full current
+     * {@link com.anvicorp.api.enums.ProjectStatus} set. The original code
+     * here was a bare {@code DROP CONSTRAINT IF EXISTS} — that broke the
+     * moment Hibernate 6's schema-update re-emitted the CHECK from the
+     * @Enumerated column, or the DROP silently failed and only logged WARN
+     * (the engagement_id-relax lesson). The DROP+ADD+verify shape matches
+     * {@link #rebuildTimesheetsStatusCheck} verbatim so future enum widenings
+     * only need to touch the value list.
+     */
+    private void rebuildProjectsStatusCheck() {
+        final String constraint = "projects_status_check";
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE projects DROP CONSTRAINT IF EXISTS " + constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} DROP failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE projects ADD CONSTRAINT " + constraint
+                            + " CHECK (status IN ('NOT_STARTED','IN_PROGRESS',"
+                            + "'SUBMITTED','RETURNED','TECH_APPROVED',"
+                            + "'PENDING_VIVA','COMPLETED'))");
+            log.info("[SchemaFixupRunner] rebuilt {} to current ProjectStatus enum "
+                    + "(NOT_STARTED,IN_PROGRESS,SUBMITTED,RETURNED,TECH_APPROVED,"
+                    + "PENDING_VIVA,COMPLETED)", constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} ADD failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM pg_constraint c "
+                            + "JOIN pg_class t ON t.oid = c.conrelid "
+                            + "WHERE t.relname = 'projects' AND c.conname = ?",
+                    Integer.class, constraint);
+            if (count != null && count > 0) {
+                log.info("[SchemaFixupRunner] verified {} present on projects", constraint);
+            } else {
+                log.error("[SchemaFixupRunner] {} is MISSING on projects after rebuild "
+                        + "attempt — COMPLETED / PENDING_VIVA / TECH_APPROVED writes will "
+                        + "23514 until this is resolved (check DB user privileges on the "
+                        + "projects table).", constraint);
+            }
+        } catch (Exception verifyErr) {
+            log.warn("[SchemaFixupRunner] post-rebuild verify on {} failed (non-fatal): {}",
+                    constraint, verifyErr.getMessage());
+        }
+    }
+
+    /**
+     * Sister of {@link #rebuildProjectsStatusCheck} for the newer
+     * {@code project_assignments} table. {@link
+     * com.anvicorp.api.enums.ProjectAssignmentStatus} carries the same 7
+     * values ProjectStatus does, and the trainer + seeder paths write
+     * SUBMITTED / COMPLETED / TECH_APPROVED into
+     * {@code project_assignments.status}.
+     */
+    private void rebuildProjectAssignmentsStatusCheck() {
+        final String constraint = "project_assignments_status_check";
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE project_assignments DROP CONSTRAINT IF EXISTS " + constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} DROP failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE project_assignments ADD CONSTRAINT " + constraint
+                            + " CHECK (status IN ('ASSIGNED','IN_PROGRESS',"
+                            + "'SUBMITTED','RETURNED','TECH_APPROVED',"
+                            + "'PENDING_VIVA','COMPLETED'))");
+            log.info("[SchemaFixupRunner] rebuilt {} to current ProjectAssignmentStatus enum "
+                    + "(ASSIGNED,IN_PROGRESS,SUBMITTED,RETURNED,TECH_APPROVED,"
+                    + "PENDING_VIVA,COMPLETED)", constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} ADD failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM pg_constraint c "
+                            + "JOIN pg_class t ON t.oid = c.conrelid "
+                            + "WHERE t.relname = 'project_assignments' AND c.conname = ?",
+                    Integer.class, constraint);
+            if (count != null && count > 0) {
+                log.info("[SchemaFixupRunner] verified {} present on project_assignments", constraint);
+            } else {
+                log.error("[SchemaFixupRunner] {} is MISSING on project_assignments after "
+                        + "rebuild attempt — SUBMITTED / COMPLETED writes will 23514 until "
+                        + "this is resolved (check DB user privileges on the "
+                        + "project_assignments table).", constraint);
             }
         } catch (Exception verifyErr) {
             log.warn("[SchemaFixupRunner] post-rebuild verify on {} failed (non-fatal): {}",
