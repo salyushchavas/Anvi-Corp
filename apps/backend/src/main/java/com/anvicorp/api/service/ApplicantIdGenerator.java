@@ -27,6 +27,6 @@ public class ApplicantIdGenerator {
         Long n = jdbcTemplate.queryForObject(
                 "SELECT nextval('skyzen_applicant_seq')", Long.class);
         long suffix = n != null ? n : 0L;
-        return String.format("SKZ-INT-%d-%06d", LocalDate.now().getYear(), suffix);
+        return String.format("ANVI-INT-%d-%06d", LocalDate.now().getYear(), suffix);
     }
 }

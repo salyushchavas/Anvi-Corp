@@ -1971,7 +1971,7 @@ public class SchemaFixupRunner implements CommandLineRunner {
             // multiple rows in some Postgres versions.
             backfilled = jdbcTemplate.update(
                     "UPDATE job_postings "
-                            + "   SET job_id = 'SKZ-JOB-' "
+                            + "   SET job_id = 'ANVI-JOB-' "
                             + "       || EXTRACT(YEAR FROM created_at)::int "
                             + "       || '-' "
                             + "       || LPAD(nextval('skyzen_job_seq')::text, 6, '0') "

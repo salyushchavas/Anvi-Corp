@@ -73,7 +73,7 @@ public final class SampleVarsRegistry {
                 "recipientFirstName", "Sam",
                 "role", "Trainer",
                 "internName", "Alex K.",
-                "employeeId", "SKZ-2026-042",
+                "employeeId", "ANVI-EMP-2026-042",
                 "tentativeStartDate", "2026-07-01"));
         SAMPLES.put("START_DATE_UPDATED", Map.of(
                 "firstName", "Alex",
