@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import SignOutButton from '@/components/auth/SignOutButton';
+import StaffMailButton from '@/components/dashboard/StaffMailButton';
 import { BRAND } from '@/lib/careers/brand';
 
 /**
@@ -64,6 +65,7 @@ export default function TrainerSidebar() {
         </ul>
       </nav>
       <div className="space-y-2 border-t border-slate-200 px-3 py-3">
+        <StaffMailButton />
         <SignOutButton variant="sidebar" />
         <p className="px-3 text-[11px] text-slate-500">
           Role: Trainer · Audit log
