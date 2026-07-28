@@ -150,6 +150,18 @@ public class InternEvaluation {
     @Column(name = "internal_notes", columnDefinition = "TEXT")
     private String internalNotes;
 
+    /**
+     * Optional S3-backed session recording. Bare UUID column (not a JPA
+     * relation) matching the {@code Interview.recordingDocumentId} +
+     * {@code ProjectSubmission.attachmentDocumentId} convention in this
+     * repo — keeps the ddl-auto migration additive and cross-package
+     * cleanup simpler. Video bytes are uploaded direct-to-S3 via a
+     * presigned PUT; playback happens through a presigned GET. Null
+     * until the evaluator attaches a recording.
+     */
+    @Column(name = "recording_document_id")
+    private UUID recordingDocumentId;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 

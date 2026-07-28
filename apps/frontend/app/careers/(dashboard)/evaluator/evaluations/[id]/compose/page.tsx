@@ -3,11 +3,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { ChevronLeft, Save, Send, Star } from 'lucide-react';
+import { ChevronLeft, Save, Send, Star, Video } from 'lucide-react';
 import api from '@/lib/careers/api';
 import type { EvaluatorEvaluationDetail, RecommendationFinal } from '@/components/evaluator/types';
 import { RECOMMENDATIONS, RECOMMENDATIONS_FINAL } from '@/components/evaluator/types';
 import WebexHostStartCard from '@/components/meeting/WebexHostStartCard';
+import RecordingUploader from '@/components/dashboard/RecordingUploader';
+
+interface InternProjectOption {
+  projectId: string;
+  title: string;
+  status: string | null;
+  assignmentDate: string | null;
+  dueDate: string | null;
+}
 
 const RUBRIC: { key: 'technical' | 'communication' | 'professionalism' | 'learning'; label: string; tip: string }[] = [
   { key: 'technical',      label: 'Technical Skills',        tip: 'How strong is their technical work this period? Code quality, problem-solving, design choices.' },
@@ -40,6 +49,14 @@ export default function ComposePage() {
   const [publishing, setPublishing] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
 
+  // Session-recording state (independent of the rubric form so it can be
+  // uploaded before/after publish — the compose flow doesn't gate on it).
+  const [projectOptions, setProjectOptions] = useState<InternProjectOption[]>([]);
+  const [selectedProject, setSelectedProject] = useState<string>('');
+  const [recordingDocId, setRecordingDocId] = useState<string | null>(null);
+  const [recordingErr, setRecordingErr] = useState<string | null>(null);
+  const [recordingSavedAt, setRecordingSavedAt] = useState<Date | null>(null);
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -57,6 +74,8 @@ export default function ComposePage() {
       setComments(res.data.comments ?? '');
       setRecommendation((res.data.recommendation as RecommendationFinal | null) ?? '');
       setInternalNotes(res.data.internalNotes ?? '');
+      setRecordingDocId(res.data.recordingDocumentId ?? null);
+      if (res.data.linkedProjectId) setSelectedProject(res.data.linkedProjectId);
       setErr(null);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -66,6 +85,36 @@ export default function ComposePage() {
     }
   }, [id]);
   useEffect(() => { void load(); }, [load]);
+
+  // Load the intern's project assignments for the Session Recording
+  // project selector. Best-effort — an empty list just leaves the
+  // selector with the "General / no project" option only.
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    api.get<InternProjectOption[]>(
+      `/api/v1/evaluator/evaluations/${id}/intern-projects`,
+    )
+      .then((res) => { if (!cancelled) setProjectOptions(res.data ?? []); })
+      .catch(() => { if (!cancelled) setProjectOptions([]); });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  const persistRecording = useCallback(async (docId: string) => {
+    if (!id) return;
+    setRecordingErr(null);
+    try {
+      await api.post(`/api/v1/evaluator/evaluations/${id}/recording`, {
+        recordingDocumentId: docId,
+        linkedProjectId: selectedProject || null,
+      });
+      setRecordingDocId(docId);
+      setRecordingSavedAt(new Date());
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: string } }; message?: string };
+      setRecordingErr(ax.response?.data?.error ?? ax.message ?? 'Failed to save recording');
+    }
+  }, [id, selectedProject]);
 
   const scoredCount = [technical, communication, professionalism, learning].filter((s) => s != null).length;
   const avg = scoredCount > 0
@@ -218,6 +267,70 @@ export default function ComposePage() {
                   </div>
                 );
               })}
+            </div>
+          </section>
+
+          {/* Session recording */}
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-2">
+              <Video className="h-4 w-4 text-brand-700" />
+              <h2 className="text-sm font-semibold text-slate-900">
+                Session recording <span className="text-xs font-normal text-slate-500">(optional)</span>
+              </h2>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Direct-to-S3 upload (up to 2 GiB). ERM + Manager view all
+              recordings in the Session Recordings gallery, grouped by
+              month → intern → project.
+            </p>
+            <div className="mt-3 space-y-2">
+              <label className="block text-xs font-semibold text-slate-700">
+                Project this recording pertains to
+                <select
+                  value={selectedProject}
+                  onChange={(e) => setSelectedProject(e.target.value)}
+                  disabled={readOnly}
+                  className="mt-1 block w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                >
+                  <option value="">General / no specific project</option>
+                  {projectOptions.map((p) => (
+                    <option key={p.projectId} value={p.projectId}>
+                      {p.title}
+                      {p.status ? ` — ${p.status.replaceAll('_', ' ')}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!readOnly && (
+                <RecordingUploader
+                  presignEndpoint={`/api/v1/evaluator/evaluations/${id}/recording/presign-upload`}
+                  initial={recordingDocId
+                    ? { kind: 'ready', fileName: 'recording attached', documentId: recordingDocId }
+                    : undefined}
+                  onReady={(docId) => { void persistRecording(docId); }}
+                  onClear={() => { setRecordingSavedAt(null); }}
+                  helperText="Uploads bypass the backend and go directly to secure storage. Video/* only."
+                />
+              )}
+              {readOnly && recordingDocId && (
+                <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  Recording attached. Preview / download it from the ERM
+                  or Manager Session Recordings gallery.
+                </p>
+              )}
+              {recordingErr && (
+                <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+                  {recordingErr}
+                </p>
+              )}
+              {recordingSavedAt && (
+                <p className="text-[11px] text-green-700">
+                  Recording saved at {recordingSavedAt.toLocaleTimeString()}
+                  {selectedProject
+                    ? ' · linked to selected project'
+                    : ' · not linked to a specific project'}
+                </p>
+              )}
             </div>
           </section>
 

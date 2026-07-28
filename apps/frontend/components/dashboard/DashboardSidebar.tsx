@@ -113,6 +113,7 @@ const STAFF_ROLE_LINKS: Record<UserRole, StaffLink[]> = {
     { icon: Users,          label: 'Active Interns',       href: '/careers/erm/active-interns' },
     { icon: Hammer,         label: 'Timesheets',           href: '/careers/erm/timesheets' },
     { icon: FileText,       label: 'Weekly Reports',       href: '/careers/erm/weekly-reports' },
+    { icon: Video,          label: 'Session Recordings',   href: '/careers/erm/evaluation-recordings' },
     { icon: AlertTriangle,  label: 'Escalations',          href: '/careers/erm/escalations' },
     { icon: LogOut,         label: 'Exit / Inactivate',    href: '/careers/erm/exits' },
     { icon: BarChart3,      label: 'Reports',              href: '/careers/erm/reports' },

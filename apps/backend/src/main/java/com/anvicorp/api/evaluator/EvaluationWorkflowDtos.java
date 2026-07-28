@@ -98,7 +98,15 @@ public final class EvaluationWorkflowDtos {
             String internResponse,
             Instant amendedAt,
             String amendmentReason,
-            List<AmendmentEntry> amendments
+            List<AmendmentEntry> amendments,
+            /** Optional S3-backed session recording. Non-null means a
+             *  recording has been attached; playback URL is minted by
+             *  {@code GET /api/v1/evaluation-recordings/{id}/download-url}. */
+            UUID recordingDocumentId,
+            /** Project the recording pertains to (evaluator-selected on
+             *  the compose page). Null for MONTHLY evaluations that haven't
+             *  been linked yet. */
+            UUID linkedProjectId
     ) {}
 
     /** Intern-facing detail — no internal_notes, no zoom_start_url, no

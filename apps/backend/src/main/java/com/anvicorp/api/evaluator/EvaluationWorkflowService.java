@@ -761,7 +761,9 @@ public class EvaluationWorkflowService {
                 ev.getPublishedAt(), ev.getInternAcknowledgedAt(),
                 ev.getInternResponse(),
                 ev.getAmendedAt(), ev.getAmendmentReason(),
-                loadAmendmentHistory(ev.getId()));
+                loadAmendmentHistory(ev.getId()),
+                ev.getRecordingDocumentId(),
+                ev.getLinkedProjectId());
     }
 
     private List<EvaluationWorkflowDtos.AmendmentEntry> loadAmendmentHistory(UUID evalId) {

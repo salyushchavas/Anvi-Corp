@@ -190,6 +190,10 @@ export interface EvaluatorEvaluationDetail {
   amendedAt: string | null;
   amendmentReason: string | null;
   amendments: AmendmentEntry[];
+  /** Optional S3-backed session recording. Non-null once uploaded. */
+  recordingDocumentId?: string | null;
+  /** Project the recording pertains to (evaluator-selected). */
+  linkedProjectId?: string | null;
 }
 
 export interface InternEvaluationView {
