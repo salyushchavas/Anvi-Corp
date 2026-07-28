@@ -18,6 +18,7 @@ import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -49,6 +50,21 @@ public class DocumentEmailListener {
     private final OrgTeamResolver orgTeamResolver;
     private final com.anvicorp.api.config.BrandConfig brand;
 
+    /**
+     * Frontend base URL used to build absolute {@code deepLink} values in
+     * email bodies (so the template renders a real clickable URL rather
+     * than a bare "/careers/..." string most mail clients don't
+     * auto-linkify). Same {@code app.frontend.base-url} config peer
+     * email code injects (e.g. {@code EvaluationNotificationFanout}).
+     */
+    @Value("${app.frontend.base-url:https://www.anvicorp.com}")
+    private String frontendBaseUrl;
+
+    private String absoluteLink(String path) {
+        String base = frontendBaseUrl == null ? "" : frontendBaseUrl.replaceAll("/+$", "");
+        return base + path;
+    }
+
     // ── Packet assigned ──────────────────────────────────────────────────
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -66,7 +82,7 @@ public class DocumentEmailListener {
             vars.put("templateCount", e.getTemplateTitles() == null ? 0
                     : e.getTemplateTitles().size());
             vars.put("templateTitlesList", joinBulleted(e.getTemplateTitles()));
-            vars.put("deepLink", INTERN_DASH);
+            vars.put("deepLink", absoluteLink(INTERN_DASH));
             renderAndSend("DOCUMENT_PACKET_ASSIGNED", vars, intern);
             dispatcher.dispatch(intern.getId(), "DOCUMENT_PACKET_ASSIGNED",
                     intern.getId(),
@@ -126,7 +142,7 @@ public class DocumentEmailListener {
             vars.put("ermName", erm != null ? nz(erm.getFullName()) : brand.getName() + " ERM");
             vars.put("reasonHuman", humanReason(e.getReasonCode()));
             vars.put("ermComments", nz(e.getErmComments()));
-            vars.put("deepLink", INTERN_DASH);
+            vars.put("deepLink", absoluteLink(INTERN_DASH));
             vars.put("remainingTasksBlurb", buildRemainingBlurb(e.getPacketId()));
             renderAndSend(templateKey, vars, intern);
             dispatcher.dispatch(intern.getId(), "DOCUMENT_TASK_" + e.getDecision(),
