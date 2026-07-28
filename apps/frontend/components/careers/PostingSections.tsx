@@ -1,6 +1,7 @@
 import {
   Briefcase,
   Building2,
+  ClipboardList,
   FileText,
   GraduationCap,
   ListChecks,
@@ -20,6 +21,7 @@ import {
 const SECTION_HEADINGS = [
   'About Company',
   'Position Summary',
+  'Job Duties',
   'Required Skills',
   'Work Authorization',
   'Qualification',
@@ -31,6 +33,7 @@ const SECTION_HEADINGS = [
 const SECTION_ICON: Record<string, LucideIcon> = {
   'about company': Building2,
   'position summary': Briefcase,
+  'job duties': ClipboardList,
   'required skills': ListChecks,
   'work authorization': ShieldCheck,
   qualification: GraduationCap,
@@ -79,7 +82,7 @@ export function parsePostingSections(text?: string | null): PostingSection[] {
  * as prose paragraphs.
  */
 const BULLET_HEADINGS = new Set([
-  'position summary',
+  'job duties',
   'required skills',
   'work authorization',
   'key responsibilities',

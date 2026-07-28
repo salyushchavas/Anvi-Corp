@@ -25,6 +25,7 @@ interface PostingFormState {
   location: string;
   aboutCompany: string;
   positionSummary: string;
+  jobDuties: string;
   requiredSkills: string;
   workAuthorization: string;
   qualifications: string;
@@ -69,6 +70,7 @@ const EMPTY_FORM: PostingFormState = {
   location: 'On-site/Hybrid/Remote',
   aboutCompany: '',
   positionSummary: '',
+  jobDuties: '',
   requiredSkills: '',
   workAuthorization: '',
   qualifications: '',
@@ -544,6 +546,16 @@ function PostingEditorModal({
               />
             </Field>
 
+            <Field label="Job Duties">
+              <textarea
+                value={form.jobDuties}
+                onChange={(event) => update('jobDuties', event.target.value)}
+                rows={6}
+                placeholder={'One duty per line — each becomes a bullet point.\nConfigure applications, forms, and workflows.\nDevelop solutions and integrations using REST/SOAP APIs.\nParticipate in requirements gathering and documentation.'}
+                className="w-full resize-y rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </Field>
+
             <Field label="Required Skills">
               <textarea
                 value={form.requiredSkills}
@@ -683,6 +695,7 @@ function buildPostingText(form: PostingFormState): {
   const descriptionSections = [
     section('About Company', form.aboutCompany, false),
     section('Position Summary', form.positionSummary, false),
+    section('Job Duties', form.jobDuties, true),
   ].filter(Boolean);
 
   const requirementSections = [
@@ -721,6 +734,7 @@ function formFromPosting(posting: JobPostingResponse): PostingFormState {
     location: posting.location ?? 'On-site/Hybrid/Remote',
     aboutCompany: extractSection(posting.description, 'About Company'),
     positionSummary: extractSection(posting.description, 'Position Summary'),
+    jobDuties: extractSection(posting.description, 'Job Duties'),
     requiredSkills: extractSection(posting.requirements, 'Required Skills'),
     workAuthorization: extractSection(posting.requirements, 'Work Authorization'),
     qualifications: extractSection(posting.requirements, 'Qualification'),
@@ -733,6 +747,7 @@ function extractSection(text: string | undefined, heading: string): string {
   const headings = [
     'About Company',
     'Position Summary',
+    'Job Duties',
     'Required Skills',
     'Work Authorization',
     'Qualification',
