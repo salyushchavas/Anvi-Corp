@@ -1,12 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { Bell, CheckCheck, ChevronRight } from 'lucide-react';
 import api from '@/lib/careers/api';
-import InternPageShell from '@/components/intern/InternPageShell';
 import { toast } from '@/components/ui/Toast';
 
+/**
+ * Role-agnostic notifications center. Lists the logged-in user's
+ * {@code user_notifications} — the endpoint is user-scoped server-side,
+ * so the same page serves Intern, ERM, Trainer, Manager, and Evaluator.
+ * Was previously at {@code /careers/intern/messages}; the intern-only
+ * wrapper was removed so the page can be reached from every role's
+ * sidebar (via {@code StaffNotificationsButton}) without pulling in the
+ * intern journey stepper / right-side panel.
+ */
 interface UserNotification {
   id: string;
   eventType: string;
@@ -27,7 +34,7 @@ interface Page<T> {
 
 type Tab = 'all' | 'unread';
 
-export default function InternMessagesPage() {
+export default function MessagesPage() {
   const [tab, setTab] = useState<Tab>('all');
   const [items, setItems] = useState<UserNotification[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,7 +78,14 @@ export default function InternMessagesPage() {
   const grouped = useMemo(() => groupByDate(items), [items]);
 
   return (
-    <InternPageShell title="Messages" subtitle="Your activity feed across the platform.">
+    <div className="mx-auto max-w-4xl space-y-4">
+      <header>
+        <h1 className="text-2xl font-semibold text-slate-900">Messages</h1>
+        <p className="mt-1 text-sm text-slate-600">
+          Your activity feed across the platform.
+        </p>
+      </header>
+
       <div className="mb-4 flex items-center justify-between gap-3">
         <div role="tablist" className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
           <TabButton active={tab === 'all'} onClick={() => setTab('all')}>All</TabButton>
@@ -91,7 +105,7 @@ export default function InternMessagesPage() {
       {!loading && !err && items.length === 0 && (
         <p className="rounded-md border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
           <Bell className="mx-auto mb-2 h-6 w-6 text-slate-300" />
-          You're all caught up.
+          You&apos;re all caught up.
         </p>
       )}
 
@@ -133,7 +147,7 @@ export default function InternMessagesPage() {
           ))}
         </div>
       )}
-    </InternPageShell>
+    </div>
   );
 }
 

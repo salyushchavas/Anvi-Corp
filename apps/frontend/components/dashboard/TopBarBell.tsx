@@ -6,10 +6,11 @@ import { Bell } from 'lucide-react';
 import api from '@/lib/careers/api';
 
 /**
- * Phase 7 notification bell. Polls /api/v1/notifications/unread-count
- * every 30s and shows a red badge with the unread count. Click links to
- * /careers/intern/messages — when other role surfaces wire their own
- * Messages page this can become role-aware.
+ * Notification bell. Polls /api/v1/notifications/unread-count every 30s
+ * and shows a red badge with the unread count. Click navigates to the
+ * shared /careers/messages route — role-agnostic, same page whether the
+ * caller is Intern, ERM, Trainer, Manager, or Evaluator. Peer entry
+ * point for the custom-layout roles is {@code StaffNotificationsButton}.
  */
 export default function TopBarBell() {
   const [unread, setUnread] = useState(0);
@@ -31,7 +32,7 @@ export default function TopBarBell() {
 
   return (
     <Link
-      href="/careers/intern/messages"
+      href="/careers/messages"
       aria-label="Notifications"
       className="relative rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
     >

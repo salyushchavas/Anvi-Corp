@@ -152,7 +152,7 @@ export default function RightSidePanel() {
           )}
 
           <Link
-            href="/careers/intern/messages"
+            href="/careers/messages"
             className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
           >
             <MessageSquare className="h-4 w-4 text-slate-500" />

@@ -956,7 +956,7 @@ function NeedHelpCard({ a }: { a: AssignmentSummary }) {
           Raise a doubt <ArrowRight className="h-3 w-3" />
         </Link>
         <Link
-          href="/careers/intern/messages"
+          href="/careers/messages"
           className="inline-flex items-center gap-1 rounded-md border border-brand-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-brand-800 hover:bg-brand-100"
         >
           <MessageSquare className="h-3 w-3" /> Message

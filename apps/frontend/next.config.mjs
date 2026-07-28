@@ -15,6 +15,10 @@ const nextConfig = {
       { source: "/it-consulting.html",                  destination: "/services/it-consulting",                      permanent: true },
       { source: "/contact-us.php",                      destination: "/contact",                                     permanent: true },
       { source: "/privacy-policy.html",                 destination: "/privacy-policy",                              permanent: true },
+      // Messages/notifications page was promoted from an intern-only
+      // route to a shared role-agnostic route. Persisted notification
+      // action_url values that pointed at the old path stay valid.
+      { source: "/careers/intern/messages",             destination: "/careers/messages",                            permanent: true },
     ];
   },
   async headers() {

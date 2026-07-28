@@ -33,7 +33,6 @@ const PATH_TO_MODULE: { prefix: string; key: keyof InternModulesMap }[] = [
   { prefix: '/careers/intern/timesheets',   key: 'timesheets' },
   { prefix: '/careers/intern/evaluations',  key: 'evaluations' },
   { prefix: '/careers/intern/documents',    key: 'documents' },
-  { prefix: '/careers/intern/messages',     key: 'messages' },
   { prefix: '/careers/intern/doubts',       key: 'doubts' },
 ];
 
