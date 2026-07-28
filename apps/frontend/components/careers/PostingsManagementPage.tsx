@@ -8,6 +8,7 @@ import api from '@/lib/careers/api';
 import { formatDateOnly } from '@/lib/careers/format-date';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { PostingBody } from '@/components/careers/PostingSections';
 import type {
   EmploymentType,
   JobPostingResponse,
@@ -582,16 +583,12 @@ function PostingEditorModal({
               <PreviewRow label="Job Type" value={EMPLOYMENT_LABEL[form.employmentType]} />
               <PreviewRow label="Work Location" value={form.location || '-'} />
               <div>
-                <div className="text-xs font-semibold text-gray-500">Description block</div>
-                <pre className="mt-1 max-h-52 overflow-auto whitespace-pre-wrap rounded border border-gray-200 bg-white p-3 text-xs leading-relaxed text-gray-700">
-                  {preview.description || '-'}
-                </pre>
-              </div>
-              <div>
-                <div className="text-xs font-semibold text-gray-500">Requirements block</div>
-                <pre className="mt-1 max-h-52 overflow-auto whitespace-pre-wrap rounded border border-gray-200 bg-white p-3 text-xs leading-relaxed text-gray-700">
-                  {preview.requirements || '-'}
-                </pre>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Candidate view
+                </div>
+                <div className="max-h-96 overflow-auto rounded-lg border border-gray-200 bg-slate-50 p-3">
+                  <PostingBody description={preview.description} requirements={preview.requirements} compact />
+                </div>
               </div>
             </div>
           </aside>

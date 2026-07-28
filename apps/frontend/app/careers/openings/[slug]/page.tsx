@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Briefcase, Building2, Hash, MapPin, type LucideIcon } from 'lucide-react';
 import { fetchJobPosting } from '@/lib/careers/server-api';
 import AdaptiveCareersLayout from '@/components/careers/AdaptiveCareersLayout';
 import ApplyCtaCard from '@/components/careers/ApplyCtaCard';
+import { PostingSectionGroup, parsePostingSections } from '@/components/careers/PostingSections';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,93 +34,27 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 }
 
-/**
- * The Jobs Admin form stores several separate boxes inside the two text blocks
- * (`description`, `requirements`) using the box headings as delimiters. We parse
- * those back out here so each renders as its own titled section — instead of the
- * heading label leaking into the body copy and every box being clubbed together.
- */
-const SECTION_HEADINGS = [
-  'About Company',
-  'Position Summary',
-  'Required Skills',
-  'Work Authorization',
-  'Qualification',
-  'Qualifications',
-  'About the Role',
-  'Key Responsibilities',
-];
-
-interface PostingSection {
-  title: string | null;
-  items: string[];
-  bulleted: boolean;
-}
-
-function parseSections(text?: string): PostingSection[] {
-  if (!text) return [];
-  const byLower = new Map(SECTION_HEADINGS.map((h) => [h.toLowerCase(), h]));
-  const sections: PostingSection[] = [];
-  let current: PostingSection | null = null;
-  for (const raw of text.split(/\r?\n/)) {
-    const trimmed = raw.trim();
-    if (!trimmed) continue;
-    const heading = byLower.get(trimmed.toLowerCase());
-    if (heading) {
-      current = { title: heading, items: [], bulleted: false };
-      sections.push(current);
-      continue;
-    }
-    const bulleted = /^\s*[-•*]\s+/.test(raw);
-    const clean = raw.replace(/^\s*[-•*]\s*/, '').trim();
-    if (!clean) continue;
-    if (!current) {
-      current = { title: null, items: [], bulleted: false };
-      sections.push(current);
-    }
-    if (bulleted) current.bulleted = true;
-    current.items.push(clean);
-  }
-  return sections.filter((s) => s.items.length > 0);
-}
-
-function SectionBody({ section }: { section: PostingSection }) {
-  if (section.bulleted) {
-    return (
-      <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-slate-700">
-        {section.items.map((it, i) => (
-          <li key={i}>{it}</li>
-        ))}
-      </ul>
-    );
-  }
+function Fact({
+  icon: Icon,
+  label,
+  value,
+  mono = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   return (
-    <div className="space-y-2 text-sm leading-relaxed text-slate-700">
-      {section.items.map((it, i) => (
-        <p key={i}>{it}</p>
-      ))}
-    </div>
-  );
-}
-
-function SectionGroup({ heading, sections }: { heading: string; sections: PostingSection[] }) {
-  if (sections.length === 0) return null;
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white p-6">
-      <h2 className="mb-4 text-lg font-semibold text-slate-900">{heading}</h2>
-      <div className="space-y-5">
-        {sections.map((s, i) => (
-          <div key={i}>
-            {s.title && (
-              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-primary-700">
-                {s.title}
-              </h3>
-            )}
-            <SectionBody section={s} />
-          </div>
-        ))}
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-accent/10 text-primary-700">
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
+        <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{label}</dt>
+        <dd className={`text-slate-800 ${mono ? 'break-all font-mono text-[13px]' : 'font-medium'}`}>{value}</dd>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -169,8 +105,8 @@ export default async function JobPostingDetailPage({ params }: Props) {
     );
   }
 
-  const aboutSections = parseSections(posting.description);
-  const requirementSections = parseSections(posting.requirements);
+  const aboutSections = parsePostingSections(posting.description);
+  const requirementSections = parsePostingSections(posting.requirements);
   const employment = EMPLOYMENT_LABEL[posting.employmentType] ?? posting.employmentType;
 
   return (
@@ -185,35 +121,48 @@ export default async function JobPostingDetailPage({ params }: Props) {
           </Link>
         </div>
 
-      <header className="mb-6 rounded-lg border border-slate-200 bg-white p-6">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          {posting.entityName && (
-            <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-              {posting.entityName}
-            </span>
-          )}
-          <span className="inline-block rounded-md bg-accent/10 px-2.5 py-1 text-xs font-medium text-primary-700">
-            {employment}
-          </span>
-          <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-            {posting.location}
-          </span>
-        </div>
-        <h1 className="text-3xl font-semibold text-slate-900">{posting.title}</h1>
-      </header>
+        <header className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="h-1.5 w-full bg-gradient-to-r from-accent to-primary-600" />
+          <div className="p-6">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              {posting.entityName && (
+                <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+                  {posting.entityName}
+                </span>
+              )}
+              <span className="inline-block rounded-md bg-accent/10 px-2.5 py-1 text-xs font-medium text-primary-700">
+                {employment}
+              </span>
+              <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+                {posting.location}
+              </span>
+            </div>
+            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">{posting.title}</h1>
+          </div>
+        </header>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-6">
-          <SectionGroup heading="About the role" sections={aboutSections} />
-          <SectionGroup heading="Requirements" sections={requirementSections} />
-        </div>
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            <PostingSectionGroup heading="About the role" sections={aboutSections} />
+            <PostingSectionGroup heading="Requirements" sections={requirementSections} />
+          </div>
 
-        <aside className="lg:col-span-1">
-          {/* GAP A4 — auth-aware client CTA. Page itself stays public/SSR. */}
-          <ApplyCtaCard slug={posting.slug} />
-        </aside>
-      </div>
-    </article>
+          <aside className="space-y-4 lg:col-span-1">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-4 text-sm font-semibold text-slate-900">At a glance</h2>
+              <dl className="space-y-4">
+                <Fact icon={Briefcase} label="Employment" value={employment} />
+                {posting.location && <Fact icon={MapPin} label="Location" value={posting.location} />}
+                {posting.entityName && <Fact icon={Building2} label="Company" value={posting.entityName} />}
+                {posting.jobId && <Fact icon={Hash} label="Job ID" value={posting.jobId} mono />}
+              </dl>
+            </div>
+
+            {/* GAP A4 — auth-aware client CTA. Page itself stays public/SSR. */}
+            <ApplyCtaCard slug={posting.slug} />
+          </aside>
+        </div>
+      </article>
     </AdaptiveCareersLayout>
   );
 }
