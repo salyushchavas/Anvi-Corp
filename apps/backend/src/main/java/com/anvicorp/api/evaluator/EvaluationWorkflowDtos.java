@@ -111,7 +111,17 @@ public final class EvaluationWorkflowDtos {
              *  Non-null when {@code linkedProjectId} resolves to a project.
              *  Full context (deliverables, requirements, review notes) is
              *  available on {@code GET /api/v1/evaluator/projects/{id}}. */
-            LinkedProjectSummary linkedProject
+            LinkedProjectSummary linkedProject,
+            /** Manager approval gate for the attached recording.
+             *  PENDING_APPROVAL / APPROVED / REVISION_REQUESTED. Null
+             *  when no recording is attached yet. */
+            String recordingApprovalStatus,
+            /** Manager's notes when REVISION_REQUESTED — shown to the
+             *  evaluator on the compose page so they know what to fix. */
+            String recordingRevisionNotes,
+            /** P1 / P2 / P1_P2 — the recording's scope. Null when no
+             *  recording is attached. */
+            String recordingScope
     ) {}
 
     /**

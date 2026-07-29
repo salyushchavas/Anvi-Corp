@@ -137,6 +137,13 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // timesheets pattern verbatim.
         rebuildWeeklyReportsStatusCheck();
 
+        // Manager approval gate for evaluation recordings — new column,
+        // Hibernate emits a CHECK from the raw String field ONLY when it
+        // sees an existing @Enumerated column, so we belt-and-suspenders
+        // the check ourselves. Any expansion of the values list needs
+        // this rebuild to keep writes flowing.
+        rebuildRecordingApprovalStatusCheck();
+
         // ── 8-role finalize: rename HR_COMPLIANCE → HR and
         //                    TECHNICAL_SUPERVISOR → TECHNICAL_EVALUATOR.
         //
@@ -2852,6 +2859,54 @@ public class SchemaFixupRunner implements CommandLineRunner {
      * fails with SQLSTATE 23514 → surfaced to the user as a generic
      * "A submitted value isn't allowed here."
      */
+    /**
+     * Rebuild {@code intern_evaluations_recording_approval_status_check}
+     * so the manager approval gate values ({@code PENDING_APPROVAL},
+     * {@code APPROVED}, {@code REVISION_REQUESTED}) are accepted.
+     * ddl-auto emits CHECKs from raw String @Column fields inconsistently
+     * across Hibernate versions — belt-and-suspenders same as the
+     * timesheets / weekly_reports rebuilds.
+     */
+    private void rebuildRecordingApprovalStatusCheck() {
+        final String constraint = "intern_evaluations_recording_approval_status_check";
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE intern_evaluations DROP CONSTRAINT IF EXISTS " + constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} DROP failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE intern_evaluations ADD CONSTRAINT " + constraint
+                            + " CHECK (recording_approval_status IS NULL "
+                            + "OR recording_approval_status IN ('PENDING_APPROVAL',"
+                            + "'APPROVED','REVISION_REQUESTED'))");
+            log.info("[SchemaFixupRunner] rebuilt {} to current recording-approval enum "
+                    + "(PENDING_APPROVAL,APPROVED,REVISION_REQUESTED)", constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} ADD failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM pg_constraint c "
+                            + "JOIN pg_class t ON t.oid = c.conrelid "
+                            + "WHERE t.relname = 'intern_evaluations' AND c.conname = ?",
+                    Integer.class, constraint);
+            if (count != null && count > 0) {
+                log.info("[SchemaFixupRunner] verified {} present on intern_evaluations", constraint);
+            } else {
+                log.error("[SchemaFixupRunner] {} is MISSING on intern_evaluations after "
+                        + "rebuild — recording-approval writes will 23514 until resolved.",
+                        constraint);
+            }
+        } catch (Exception verifyErr) {
+            log.warn("[SchemaFixupRunner] post-rebuild verify on {} failed (non-fatal): {}",
+                    constraint, verifyErr.getMessage());
+        }
+    }
+
     private void rebuildWeeklyReportsStatusCheck() {
         final String constraint = "weekly_reports_status_check";
         try {

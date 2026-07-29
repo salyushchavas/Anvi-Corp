@@ -115,11 +115,14 @@ export default function ComposePage() {
       });
       setRecordingDocId(docId);
       setRecordingSavedAt(new Date());
+      // Refetch so the approval-gate banner switches to PENDING_APPROVAL
+      // (or REVISION_REQUESTED → PENDING_APPROVAL on a re-upload).
+      void load();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
       setRecordingErr(ax.response?.data?.error ?? ax.message ?? 'Failed to save recording');
     }
-  }, [id, selectedProject]);
+  }, [id, selectedProject, load]);
 
   const scoredCount = [technical, communication, professionalism, learning].filter((s) => s != null).length;
   const avg = scoredCount > 0
@@ -308,10 +311,39 @@ export default function ComposePage() {
               </h2>
             </div>
             <p className="mt-1 text-xs text-slate-500">
-              Direct-to-S3 upload (up to 2 GiB). ERM + Manager view all
-              recordings in the Session Recordings gallery, grouped by
-              month → intern → project.
+              Direct-to-S3 upload (up to 2 GiB). Every upload goes into
+              the Manager Recording Approvals queue — your playback +
+              gallery visibility unlocks once the manager approves.
             </p>
+
+            {/* Approval-gate status banner — makes the manager-review
+                state immediately visible so the evaluator knows whether
+                they can play back their recording yet, and surfaces
+                revision notes for the re-upload flow. */}
+            {data.recordingDocumentId && data.recordingApprovalStatus === 'PENDING_APPROVAL' && (
+              <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                Awaiting manager approval. You'll be able to play back the
+                recording here once approved.
+              </p>
+            )}
+            {data.recordingDocumentId && data.recordingApprovalStatus === 'APPROVED' && (
+              <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-900">
+                Approved by manager — recording is now visible in the
+                gallery and playable below.
+              </p>
+            )}
+            {data.recordingApprovalStatus === 'REVISION_REQUESTED' && (
+              <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-900">
+                <p className="font-semibold">Manager requested a revision.</p>
+                <p className="mt-1 whitespace-pre-wrap text-red-800">
+                  {data.recordingRevisionNotes ?? '(no notes provided)'}
+                </p>
+                <p className="mt-2 text-[11px] text-red-700">
+                  Upload a corrected recording below to re-submit — it goes
+                  back to PENDING_APPROVAL for the manager to re-review.
+                </p>
+              </div>
+            )}
             <div className="mt-3 space-y-2">
               <label className="block text-xs font-semibold text-slate-700">
                 Project this recording pertains to

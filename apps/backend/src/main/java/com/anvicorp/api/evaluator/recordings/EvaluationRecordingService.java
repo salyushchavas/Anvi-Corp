@@ -11,6 +11,7 @@ import com.anvicorp.api.exception.ConflictException;
 import com.anvicorp.api.exception.ForbiddenException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.integration.s3.S3StorageService;
+import com.anvicorp.api.notification.UserNotificationDispatcher;
 import com.anvicorp.api.repository.DocumentRepository;
 import com.anvicorp.api.repository.InternEvaluationRepository;
 import com.anvicorp.api.repository.ProjectAssignmentRepository;
@@ -54,6 +55,12 @@ public class EvaluationRecordingService {
 
     public static final String CATEGORY = "EVALUATION_RECORDING";
 
+    // Manager approval gate values — mirrored on the DB CHECK rebuilt by
+    // SchemaFixupRunner. Adding a value requires updating both places.
+    public static final String STATUS_PENDING = "PENDING_APPROVAL";
+    public static final String STATUS_APPROVED = "APPROVED";
+    public static final String STATUS_REVISION = "REVISION_REQUESTED";
+
     private static final Duration PRESIGN_UPLOAD_TTL = Duration.ofMinutes(30);
     private static final Duration PRESIGN_DOWNLOAD_TTL = Duration.ofMinutes(30);
 
@@ -63,6 +70,7 @@ public class EvaluationRecordingService {
     private final ProjectRepository projectRepository;
     private final UserRepository userRepository;
     private final S3StorageService s3;
+    private final UserNotificationDispatcher notifier;
 
     /** Max upload size in bytes — mirrors interview-recording default (2 GiB). */
     @Value("${app.evaluation.recording.max-bytes:2147483648}")
@@ -177,9 +185,49 @@ public class EvaluationRecordingService {
         }
 
         ev.setRecordingDocumentId(doc.getId());
+        // Any (re-)upload resets the gate to PENDING_APPROVAL. Applies
+        // both to a fresh upload and to a re-upload after REVISION_REQUESTED:
+        // the manager gets the same fresh-eyes queue treatment either way,
+        // and the evaluator can't peek at their own recording until the
+        // manager clears it (visibility matrix enforced in presignDownload).
+        ev.setRecordingApprovalStatus(STATUS_PENDING);
+        ev.setRecordingRevisionNotes(null);
+        ev.setRecordingApprovedBy(null);
+        ev.setRecordingApprovedAt(null);
+        if (req.scope() != null && !req.scope().isBlank()) {
+            String s = req.scope().trim().toUpperCase();
+            if (!"P1".equals(s) && !"P2".equals(s) && !"P1_P2".equals(s)) {
+                throw new BadRequestException(
+                        "scope must be P1, P2, or P1_P2 (got '" + req.scope() + "')");
+            }
+            ev.setRecordingScope(s);
+        }
         evalRepo.save(ev);
-        log.info("[EvaluationRecording] saved recording eval={} docId={} projectId={}",
-                evaluationId, doc.getId(), ev.getLinkedProjectId());
+        log.info("[EvaluationRecording] saved recording eval={} docId={} projectId={} "
+                        + "scope={} → PENDING_APPROVAL", evaluationId, doc.getId(),
+                ev.getLinkedProjectId(), ev.getRecordingScope());
+
+        // Fan out to every MANAGER — they own the approval queue. Best-effort;
+        // any dispatcher error is logged, not propagated (the recording is
+        // already saved and appears in the manager queue anyway).
+        try {
+            String internName = userRepository.findById(ev.getInternId())
+                    .map(User::getFullName).orElse("intern");
+            String actionUrl = "/careers/manager/recording-approvals";
+            for (User mgr : userRepository.findByRole(UserRole.MANAGER)) {
+                notifier.dispatch(
+                        mgr.getId(),
+                        "RECORDING_APPROVAL_PENDING",
+                        ev.getInternId(),
+                        "Recording awaiting approval: " + internName,
+                        caller.getFullName() + " uploaded a session recording that needs review.",
+                        actionUrl,
+                        false);
+            }
+        } catch (Exception e) {
+            log.warn("[EvaluationRecording] manager notify failed for eval={}: {}",
+                    evaluationId, e.getMessage());
+        }
     }
 
     // ── 3. Presign download (playback) ───────────────────────────────────
@@ -279,12 +327,17 @@ public class EvaluationRecordingService {
                     project != null
                             ? (project.getName() != null ? project.getName() : project.getTitle())
                             : null,
+                    e.getRecordingScope(),
                     e.getEvaluatorId(),
                     evaluator != null ? evaluator.getFullName() : null,
                     doc.getFileName(),
                     doc.getMimeType(),
                     doc.getFileSize(),
-                    doc.getCreatedAt()));
+                    doc.getCreatedAt(),
+                    e.getRecordingApprovalStatus(),
+                    e.getRecordingRevisionNotes(),
+                    e.getRecordingApprovedBy(),
+                    e.getRecordingApprovedAt()));
         }
         rows.sort(
                 Comparator.comparing(EvaluationRecordingDtos.RecordingRow::monthYear,
@@ -357,11 +410,21 @@ public class EvaluationRecordingService {
         if (caller == null) throw new ForbiddenException("Authentication required");
         Set<UserRole> roles = caller.getRoles() == null
                 ? java.util.Collections.emptySet() : caller.getRoles();
+        // SUPER_ADMIN, ERM, and MANAGER see every recording at any status
+        // (the approval queue and the ERM gallery both depend on this).
         if (roles.contains(UserRole.SUPER_ADMIN)
                 || roles.contains(UserRole.ERM)
                 || roles.contains(UserRole.MANAGER)) return;
+        // Evaluator only sees their OWN recording, and only once the
+        // manager has APPROVED it. PENDING_APPROVAL + REVISION_REQUESTED
+        // stay hidden so the gate is meaningful.
         if (roles.contains(UserRole.EVALUATOR)
-                && caller.getId().equals(ev.getEvaluatorId())) return;
+                && caller.getId().equals(ev.getEvaluatorId())) {
+            if (STATUS_APPROVED.equals(ev.getRecordingApprovalStatus())) return;
+            throw new ForbiddenException(
+                    "Your recording is awaiting manager approval and is not "
+                            + "yet available for playback.");
+        }
         throw new ForbiddenException(
                 "Not authorised to view this recording.");
     }

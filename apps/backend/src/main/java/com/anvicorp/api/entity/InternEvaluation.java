@@ -162,6 +162,43 @@ public class InternEvaluation {
     @Column(name = "recording_document_id")
     private UUID recordingDocumentId;
 
+    /**
+     * Manager approval gate for the attached recording. Set to
+     * {@code PENDING_APPROVAL} the moment a recording is saved on the
+     * evaluation, then transitions to {@code APPROVED} or
+     * {@code REVISION_REQUESTED} via the Manager approval queue. The
+     * evaluator only sees their own recording once the status is
+     * APPROVED — REVISION_REQUESTED surfaces the manager's notes back
+     * to the evaluator and unlocks a re-upload (which resets the status
+     * to PENDING_APPROVAL). Null until the first recording is attached.
+     * DB-side CHECK constraint is rebuilt by SchemaFixupRunner.
+     */
+    @Column(name = "recording_approval_status", length = 32)
+    private String recordingApprovalStatus;
+
+    /** Manager's free-text notes captured when REVISION_REQUESTED — shown
+     *  verbatim to the evaluator so they know what to fix on re-upload. */
+    @Column(name = "recording_revision_notes", columnDefinition = "TEXT")
+    private String recordingRevisionNotes;
+
+    /** Manager who last transitioned the recording out of PENDING_APPROVAL. */
+    @Column(name = "recording_approved_by")
+    private UUID recordingApprovedBy;
+
+    /** Timestamp of the last APPROVED / REVISION_REQUESTED transition. */
+    @Column(name = "recording_approved_at")
+    private Instant recordingApprovedAt;
+
+    /**
+     * "Recording scope" — which project(s) the attached recording
+     * pertains to. Distinct from {@link #linkedProjectId} because the
+     * evaluator may record ONE session that covers both P1 and P2
+     * ("P1_P2"). Values: {@code P1}, {@code P2}, {@code P1_P2}. Null
+     * until a recording is attached.
+     */
+    @Column(name = "recording_scope", length = 8)
+    private String recordingScope;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 

@@ -216,6 +216,15 @@ export interface EvaluatorEvaluationDetail {
     submittedAt: string | null;
     completedAt: string | null;
   } | null;
+  /** Manager approval gate for the attached recording:
+   *  PENDING_APPROVAL | APPROVED | REVISION_REQUESTED. Null when no
+   *  recording is attached yet. */
+  recordingApprovalStatus?: string | null;
+  /** Manager's revision notes — surfaced to the evaluator on the compose
+   *  page when recordingApprovalStatus === 'REVISION_REQUESTED'. */
+  recordingRevisionNotes?: string | null;
+  /** P1 / P2 / P1_P2 — the recording's scope; null when no recording. */
+  recordingScope?: string | null;
 }
 
 export interface InternEvaluationView {

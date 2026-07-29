@@ -782,7 +782,10 @@ public class EvaluationWorkflowService {
                 loadAmendmentHistory(ev.getId()),
                 ev.getRecordingDocumentId(),
                 ev.getLinkedProjectId(),
-                linkedProject);
+                linkedProject,
+                ev.getRecordingApprovalStatus(),
+                ev.getRecordingRevisionNotes(),
+                ev.getRecordingScope());
     }
 
     private List<EvaluationWorkflowDtos.AmendmentEntry> loadAmendmentHistory(UUID evalId) {

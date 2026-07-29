@@ -38,11 +38,15 @@ public final class EvaluationRecordingDtos {
      * id populates {@link com.anvicorp.api.entity.InternEvaluation#getLinkedProjectId()}
      * so the gallery can group MONTHLY evaluations by project.
      * {@code linkedProjectId} may be null when the evaluator explicitly
-     * ticks "General / no project".
+     * ticks "General / no project". {@code scope} distinguishes a P1
+     * recording, a P2 recording, and a combined P1+P2 session — the
+     * gallery renders a "P1+P2" combined folder for the last case.
      */
     public record SaveRecordingRequest(
             UUID recordingDocumentId,
-            UUID linkedProjectId
+            UUID linkedProjectId,
+            /** P1 | P2 | P1_P2 — optional; null preserves the prior value. */
+            String scope
     ) {}
 
     // ── Project selector ─────────────────────────────────────────────────
@@ -77,12 +81,21 @@ public final class EvaluationRecordingDtos {
             String employeeId,
             UUID projectId,
             String projectTitle,
+            /** P1 | P2 | P1_P2 — for the gallery folder grouping. */
+            String scope,
             UUID evaluatorId,
             String evaluatorName,
             String fileName,
             String mimeType,
             Long fileSizeBytes,
-            Instant uploadedAt
+            Instant uploadedAt,
+            /** PENDING_APPROVAL / APPROVED / REVISION_REQUESTED. */
+            String approvalStatus,
+            /** Manager's notes when REVISION_REQUESTED (else null). */
+            String revisionNotes,
+            /** UUID of the manager who last transitioned this recording. */
+            UUID approvedByUserId,
+            Instant approvedAt
     ) {}
 
     public record GalleryResponse(
