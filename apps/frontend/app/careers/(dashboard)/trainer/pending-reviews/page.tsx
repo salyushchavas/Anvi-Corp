@@ -417,6 +417,18 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
             ) : (
               <div className="h-32 animate-pulse rounded bg-slate-100" />
             )}
+
+            {/* Reference Q&A — grouped under the Submission because it's
+                the Q&A the trainer prepares ABOUT this submission for the
+                downstream evaluator. LEFT column = the project artifacts;
+                RIGHT column = the trainer's assessment. Keeps the right
+                side focused on scores + decision, balances column heights. */}
+            {detail && (
+              <>
+                <h4 className="mt-2 text-xs font-semibold uppercase text-slate-500">Reference Q&amp;A</h4>
+                <ReferenceQaEditor projectId={detail.projectId} />
+              </>
+            )}
           </section>
 
           {/* RIGHT: feedback form */}
@@ -505,17 +517,6 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
                 <textarea value={escalationReason} onChange={(e) => setEscalationReason(e.target.value)} rows={3} maxLength={5000}
                   className="w-full rounded-md border border-red-300 px-2 py-1.5 text-sm" />
               </Field>
-            )}
-
-            {/* Reference Q&A — folded into the Feedback Form as a labelled
-                field-group so added pairs just extend the RIGHT column and
-                scroll with the rest of the form. No longer a full-width
-                sibling strip that overlaps the submission card. */}
-            {detail && (
-              <>
-                <h4 className="mt-2 text-xs font-semibold uppercase text-slate-500">Reference Q&amp;A</h4>
-                <ReferenceQaEditor projectId={detail.projectId} />
-              </>
             )}
           </section>
         </div>
