@@ -42,6 +42,8 @@ export interface ProjectTimelineEntry {
   completedAt: string | null;
   evaluationId: string | null;
   evaluationStatus: string | null;
+  evaluationScheduledFor: string | null;
+  evaluationTimezone: string | null;
   evaluationPublishedAt: string | null;
   evaluationOverallScore: number | null;
   evaluationRecommendation: string | null;

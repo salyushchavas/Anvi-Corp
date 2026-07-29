@@ -71,6 +71,22 @@ public class PerProjectController {
     }
 
     /**
+     * §5b — project-first scheduling. Auto-creates a DRAFT POST_PROJECT
+     * evaluation if none exists for the project yet, then schedules.
+     * Frontend uses this from per-project cards so the Schedule Session
+     * button works on ANY project (not just already-auto-drafted ones).
+     */
+    @PostMapping("/projects/{projectId}/schedule-post-project")
+    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
+    public ResponseEntity<Void> scheduleByProject(
+            @PathVariable UUID projectId,
+            @RequestBody PerProjectDtos.SchedulePostProjectRequest req,
+            @AuthenticationPrincipal User caller) {
+        service.scheduleByProject(projectId, req, caller);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
      * §4 — schedule ONE Final session covering MULTIPLE POST_PROJECT
      * evaluations at once. All selected rows share one Zoom meeting +
      * scheduledFor + timezone; each advances to SCHEDULED (or

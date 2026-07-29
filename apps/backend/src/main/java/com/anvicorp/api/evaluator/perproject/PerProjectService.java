@@ -158,6 +158,8 @@ public class PerProjectService {
                         + "       p.title, p.tech_stack, p.status AS project_status, "
                         + "       p.start_date, p.due_date, p.submitted_at, p.completed_at, "
                         + "       ev.id AS evaluation_id, ev.status AS eval_status, "
+                        + "       ev.scheduled_for AS eval_scheduled_for, "
+                        + "       ev.timezone AS eval_timezone, "
                         + "       ev.published_at AS eval_published_at, "
                         + "       ev.overall_score, ev.recommendation "
                         + "  FROM projects p "
@@ -191,6 +193,9 @@ public class PerProjectService {
                                         ? rs.getTimestamp("completed_at").toInstant() : null,
                                 evalIdRaw != null ? UUID.fromString(evalIdRaw) : null,
                                 evalStatus,
+                                rs.getTimestamp("eval_scheduled_for") != null
+                                        ? rs.getTimestamp("eval_scheduled_for").toInstant() : null,
+                                rs.getString("eval_timezone"),
                                 rs.getTimestamp("eval_published_at") != null
                                         ? rs.getTimestamp("eval_published_at").toInstant() : null,
                                 overallScore,
@@ -433,6 +438,67 @@ public class PerProjectService {
         log.info("[PerProject] scheduled POST_PROJECT eval={} project={} for {} by {}",
                 saved.getId(), saved.getLinkedProjectId(), saved.getScheduledFor(), caller.getId());
         return saved;
+    }
+
+    /**
+     * Project-first scheduling — resolves the POST_PROJECT evaluation
+     * for {@code projectId}, auto-creating a DRAFT row when none exists
+     * yet (i.e. project hasn't been marked COMPLETED, so the
+     * {@code PostProjectEvaluationListener} hasn't fired). Then delegates
+     * to {@link #schedulePostProject} for the actual scheduling.
+     *
+     * <p>Lets the evaluator schedule a session for ANY project on the
+     * intern's roster from the per-project card, not just projects that
+     * have already been auto-drafted. Ownership is enforced via
+     * {@link EvaluatorScopeGuard} against the project's owning lifecycle.</p>
+     */
+    @Transactional
+    public InternEvaluation scheduleByProject(
+            UUID projectId,
+            PerProjectDtos.SchedulePostProjectRequest req,
+            User caller) {
+        requireEvaluatorOrSuperAdmin(caller);
+        if (req == null || req.scheduledFor() == null) {
+            throw new BadRequestException("scheduledFor required");
+        }
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Project not found: " + projectId));
+        if (project.getInternLifecycleId() == null) {
+            throw new BadRequestException(
+                    "Project is not linked to an intern lifecycle — cannot schedule");
+        }
+        InternLifecycle lc = lifecycleRepo.findById(project.getInternLifecycleId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "InternLifecycle not found: " + project.getInternLifecycleId()));
+        evaluatorScopeGuard.requireEvaluatorOwnership(lc, caller);
+
+        // Find existing POST_PROJECT eval for this project; create DRAFT
+        // if none. Only one POST_PROJECT eval per project by convention
+        // (repository has findByLinkedProjectId returning Optional).
+        InternEvaluation ev = evalRepo.findByLinkedProjectId(projectId).orElse(null);
+        if (ev == null) {
+            ev = InternEvaluation.builder()
+                    .internLifecycleId(lc.getId())
+                    .internId(lc.getUserId())
+                    .evaluatorId(caller.getId())
+                    .evaluationType("POST_PROJECT")
+                    .linkedProjectId(projectId)
+                    .status("DRAFT")
+                    .version(1)
+                    .build();
+            ev = evalRepo.save(ev);
+            log.info("[PerProject] auto-drafted POST_PROJECT eval for project={} by {} "
+                    + "(project status={})", projectId, caller.getId(),
+                    project.getStatus() != null ? project.getStatus().name() : "?");
+        } else if (!"POST_PROJECT".equals(ev.getEvaluationType())) {
+            throw new BadRequestException(
+                    "Existing evaluation for this project is not POST_PROJECT "
+                            + "(is " + ev.getEvaluationType() + ")");
+        }
+        // Delegate to the eval-first scheduler, which re-runs the scope
+        // check + Zoom creation + status transition + fanout.
+        return schedulePostProject(ev.getId(), req, caller);
     }
 
     // ── §4 Bulk / Final session ──────────────────────────────────────────

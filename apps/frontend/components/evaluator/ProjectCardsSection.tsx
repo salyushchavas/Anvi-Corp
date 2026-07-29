@@ -37,12 +37,45 @@ interface Props {
   lifecycleId: string;
 }
 
-const CARD_DISPLAY_STATE: Record<string, { label: string; badge: string }> = {
-  NOT_SCHEDULED: { label: 'Not scheduled', badge: 'bg-slate-100 text-slate-700' },
-  SCHEDULED: { label: 'Scheduled', badge: 'bg-brand-100 text-brand-800' },
-  SESSION_COMPLETED: { label: 'Session completed', badge: 'bg-amber-100 text-amber-900' },
-  EVALUATED: { label: 'Evaluated ✓', badge: 'bg-emerald-100 text-emerald-800' },
-  IN_PROGRESS_PROJECT: { label: 'Project in progress', badge: 'bg-slate-100 text-slate-500' },
+/** Presentational config for the per-card status bar. `bar` is applied
+ *  as a colored left border + subtle tint on the top strip; `badge` is
+ *  the compact pill in the header. */
+const CARD_DISPLAY_STATE: Record<string, {
+  label: string;
+  badge: string;
+  bar: string;
+  hint: string;
+}> = {
+  NOT_SCHEDULED: {
+    label: 'Not scheduled',
+    badge: 'bg-slate-100 text-slate-700',
+    bar: 'border-l-4 border-l-slate-400 bg-slate-50',
+    hint: 'Session hasn’t been scheduled yet.',
+  },
+  SCHEDULED: {
+    label: 'Scheduled',
+    badge: 'bg-brand-100 text-brand-800',
+    bar: 'border-l-4 border-l-brand-500 bg-brand-50/60',
+    hint: 'Session is on the calendar.',
+  },
+  SESSION_COMPLETED: {
+    label: 'Session completed',
+    badge: 'bg-amber-100 text-amber-900',
+    bar: 'border-l-4 border-l-amber-400 bg-amber-50/60',
+    hint: 'Session was conducted — evaluation in progress.',
+  },
+  EVALUATED: {
+    label: 'Evaluated ✓',
+    badge: 'bg-emerald-100 text-emerald-800',
+    bar: 'border-l-4 border-l-emerald-500 bg-emerald-50/60',
+    hint: 'Evaluation published.',
+  },
+  IN_PROGRESS_PROJECT: {
+    label: 'Not scheduled',
+    badge: 'bg-slate-100 text-slate-700',
+    bar: 'border-l-4 border-l-slate-400 bg-slate-50',
+    hint: 'Project is still in progress — you can pre-schedule the session anyway.',
+  },
 };
 
 /** Derive the user-facing evaluation state from the timeline entry's
@@ -222,10 +255,16 @@ function ProjectCard({
     && entry.evaluationStatus !== 'PUBLISHED'
     && entry.evaluationStatus !== 'ACKNOWLEDGED'
     && entry.evaluationStatus !== 'AMENDED';
-  const canSchedule = !!entry.evaluationId
-    && (entry.evaluationStatus === 'DRAFT' || entry.evaluationStatus === 'SCHEDULED');
+  // Schedule button is visible on every card that isn't already evaluated.
+  // If no eval exists yet, the backend auto-drafts one on schedule.
+  const canSchedule = entry.evaluationStatus !== 'PUBLISHED'
+    && entry.evaluationStatus !== 'ACKNOWLEDGED'
+    && entry.evaluationStatus !== 'AMENDED'
+    && entry.evaluationStatus !== 'IN_PROGRESS';
   const canMarkConducted = !!entry.evaluationId
     && entry.evaluationStatus === 'SCHEDULED';
+  // Bulk Final still requires an existing evaluation (the bulk endpoint
+  // takes evaluationIds, not projectIds). Consistent with server contract.
   const eligibleForFinal = !!entry.evaluationId
     && (entry.evaluationStatus === 'DRAFT' || entry.evaluationStatus === 'SCHEDULED');
   const composeHref = entry.evaluationId
@@ -251,40 +290,56 @@ function ProjectCard({
     }
   }
 
+  const scheduledLabel = entry.evaluationStatus === 'SCHEDULED' && entry.evaluationScheduledFor
+    ? formatSchedule(entry.evaluationScheduledFor, entry.evaluationTimezone)
+    : null;
+
   return (
-    <article className="flex flex-col rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 items-start gap-2">
-          {selectionMode && eligibleForFinal && (
-            <button type="button" onClick={onToggleSelect}
-              className="mt-0.5 text-brand-700 hover:text-brand-800"
-              aria-label={selected ? 'Deselect' : 'Select for Final Session'}>
-              {selected
-                ? <CheckSquare className="h-4 w-4" />
-                : <Square className="h-4 w-4" />}
-            </button>
-          )}
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-              Project {entry.projectSequence}
-            </p>
-            <h3 className="mt-0.5 text-base font-semibold text-slate-900">
-              {entry.title ?? '(untitled project)'}
-            </h3>
-            <p className="mt-0.5 text-xs text-slate-500">
-              {entry.techStack && <>{entry.techStack} · </>}
-              Project status: {entry.projectStatus.replaceAll('_', ' ')}
-              {entry.completedAt && (
-                <> · Completed {new Date(entry.completedAt).toLocaleDateString()}</>
-              )}
-            </p>
+    <article className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+      {/* Prominent status bar — colored left border + labeled strip.
+          One-look answer to "what's this project's session state?" */}
+      <div className={`flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-2.5 ${styles.bar}`}>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${styles.badge}`}>
+            {styles.label}
+          </span>
+          <span className="truncate text-[11px] text-slate-600">
+            {scheduledLabel ?? styles.hint}
+          </span>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="flex flex-1 flex-col p-4">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-1 items-start gap-2">
+            {selectionMode && eligibleForFinal && (
+              <button type="button" onClick={onToggleSelect}
+                className="mt-0.5 text-brand-700 hover:text-brand-800"
+                aria-label={selected ? 'Deselect' : 'Select for Final Session'}>
+                {selected
+                  ? <CheckSquare className="h-4 w-4" />
+                  : <Square className="h-4 w-4" />}
+              </button>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                Project {entry.projectSequence}
+              </p>
+              <h3 className="mt-0.5 text-base font-semibold text-slate-900">
+                {entry.title ?? '(untitled project)'}
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {entry.techStack && <>{entry.techStack} · </>}
+                Project status: {entry.projectStatus.replaceAll('_', ' ')}
+                {entry.completedAt && (
+                  <> · Completed {new Date(entry.completedAt).toLocaleDateString()}</>
+                )}
+              </p>
+            </div>
           </div>
         </div>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${styles.badge}`}>
-          {styles.label}
-        </span>
-      </div>
 
       {/* Scores (for evaluated projects) */}
       {(entry.evaluationOverallScore != null || entry.evaluationRecommendation) && (
@@ -329,7 +384,7 @@ function ProjectCard({
       {/* Actions */}
       <div className="mt-auto pt-3">
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-          {canSchedule && entry.evaluationId && (
+          {canSchedule && (
             <button type="button"
               onClick={() => setScheduleOpen(true)}
               className="inline-flex items-center gap-1 rounded-md border border-brand-300 bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-800 hover:bg-brand-100">
@@ -366,10 +421,11 @@ function ProjectCard({
           </p>
         )}
       </div>
+      </div>
 
-      {scheduleOpen && entry.evaluationId && (
+      {scheduleOpen && (
         <SchedulePostProjectDialog
-          evaluationId={entry.evaluationId}
+          projectId={entry.projectId}
           projectTitle={entry.title}
           onClose={() => setScheduleOpen(false)}
           onScheduled={() => { setScheduleOpen(false); onChange(); }}
@@ -377,6 +433,20 @@ function ProjectCard({
       )}
     </article>
   );
+}
+
+/** Human-friendly "Session scheduled: {date} · {time} · {zone}" line. */
+function formatSchedule(iso: string, timezone: string | null): string {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return 'Session scheduled';
+    const date = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const suffix = timezone && timezone !== 'UTC' ? ` · ${timezone}` : '';
+    return `Session scheduled: ${date} · ${time}${suffix}`;
+  } catch {
+    return 'Session scheduled';
+  }
 }
 
 function Pill({ tone, icon, label }: {

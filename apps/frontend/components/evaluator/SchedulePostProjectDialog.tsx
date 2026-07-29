@@ -11,20 +11,23 @@ import {
 } from '@/lib/careers/meeting-timezones';
 
 /**
- * Per-project session-scheduling dialog. Posts to the POST_PROJECT
- * scheduling endpoint, which is distinct from the monthly-cycle
- * schedule (that stays alive on the /schedule-session page during
- * parallel mode).
+ * Per-project session-scheduling dialog. Project-first — always POSTs
+ * to {@code /api/v1/evaluator/projects/{projectId}/schedule-post-project},
+ * which auto-creates a DRAFT POST_PROJECT evaluation row for the project
+ * if one doesn't exist yet. That way the same dialog serves both cases:
+ * (a) project already has an auto-drafted eval (from
+ * PostProjectEvaluationListener on COMPLETED), (b) project has no eval
+ * yet — evaluator's schedule click bootstraps one.
  */
 interface Props {
-  evaluationId: string;
+  projectId: string;
   projectTitle: string | null;
   onClose: () => void;
   onScheduled: () => void;
 }
 
 export default function SchedulePostProjectDialog({
-  evaluationId, projectTitle, onClose, onScheduled,
+  projectId, projectTitle, onClose, onScheduled,
 }: Props) {
   const [timezone, setTimezone] = useState<string>(DEFAULT_MEETING_ZONE);
   const [scheduledFor, setScheduledFor] = useState<string>(
@@ -44,7 +47,7 @@ export default function SchedulePostProjectDialog({
     setSubmitting(true);
     try {
       await api.post(
-        `/api/v1/evaluator/post-project-evaluations/${evaluationId}/schedule`,
+        `/api/v1/evaluator/projects/${projectId}/schedule-post-project`,
         {
           scheduledFor: localInZoneToUtcIso(scheduledFor, timezone),
           durationMinutes,

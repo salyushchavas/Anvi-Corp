@@ -65,6 +65,8 @@ public final class PerProjectDtos {
             /** Non-null when a POST_PROJECT evaluation exists for this project. */
             UUID evaluationId,
             String evaluationStatus,        // DRAFT | SCHEDULED | IN_PROGRESS | PUBLISHED | ACKNOWLEDGED | AMENDED
+            Instant evaluationScheduledFor,
+            String evaluationTimezone,
             Instant evaluationPublishedAt,
             Integer evaluationOverallScore,
             String evaluationRecommendation,
