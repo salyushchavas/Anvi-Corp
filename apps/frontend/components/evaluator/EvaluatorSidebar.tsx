@@ -22,6 +22,8 @@ const ITEMS: { href: string; label: string; phase: number }[] = [
   { href: '/careers/evaluator/schedule-session',      label: 'Schedule Session',        phase: 2 },
   { href: '/careers/evaluator/pending-evaluations',   label: 'Scheduled Evaluations',   phase: 2 },
   { href: '/careers/evaluator/i983-evaluations',      label: 'I-983 Evaluations',       phase: 3 },
+  { href: '/careers/evaluator/upload-recording',      label: 'Upload Recording',        phase: 4 },
+  { href: '/careers/evaluator/recording-gallery',     label: 'Recording Gallery',       phase: 4 },
   { href: '/careers/evaluator/evaluation-history',    label: 'Evaluation History',      phase: 4 },
   { href: '/careers/evaluator/reports',               label: 'Reports',                 phase: 4 },
   { href: '/careers/evaluator/settings',              label: 'Settings',                phase: 4 },

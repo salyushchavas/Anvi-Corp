@@ -43,6 +43,10 @@ interface Props {
   accept?: string;
   /** Helper line shown beneath the widget. */
   helperText?: string;
+  /** Extra fields merged into the presign request body — used by
+   *  flows that need to identify their target (e.g. the ERM
+   *  standalone interview upload sending {@code internLifecycleId}). */
+  presignExtras?: Record<string, unknown>;
 }
 
 export default function RecordingUploader({
@@ -52,6 +56,7 @@ export default function RecordingUploader({
   initial,
   accept = 'video/*',
   helperText,
+  presignExtras,
 }: Props) {
   const [state, setState] = useState<UploadState>(initial ?? { kind: 'idle' });
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -68,6 +73,7 @@ export default function RecordingUploader({
     let presign: PresignResponse;
     try {
       const res = await api.post<PresignResponse>(presignEndpoint, {
+        ...(presignExtras ?? {}),
         fileName: file.name,
         contentType: file.type,
         fileSize: file.size,

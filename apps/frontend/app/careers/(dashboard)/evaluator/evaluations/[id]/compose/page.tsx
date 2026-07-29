@@ -376,7 +376,7 @@ export default function ComposePage() {
               {readOnly && recordingDocId && (
                 <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                   Recording attached. Preview / download it from the ERM
-                  or Manager Session Recordings gallery.
+                  or Manager Recording Gallery.
                 </p>
               )}
               {recordingErr && (

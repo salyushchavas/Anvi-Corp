@@ -18,7 +18,7 @@ export default function ManagerEvaluationRecordingsPage() {
           </Link>
         </p>
         <h1 className="mt-1 text-2xl font-semibold text-slate-900">
-          Session Recordings
+          Recording Sessions
         </h1>
         <p className="mt-1 text-sm text-slate-600">
           Video recordings the evaluator attached to each monthly / final /
