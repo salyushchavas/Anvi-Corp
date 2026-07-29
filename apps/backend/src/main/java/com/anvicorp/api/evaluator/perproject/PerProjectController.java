@@ -69,4 +69,19 @@ public class PerProjectController {
         service.schedulePostProject(evaluationId, req, caller);
         return ResponseEntity.noContent().build();
     }
+
+    /**
+     * §4 — schedule ONE Final session covering MULTIPLE POST_PROJECT
+     * evaluations at once. All selected rows share one Zoom meeting +
+     * scheduledFor + timezone; each advances to SCHEDULED (or
+     * IN_PROGRESS when {@code markConducted=true}). Atomic — any
+     * validation failure aborts the whole batch.
+     */
+    @PostMapping("/post-project-evaluations/bulk-schedule")
+    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
+    public PerProjectDtos.BulkScheduleResponse bulkSchedule(
+            @RequestBody PerProjectDtos.BulkScheduleRequest req,
+            @AuthenticationPrincipal User caller) {
+        return service.bulkSchedule(req, caller);
+    }
 }

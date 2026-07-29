@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, RefreshCw } from 'lucide-react';
+import { Download, FileText, Paperclip, RefreshCw } from 'lucide-react';
 import api from '@/lib/careers/api';
 import type { WeeklyReportsResponse } from './perproject-types';
 
@@ -114,6 +114,36 @@ export default function AllWeeklyReportsPanel({ lifecycleId }: Props) {
                 <div className="mt-2">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Blockers</p>
                   <p className="mt-0.5 whitespace-pre-wrap text-xs text-slate-700">{r.blockers}</p>
+                </div>
+              )}
+              {r.attachmentDocumentId && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white p-2 text-[11px]">
+                  <Paperclip className="h-3 w-3 text-slate-500" />
+                  <span className="truncate font-mono text-slate-700">
+                    {r.attachmentFileName ?? 'attachment'}
+                  </span>
+                  {r.attachmentMimeType && (
+                    <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-600">
+                      {r.attachmentMimeType}
+                    </span>
+                  )}
+                  <div className="ml-auto flex items-center gap-1">
+                    <a
+                      href={`/api/v1/weekly-reports/${r.reportId}/attachment`}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-brand-700 hover:bg-brand-50"
+                    >
+                      Preview
+                    </a>
+                    <a
+                      href={`/api/v1/weekly-reports/${r.reportId}/attachment`}
+                      download
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      <Download className="h-3 w-3" /> Download
+                    </a>
+                  </div>
                 </div>
               )}
             </li>

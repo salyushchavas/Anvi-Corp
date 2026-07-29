@@ -121,7 +121,14 @@ public final class PerProjectDtos {
             Instant reviewedAt,
             /** Intern's completed-work narrative for the week. */
             String completedWork,
-            String blockers
+            String blockers,
+            /** Optional attachment (PDF/image). Non-null when the intern
+             *  uploaded one. Download via
+             *  {@code GET /api/v1/weekly-reports/{reportId}/attachment}
+             *  (RBAC includes EVALUATOR + MANAGER). */
+            UUID attachmentDocumentId,
+            String attachmentFileName,
+            String attachmentMimeType
     ) {}
 
     public record WeeklyReportsResponse(
@@ -143,5 +150,38 @@ public final class PerProjectDtos {
             String timezone,
             String topic,
             String agenda
+    ) {}
+
+    // ── §4 Bulk / Final session ─────────────────────────────────────────
+
+    /**
+     * Schedule ONE session that covers MULTIPLE POST_PROJECT evaluations
+     * at once ("Schedule Final Session"). Creates a single shared Zoom
+     * meeting and stamps it on every listed evaluation; each evaluation's
+     * status advances to SCHEDULED (or IN_PROGRESS if {@code markConducted=true}
+     * — used when the meeting already happened and the evaluator is
+     * recording it retroactively).
+     *
+     * <p>Every {@code evaluationId} must be POST_PROJECT, owned by the
+     * caller (or SUPER_ADMIN), and in DRAFT/SCHEDULED status. Any row
+     * failing validation rejects the whole batch (atomic).</p>
+     */
+    public record BulkScheduleRequest(
+            @NotNull List<UUID> evaluationIds,
+            @NotNull Instant scheduledFor,
+            Integer durationMinutes,
+            String timezone,
+            String topic,
+            String agenda,
+            /** When true, transition to IN_PROGRESS instead of SCHEDULED —
+             *  "session was conducted covering these projects; record it now." */
+            Boolean markConducted
+    ) {}
+
+    public record BulkScheduleResponse(
+            int updatedCount,
+            String zoomMeetingId,
+            String zoomJoinUrl,
+            List<UUID> evaluationIds
     ) {}
 }

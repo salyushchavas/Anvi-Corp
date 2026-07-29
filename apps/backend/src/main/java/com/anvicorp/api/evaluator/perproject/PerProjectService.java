@@ -15,6 +15,7 @@ import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.integration.meeting.MeetingProvider;
 import com.anvicorp.api.integration.meeting.MeetingRequest;
 import com.anvicorp.api.integration.meeting.MeetingResponse;
+import com.anvicorp.api.repository.DocumentRepository;
 import com.anvicorp.api.repository.InternEvaluationRepository;
 import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.ProjectRepository;
@@ -50,6 +51,7 @@ public class PerProjectService {
     private final ProjectRepository projectRepository;
     private final UserRepository userRepository;
     private final WeeklyReportRepository weeklyReportRepository;
+    private final DocumentRepository documentRepository;
     private final MeetingProvider meetingProvider;
     private final EvaluationNotificationFanout fanout;
     private final EvaluatorScopeGuard evaluatorScopeGuard;
@@ -304,9 +306,33 @@ public class PerProjectService {
             log.warn("[PerProject] weekly-reports query failed: {}", e.getMessage());
             reports = List.of();
         }
+        // Bulk-fetch attachment Document rows so the summary can carry
+        // filename/mime without a per-row lookup — one query, ≤100 ids.
+        java.util.Set<UUID> attachmentIds = new java.util.HashSet<>();
+        for (WeeklyReport r : reports) {
+            if (attachmentIds.size() >= safeLimit) break;
+            if (r.getAttachmentDocumentId() != null) {
+                attachmentIds.add(r.getAttachmentDocumentId());
+            }
+        }
+        java.util.Map<UUID, com.anvicorp.api.entity.Document> attachmentsById = new java.util.HashMap<>();
+        if (!attachmentIds.isEmpty()) {
+            try {
+                for (com.anvicorp.api.entity.Document d
+                        : documentRepository.findAllById(attachmentIds)) {
+                    if (d.getDeletedAt() == null) attachmentsById.put(d.getId(), d);
+                }
+            } catch (Exception e) {
+                log.warn("[PerProject] weekly-report attachment fetch failed (non-fatal): {}",
+                        e.getMessage());
+            }
+        }
+
         List<PerProjectDtos.WeeklyReportSummary> items = new ArrayList<>();
         for (WeeklyReport r : reports) {
             if (items.size() >= safeLimit) break;
+            UUID docId = r.getAttachmentDocumentId();
+            com.anvicorp.api.entity.Document doc = docId != null ? attachmentsById.get(docId) : null;
             items.add(new PerProjectDtos.WeeklyReportSummary(
                     r.getId(),
                     r.getWeekStart(),
@@ -314,7 +340,10 @@ public class PerProjectService {
                     r.getSubmittedAt(),
                     r.getReviewedAt(),
                     r.getCompletedWork(),
-                    r.getBlockers()));
+                    r.getBlockers(),
+                    docId,
+                    doc != null ? doc.getFileName() : null,
+                    doc != null ? doc.getMimeType() : null));
         }
         return new PerProjectDtos.WeeklyReportsResponse(lc.getUserId(), items);
     }
@@ -404,6 +433,126 @@ public class PerProjectService {
         log.info("[PerProject] scheduled POST_PROJECT eval={} project={} for {} by {}",
                 saved.getId(), saved.getLinkedProjectId(), saved.getScheduledFor(), caller.getId());
         return saved;
+    }
+
+    // ── §4 Bulk / Final session ──────────────────────────────────────────
+
+    /**
+     * Schedule ONE session covering MULTIPLE POST_PROJECT evaluations.
+     * All rows validated up-front — any failure aborts the batch. On
+     * success, one shared Zoom meeting is created and stamped on every
+     * evaluation, all rows advance to SCHEDULED (or IN_PROGRESS if
+     * {@code markConducted=true}). Notification fan-out fires per row
+     * best-effort.
+     */
+    @Transactional
+    public PerProjectDtos.BulkScheduleResponse bulkSchedule(
+            PerProjectDtos.BulkScheduleRequest req, User caller) {
+        requireEvaluatorOrSuperAdmin(caller);
+        if (req == null || req.evaluationIds() == null || req.evaluationIds().isEmpty()) {
+            throw new BadRequestException("evaluationIds required");
+        }
+        if (req.scheduledFor() == null) {
+            throw new BadRequestException("scheduledFor required");
+        }
+        boolean markConducted = Boolean.TRUE.equals(req.markConducted());
+        if (!markConducted
+                && req.scheduledFor().isBefore(Instant.now().plus(1, ChronoUnit.HOURS))) {
+            throw new BadRequestException(
+                    "scheduledFor must be at least 1 hour in the future "
+                            + "(unless markConducted=true to backdate)");
+        }
+        int duration = req.durationMinutes() != null ? req.durationMinutes() : 45;
+        if (duration < 15 || duration > 180) {
+            throw new BadRequestException("durationMinutes must be 15-180");
+        }
+        String timezone = req.timezone() != null && !req.timezone().isBlank()
+                ? req.timezone() : "UTC";
+        String targetStatus = markConducted ? "IN_PROGRESS" : "SCHEDULED";
+
+        // Deduplicate + load all evaluations, validate each. Load lifecycles
+        // in one pass so scope guard doesn't N+1 the DB.
+        java.util.LinkedHashSet<UUID> ids = new java.util.LinkedHashSet<>(req.evaluationIds());
+        java.util.List<InternEvaluation> evals = evalRepo.findAllById(ids);
+        if (evals.size() != ids.size()) {
+            throw new BadRequestException(
+                    "One or more evaluations not found (requested " + ids.size()
+                            + ", loaded " + evals.size() + ")");
+        }
+        java.util.Set<UUID> lifecycleIds = new java.util.HashSet<>();
+        for (InternEvaluation ev : evals) lifecycleIds.add(ev.getInternLifecycleId());
+        java.util.Map<UUID, InternLifecycle> lifecycleMap = new java.util.HashMap<>();
+        for (InternLifecycle lc : lifecycleRepo.findAllById(lifecycleIds)) {
+            lifecycleMap.put(lc.getId(), lc);
+        }
+        for (InternEvaluation ev : evals) {
+            if (!"POST_PROJECT".equals(ev.getEvaluationType())) {
+                throw new BadRequestException(
+                        "All rows must be POST_PROJECT (eval " + ev.getId()
+                                + " is " + ev.getEvaluationType() + ")");
+            }
+            if (!"DRAFT".equals(ev.getStatus()) && !"SCHEDULED".equals(ev.getStatus())) {
+                throw new ConflictException(
+                        "Bulk-schedule requires DRAFT or SCHEDULED (eval "
+                                + ev.getId() + " is " + ev.getStatus() + ")");
+            }
+            InternLifecycle lc = lifecycleMap.get(ev.getInternLifecycleId());
+            evaluatorScopeGuard.requireEvaluatorOwnership(lc, caller);
+        }
+
+        // One shared Zoom meeting for all rows.
+        String zoomId = null, joinUrl = null, startUrl = null, password = null;
+        if (meetingProvider.isReady()) {
+            try {
+                String topic = req.topic() != null && !req.topic().isBlank()
+                        ? req.topic()
+                        : "Final Session — " + evals.size() + " project evaluations";
+                MeetingResponse z = meetingProvider.createMeeting(
+                        new MeetingRequest(
+                                caller.getZoomEmail() != null && !caller.getZoomEmail().isBlank()
+                                        ? caller.getZoomEmail() : "me",
+                                topic, req.scheduledFor(), duration,
+                                timezone, req.agenda()));
+                zoomId = z.providerMeetingId();
+                joinUrl = z.joinUrl();
+                startUrl = z.startUrl();
+                password = z.password();
+            } catch (Exception e) {
+                log.warn("[PerProject] bulk-schedule Zoom create failed (degraded): {}",
+                        e.getMessage());
+            }
+        }
+
+        // Stamp shared meeting details on every row + advance status.
+        java.util.List<UUID> updatedIds = new java.util.ArrayList<>(evals.size());
+        for (InternEvaluation ev : evals) {
+            if (ev.getEvaluatorId() == null || !ev.getEvaluatorId().equals(caller.getId())) {
+                ev.setEvaluatorId(caller.getId());
+            }
+            ev.setScheduledFor(req.scheduledFor());
+            ev.setDurationMinutes(duration);
+            ev.setTimezone(timezone);
+            if (zoomId != null) {
+                ev.setZoomMeetingId(zoomId);
+                ev.setZoomJoinUrl(joinUrl);
+                ev.setZoomStartUrl(startUrl);
+                ev.setZoomPassword(password);
+            }
+            ev.setStatus(targetStatus);
+            InternEvaluation saved = evalRepo.save(ev);
+            updatedIds.add(saved.getId());
+            try {
+                InternLifecycle lc = lifecycleMap.get(saved.getInternLifecycleId());
+                if (lc != null) fanout.evaluationScheduled(saved, lc, caller);
+            } catch (Exception e) {
+                log.warn("[PerProject] bulk-schedule fanout failed (non-fatal) eval={}: {}",
+                        saved.getId(), e.getMessage());
+            }
+        }
+        log.info("[PerProject] bulk-scheduled {} POST_PROJECT evals under 1 session by {} (status={})",
+                updatedIds.size(), caller.getId(), targetStatus);
+        return new PerProjectDtos.BulkScheduleResponse(
+                updatedIds.size(), zoomId, joinUrl, updatedIds);
     }
 
     // ── Guards ──────────────────────────────────────────────────────────

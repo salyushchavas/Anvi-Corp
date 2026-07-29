@@ -145,7 +145,7 @@ public class WeeklyReportController {
      * enforced by the service.
      */
     @GetMapping("/{id}/attachment")
-    @PreAuthorize("hasAnyRole('INTERN', 'ERM', 'EVALUATOR', 'TRAINER', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('INTERN', 'ERM', 'EVALUATOR', 'MANAGER', 'TRAINER', 'SUPER_ADMIN')")
     public ResponseEntity<ByteArrayResource> downloadAttachment(
             @PathVariable UUID id,
             @AuthenticationPrincipal User user) {

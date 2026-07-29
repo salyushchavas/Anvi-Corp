@@ -90,6 +90,9 @@ export interface WeeklyReportSummary {
   reviewedAt: string | null;
   completedWork: string | null;
   blockers: string | null;
+  attachmentDocumentId?: string | null;
+  attachmentFileName?: string | null;
+  attachmentMimeType?: string | null;
 }
 
 export interface WeeklyReportsResponse {
@@ -103,4 +106,24 @@ export interface SchedulePostProjectRequest {
   timezone?: string;
   topic?: string | null;
   agenda?: string | null;
+}
+
+export interface BulkScheduleRequest {
+  evaluationIds: string[];
+  scheduledFor: string; // UTC ISO
+  durationMinutes?: number;
+  timezone?: string;
+  topic?: string | null;
+  agenda?: string | null;
+  /** When true, transitions to IN_PROGRESS instead of SCHEDULED —
+   *  used when the meeting already happened and the evaluator is
+   *  recording it retroactively across N projects. */
+  markConducted?: boolean;
+}
+
+export interface BulkScheduleResponse {
+  updatedCount: number;
+  zoomMeetingId: string | null;
+  zoomJoinUrl: string | null;
+  evaluationIds: string[];
 }

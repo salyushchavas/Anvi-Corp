@@ -23,7 +23,7 @@ import type {
   EvalueeDetail,
   EvaluationTimelineEntry,
 } from '@/components/evaluator/types';
-import ProjectTimelineSection from '@/components/evaluator/ProjectTimelineSection';
+import ProjectCardsSection from '@/components/evaluator/ProjectCardsSection';
 import AllWeeklyReportsPanel from '@/components/evaluator/AllWeeklyReportsPanel';
 
 export default function EvalueeDetailPage() {
@@ -191,12 +191,12 @@ export default function EvalueeDetailPage() {
         />
       )}
 
-      {/* Per-project hub — every project as an expandable row with full
-          details, trainer Q&A, recording playback, and evaluation
-          actions inline. This is the primary "complete picture" for
-          this intern; the evaluator does everything from here without
+      {/* Per-project hub — every project as a full-height card with
+          details, trainer Q&A, recording, and per-project actions.
+          Header exposes "Schedule Final Session" for bulk multi-project
+          scheduling. The evaluator does everything from here without
           navigating away. */}
-      <ProjectTimelineSection lifecycleId={data.profile.lifecycleId} />
+      <ProjectCardsSection lifecycleId={data.profile.lifecycleId} />
 
       {/* Every weekly report the intern has submitted — their own
           account of the work leading into each evaluation. */}
