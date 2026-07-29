@@ -49,7 +49,7 @@ import java.util.UUID;
 @Slf4j
 public class AuthService {
 
-    private static final long RESET_TOKEN_TTL_SECONDS = 60L * 60L;
+    private static final long RESET_CODE_TTL_SECONDS = 15L * 60L;
     private static final long VERIFICATION_CODE_TTL_HOURS = 24L;
     private static final SecureRandom RNG = new SecureRandom();
 
@@ -83,23 +83,15 @@ public class AuthService {
     private final MailAccountRepository mailAccountRepository;
 
     /**
-     * GAP E3 — dev-only escape hatch for the password-reset token. When
+     * Dev-only escape hatch for the 6-digit password-reset code. When
      * {@code app.notification.surface-reset-token=true} (set in dev only) the
-     * token is logged at INFO so a developer can copy it without a real email
-     * provider. Default FALSE — production log sinks NEVER see a live token.
+     * code is logged at INFO so a developer can copy it without a real email
+     * provider. Default FALSE — production log sinks NEVER see a live code.
      * Non-final so @Value field-injection composes with @RequiredArgsConstructor
      * (the Lombok constructor still ignores non-final fields).
      */
     @Value("${app.notification.surface-reset-token:false}")
     private boolean surfaceResetToken;
-
-    /**
-     * URL template the password-reset email points at. Must contain a
-     * {@code {token}} placeholder; the service substitutes the one-time
-     * token at send time.
-     */
-    @Value("${app.password-reset.url-template:http://localhost:3000/careers/reset-password?token={token}}")
-    private String passwordResetUrlTemplate;
 
     @Transactional
     public AuthResponse register(RegisterRequest req, HttpServletRequest httpRequest) {
@@ -436,55 +428,73 @@ public class AuthService {
         return buildAuthResponse(user, issued);
     }
 
+    /**
+     * Code-entry reset: generate a fresh 6-digit code, invalidate any active
+     * codes for the user, persist the new row, and email the code inline.
+     *
+     * <p>Silent no-op if the email is unknown — the caller (controller) always
+     * returns 200 so an attacker cannot enumerate accounts. Email-send failures
+     * are also swallowed for the same reason; the code row is the source of
+     * truth and the user can request another via the same endpoint.</p>
+     */
     @Transactional
     public void forgotPassword(ForgotPasswordRequest req) {
         Optional<User> userOpt = userRepository.findByEmail(req.email());
-        if (userOpt.isPresent()) {
-            User user = userOpt.get();
-            String token = UUID.randomUUID().toString();
-            Instant expiresAt = Instant.now().plusSeconds(RESET_TOKEN_TTL_SECONDS);
-            PasswordResetToken prt = PasswordResetToken.builder()
-                    .userId(user.getId())
-                    .token(token)
-                    .expiresAt(expiresAt)
-                    .used(false)
-                    .build();
-            passwordResetTokenRepository.save(prt);
-
-            // GAP E3 — gated dev-only echo. Default config keeps this OFF so
-            // prod log sinks never see a live token. Dev sets
-            // app.notification.surface-reset-token=true to retrieve it.
-            if (surfaceResetToken) {
-                log.info("DEV ONLY — password reset token for {}: {}",
-                        req.email(), token);
-            }
-
-            // C3 — actually email the reset link. Best-effort: a delivery
-            // failure must not surface a different response to the caller
-            // (that would leak account existence). The token row is the
-            // source of truth; the user can retry via /forgot-password.
-            String resetUrl = passwordResetUrlTemplate.replace("{token}", token);
-            try {
-                notificationStub.sendPasswordReset(user.getEmail(), resetUrl, expiresAt);
-            } catch (EmailDeliveryException e) {
-                log.error("Password-reset email failed for {}: {}",
-                        user.getEmail(), e.getMessage());
-            }
+        if (userOpt.isEmpty()) {
+            return;
         }
-        // Always returns success at the controller level — do not reveal account existence.
+        User user = userOpt.get();
+
+        // Invalidate previously-issued codes so only the freshest one works
+        // (limits the window a leaked code stays live).
+        passwordResetTokenRepository.invalidateActiveForUser(user.getId());
+
+        String code = generateVerificationCode();
+        Instant expiresAt = Instant.now().plusSeconds(RESET_CODE_TTL_SECONDS);
+        PasswordResetToken prt = PasswordResetToken.builder()
+                .userId(user.getId())
+                .token(code)
+                .expiresAt(expiresAt)
+                .used(false)
+                .build();
+        passwordResetTokenRepository.save(prt);
+
+        if (surfaceResetToken) {
+            log.info("DEV ONLY — password reset code for {}: {}",
+                    req.email(), code);
+        }
+
+        try {
+            notificationStub.sendPasswordReset(user.getEmail(), code, expiresAt);
+        } catch (EmailDeliveryException e) {
+            log.error("Password-reset email failed for {}: {}",
+                    user.getEmail(), e.getMessage());
+        }
     }
 
+    /**
+     * Validate {@code (email, code)} against an unused, unexpired
+     * {@link PasswordResetToken}, then BCrypt-encode {@code newPassword} onto
+     * {@link User#getPasswordHash()} and mark the code used. Same "Invalid or
+     * expired code" message on every failure so an attacker can't distinguish
+     * unknown-email from wrong-code.
+     */
     @Transactional
     public void resetPassword(ResetPasswordRequest req) {
-        PasswordResetToken prt = passwordResetTokenRepository.findByToken(req.token())
-                .orElseThrow(() -> new AuthException(HttpStatus.BAD_REQUEST, "Invalid or expired token"));
+        User user = userRepository.findByEmail(req.email())
+                .orElseThrow(() -> new AuthException(HttpStatus.BAD_REQUEST,
+                        "Invalid or expired code"));
 
-        if (Boolean.TRUE.equals(prt.getUsed()) || prt.getExpiresAt().isBefore(Instant.now())) {
-            throw new AuthException(HttpStatus.BAD_REQUEST, "Invalid or expired token");
+        PasswordResetToken prt = passwordResetTokenRepository
+                .findFirstByUserIdAndTokenAndUsedFalseOrderByCreatedAtDesc(
+                        user.getId(), req.code())
+                .orElseThrow(() -> new AuthException(HttpStatus.BAD_REQUEST,
+                        "Invalid or expired code"));
+
+        if (prt.getExpiresAt().isBefore(Instant.now())) {
+            throw new AuthException(HttpStatus.BAD_REQUEST,
+                    "Invalid or expired code");
         }
-
-        User user = userRepository.findById(prt.getUserId())
-                .orElseThrow(() -> new AuthException(HttpStatus.BAD_REQUEST, "Invalid or expired token"));
 
         user.setPasswordHash(passwordEncoder.encode(req.newPassword()));
         userRepository.save(user);

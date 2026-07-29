@@ -47,8 +47,8 @@ public class NotificationStub {
         emailProvider.sendApplicantIdIssued(email, applicantId);
     }
 
-    public void sendPasswordReset(String email, String resetUrl, Instant expiresAt) {
-        emailProvider.sendPasswordReset(email, resetUrl, expiresAt);
+    public void sendPasswordReset(String email, String code, Instant expiresAt) {
+        emailProvider.sendPasswordReset(email, code, expiresAt);
     }
 
     public void sendConditionalSelectionConfirmation(String email,

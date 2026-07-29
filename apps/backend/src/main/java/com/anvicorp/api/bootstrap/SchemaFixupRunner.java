@@ -63,6 +63,24 @@ public class SchemaFixupRunner implements CommandLineRunner {
             log.warn("applications_status_check drop failed (non-fatal): {}", e.getMessage(), e);
         }
 
+        // Password-reset tokens now store 6-digit codes (same shape as the
+        // registration verification code) rather than UUIDs. Different users
+        // can legitimately hold the same 6-digit value, so the previous
+        // UNIQUE on `token` must be dropped or concurrent requests would
+        // 23505 on insert. Idempotent: DROP ... IF EXISTS is a no-op after
+        // the first successful drop. Application-layer lookup is scoped to
+        // (user_id, token) via PasswordResetTokenRepository.
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE password_reset_tokens "
+                            + "DROP CONSTRAINT IF EXISTS password_reset_tokens_token_key");
+            jdbcTemplate.execute("DROP INDEX IF EXISTS idx_prt_token");
+            log.info("Dropped stale password_reset_tokens UNIQUE(token) (if present).");
+        } catch (Exception e) {
+            log.warn("password_reset_tokens UNIQUE(token) drop failed (non-fatal): {}",
+                    e.getMessage(), e);
+        }
+
         // Phase 3 step 5: SECTION_2_PENDING was added to I9Status. ddl-auto
         // never updates the existing CHECK constraint, so we drop it here
         // before any row tries to write the new value. Application-layer

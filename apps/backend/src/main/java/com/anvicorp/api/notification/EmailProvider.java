@@ -49,7 +49,12 @@ public interface EmailProvider {
 
     void sendApplicantIdIssued(String email, String applicantId);
 
-    void sendPasswordReset(String email, String resetUrl, Instant expiresAt);
+    /**
+     * Send a 6-digit password-reset code (same shape as the registration
+     * verification code). Recipient types the code back on the reset wizard —
+     * no link is emailed.
+     */
+    void sendPasswordReset(String email, String code, Instant expiresAt);
 
     void sendConditionalSelectionConfirmation(String email,
                                               String jobPostingTitle,

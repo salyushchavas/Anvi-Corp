@@ -48,9 +48,9 @@ public class LogEmailProvider implements EmailProvider {
     }
 
     @Override
-    public void sendPasswordReset(String email, String resetUrl, Instant expiresAt) {
-        log.info("[LOG EMAIL] Password reset for {}: {} (expires {})",
-                email, resetUrl, expiresAt);
+    public void sendPasswordReset(String email, String code, Instant expiresAt) {
+        log.info("[LOG EMAIL] Password reset code for {}: {} (expires {})",
+                email, code, expiresAt);
     }
 
     @Override

@@ -193,31 +193,33 @@ public class SmtpEmailProvider implements EmailProvider {
     }
 
     @Override
-    public void sendPasswordReset(String email, String resetUrl, Instant expiresAt) {
-        String expiryLabel = expiresAt != null ? EXPIRY_FORMAT.format(expiresAt) : "in 1 hour";
+    public void sendPasswordReset(String email, String code, Instant expiresAt) {
+        String expiryLabel = expiresAt != null ? EXPIRY_FORMAT.format(expiresAt) : "soon";
         String plain = ""
                 + "We received a request to reset your " + brand + " Careers password.\n\n"
-                + "Reset link: " + resetUrl + "\n\n"
-                + "This link expires " + expiryLabel + ". If you didn't request this,\n"
-                + "ignore this email and your password stays unchanged.\n\n"
+                + "Your reset code is: " + code + "\n\n"
+                + "Enter this code on the reset screen along with your new password.\n"
+                + "It expires " + expiryLabel + ".\n\n"
+                + "If you didn't request this, you can safely ignore this email and\n"
+                + "your password stays unchanged.\n\n"
                 + "— The " + brand + " team\n";
         String html = wrapHtml(
                 "Reset your password",
                 "<p style=\"margin:0 0 12px;font-size:15px;color:" + COLOR_TEXT_BODY + ";\">"
-                        + "We received a request to reset your " + brand + " Careers password."
+                        + "We received a request to reset your <strong>" + brand
+                        + " Careers</strong> password."
                         + "</p>"
-                        + buttonBlock("Reset password", resetUrl)
-                        + "<p style=\"margin:0 0 12px;font-size:13px;color:" + COLOR_TEXT_HINT + ";"
-                        + "word-break:break-all;\">"
-                        + "Or paste this link into your browser:<br/>"
-                        + "<span style=\"color:" + COLOR_ACCENT_TO + ";\">" + escape(resetUrl) + "</span>"
+                        + "<p style=\"margin:0 0 8px;font-size:15px;color:" + COLOR_TEXT_BODY + ";\">"
+                        + "Your reset code is:"
                         + "</p>"
-                        + "<p style=\"margin:0 0 12px;font-size:13px;color:" + COLOR_TEXT_HINT + ";\">"
-                        + "This link expires " + escape(expiryLabel) + "."
+                        + codeBlock(code)
+                        + "<p style=\"margin:0 0 12px;font-size:14px;color:" + COLOR_TEXT_HINT + ";\">"
+                        + "Enter this code on the reset screen along with your new password. "
+                        + "It expires " + escape(expiryLabel) + "."
                         + "</p>"
                         + "<p style=\"margin:16px 0 0;font-size:13px;color:" + COLOR_TEXT_MUTED + ";\">"
-                        + "If you didn't request this, you can ignore this email and your password "
-                        + "stays unchanged."
+                        + "If you didn't request this, you can safely ignore this email and your "
+                        + "password stays unchanged."
                         + "</p>"
         );
         send(email, "Reset your " + brand + " Careers password", plain, html);
