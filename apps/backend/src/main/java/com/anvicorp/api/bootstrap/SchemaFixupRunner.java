@@ -144,6 +144,13 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // this rebuild to keep writes flowing.
         rebuildRecordingApprovalStatusCheck();
 
+        // Seed the onboarding_document_templates table from the static
+        // SkyzenDocument enum so every known template is manageable in
+        // the Admin ⟶ Onboarding Documents page. Idempotent: uses
+        // ON CONFLICT DO NOTHING on the unique key column so admin-
+        // uploaded files + admin-added custom rows are never disturbed.
+        seedOnboardingTemplatesFromEnum();
+
         // ── 8-role finalize: rename HR_COMPLIANCE → HR and
         //                    TECHNICAL_SUPERVISOR → TECHNICAL_EVALUATOR.
         //
@@ -2865,6 +2872,51 @@ public class SchemaFixupRunner implements CommandLineRunner {
      * fails with SQLSTATE 23514 → surfaced to the user as a generic
      * "A submitted value isn't allowed here."
      */
+    /**
+     * Seed one row per {@code SkyzenDocument} enum value into
+     * {@code onboarding_document_templates}. Runs every boot but the
+     * {@code ON CONFLICT DO NOTHING} on the unique key column skips
+     * existing rows — admin-uploaded files and admin-added custom rows
+     * are never disturbed, and re-runs are a no-op.
+     */
+    private void seedOnboardingTemplatesFromEnum() {
+        try {
+            int seeded = 0;
+            int sortOrder = 10;
+            for (com.anvicorp.api.erm.documents.SkyzenDocument d :
+                    com.anvicorp.api.erm.documents.SkyzenDocument.values()) {
+                sortOrder += 10;
+                int rows = jdbcTemplate.update(
+                        "INSERT INTO onboarding_document_templates "
+                                + "(id, key_, title, category, sensitivity, description, "
+                                + " active, sort_order, created_at, updated_at) "
+                                + "VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()) "
+                                + "ON CONFLICT (key_) DO NOTHING",
+                        d.name(),
+                        d.getTitle(),
+                        d.getCategory(),
+                        d.getSensitivity(),
+                        d.getDescription(),
+                        !d.isDeprecated(),
+                        sortOrder);
+                if (rows > 0) seeded++;
+            }
+            if (seeded > 0) {
+                log.info("[SchemaFixupRunner] seeded {} onboarding_document_templates "
+                        + "rows from SkyzenDocument enum", seeded);
+            } else {
+                log.info("[SchemaFixupRunner] onboarding_document_templates already "
+                        + "populated — no seeding needed");
+            }
+        } catch (Exception e) {
+            // Table may not exist yet on first-ever boot if ddl-auto hasn't
+            // finished the CREATE — non-fatal, will succeed on next boot.
+            log.warn("[SchemaFixupRunner] seedOnboardingTemplatesFromEnum failed "
+                    + "(non-fatal): {} — root: {}",
+                    e.getMessage(), rootMessage(e));
+        }
+    }
+
     /**
      * Rebuild {@code intern_evaluations_recording_approval_status_check}
      * so the manager approval gate values ({@code PENDING_APPROVAL},

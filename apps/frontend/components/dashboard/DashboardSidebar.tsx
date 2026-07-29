@@ -127,6 +127,7 @@ const STAFF_ROLE_LINKS: Record<UserRole, StaffLink[]> = {
     { icon: Users,           label: 'Users',                 href: '/careers/admin/users' },
     { icon: Briefcase,       label: 'Job Postings',          href: '/careers/admin/postings' },
     { icon: Package,         label: 'Entities',              href: '/careers/admin/entities' },
+    { icon: FileText,        label: 'Onboarding Documents',  href: '/careers/admin/onboarding-documents' },
     { icon: ShieldCheck,     label: 'Audit Log',             href: '/careers/admin/audit-log' },
   ],
 };
