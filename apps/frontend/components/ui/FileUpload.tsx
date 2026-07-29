@@ -15,7 +15,7 @@ export interface FileUploadProps {
   disabled?: boolean;
 }
 
-const DEFAULT_ACCEPT = '.pdf,.doc,.docx';
+const DEFAULT_ACCEPT = '.pdf,.doc,.docx,.jpg,.jpeg,.png,.webp';
 const DEFAULT_MAX_MB = 10;
 
 function formatBytes(n: number): string {

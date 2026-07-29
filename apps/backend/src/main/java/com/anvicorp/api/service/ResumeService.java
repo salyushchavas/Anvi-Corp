@@ -43,7 +43,13 @@ public class ResumeService {
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "application/pdf",
             "application/msword",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            // Image resumes surface fine inline via the ERM preview — accept
+            // the common web-safe formats so candidates who scan/screenshot
+            // their resume don't get rejected at upload.
+            "image/jpeg",
+            "image/png",
+            "image/webp"
     );
 
     private final ResumeRepository resumeRepository;
@@ -83,7 +89,7 @@ public class ResumeService {
         String contentType = file.getContentType();
         if (contentType == null || !ALLOWED_CONTENT_TYPES.contains(contentType)) {
             throw new BadRequestException(
-                    "Unsupported content type. Allowed: pdf, doc, docx");
+                    "Unsupported content type. Allowed: pdf, doc, docx, jpg, png, webp");
         }
 
         // Lazy-create Candidate if missing — same safety net ApplicationService uses.
