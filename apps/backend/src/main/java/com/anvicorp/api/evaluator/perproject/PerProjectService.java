@@ -364,9 +364,9 @@ public class PerProjectService {
         if (req == null || req.scheduledFor() == null) {
             throw new BadRequestException("scheduledFor required");
         }
-        if (req.scheduledFor().isBefore(Instant.now().plus(1, ChronoUnit.HOURS))) {
+        if (req.scheduledFor().isBefore(Instant.now())) {
             throw new BadRequestException(
-                    "scheduledFor must be at least 1 hour in the future");
+                    "scheduledFor must be in the future");
         }
         int duration = req.durationMinutes() != null ? req.durationMinutes() : 45;
         if (duration < 15 || duration > 180) {
@@ -523,9 +523,9 @@ public class PerProjectService {
         }
         boolean markConducted = Boolean.TRUE.equals(req.markConducted());
         if (!markConducted
-                && req.scheduledFor().isBefore(Instant.now().plus(1, ChronoUnit.HOURS))) {
+                && req.scheduledFor().isBefore(Instant.now())) {
             throw new BadRequestException(
-                    "scheduledFor must be at least 1 hour in the future "
+                    "scheduledFor must be in the future "
                             + "(unless markConducted=true to backdate)");
         }
         int duration = req.durationMinutes() != null ? req.durationMinutes() : 45;

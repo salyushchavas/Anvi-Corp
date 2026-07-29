@@ -32,7 +32,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.YearMonth;
-import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -75,9 +74,9 @@ public class EvaluationWorkflowService {
             throw new BadRequestException("internLifecycleId is required");
         }
         if (req.scheduledFor() == null
-                || req.scheduledFor().isBefore(Instant.now().plus(1, ChronoUnit.HOURS))) {
+                || req.scheduledFor().isBefore(Instant.now())) {
             throw new BadRequestException(
-                    "scheduledFor must be at least 1 hour in the future");
+                    "scheduledFor must be in the future");
         }
         int duration = req.durationMinutes() != null ? req.durationMinutes() : 45;
         if (duration < 15 || duration > 180) {
@@ -158,9 +157,9 @@ public class EvaluationWorkflowService {
             throw new BadRequestException("internLifecycleId is required");
         }
         if (req.scheduledFor() == null
-                || req.scheduledFor().isBefore(Instant.now().plus(1, ChronoUnit.HOURS))) {
+                || req.scheduledFor().isBefore(Instant.now())) {
             throw new BadRequestException(
-                    "scheduledFor must be at least 1 hour in the future");
+                    "scheduledFor must be in the future");
         }
         int duration = req.durationMinutes() != null ? req.durationMinutes() : 60;
         if (duration < 15 || duration > 180) {
