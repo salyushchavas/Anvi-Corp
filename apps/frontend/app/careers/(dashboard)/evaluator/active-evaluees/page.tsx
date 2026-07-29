@@ -5,8 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   CalendarPlus,
-  ChevronRight,
-  Eye,
+  CheckCircle2,
   PenSquare,
   PlayCircle,
   Search,
@@ -20,16 +19,15 @@ import type {
 } from '@/components/evaluator/types';
 import {
   evaluatorProjectDisplay,
+  evaluatorProjectStatusLabel,
   type EvaluatorProjectActionKind,
 } from '@/components/evaluator/project-status';
 
 /**
- * Evaluator ⟶ Active Evaluees. One row per intern with two per-project
- * columns (P1 / P2 — capped at 2 by DB CHECK). Each cell shows the
- * derived evaluator label + a single quick-action button that lines up
- * with the label per {@link evaluatorProjectDisplay}. The vocabulary
- * matches ProjectCardsSection so the list and the detail hub speak
- * identically for the same underlying state.
+ * Evaluator ⟶ Active Evaluees. One row per intern. Each project (P1,
+ * P2 — DB-capped at 2) gets a Status column AND a Quick Action column.
+ * Both columns always render real content — never blank, never a dash.
+ * An empty project slot renders "Not Assigned" + "No action needed".
  */
 export default function ActiveEvalueesPage() {
   return (
@@ -50,7 +48,6 @@ function ActiveEvalueesInner() {
   const [data, setData] = useState<ActiveEvalueesPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  /** Which (projectId, projectTitle) the schedule dialog is bound to. */
   const [scheduleFor, setScheduleFor] = useState<
     { projectId: string; projectTitle: string | null } | null
   >(null);
@@ -158,9 +155,10 @@ function ActiveEvalueesInner() {
               <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-2">Intern</th>
                 <th className="px-3 py-2">Technology</th>
-                <th className="px-3 py-2">Project 1</th>
-                <th className="px-3 py-2">Project 2</th>
-                <th className="px-3 py-2"></th>
+                <th className="px-3 py-2">Project 1 Status</th>
+                <th className="px-3 py-2">Project 1 Quick Action</th>
+                <th className="px-3 py-2">Project 2 Status</th>
+                <th className="px-3 py-2">Project 2 Quick Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -169,10 +167,7 @@ function ActiveEvalueesInner() {
                   key={r.lifecycleId}
                   row={r}
                   onOpen={() => router.push(`/careers/evaluator/evaluees/${r.lifecycleId}`)}
-                  onSchedule={(projectId) => setScheduleFor({
-                    projectId,
-                    projectTitle: null, // list endpoint doesn't carry titles
-                  })}
+                  onSchedule={(projectId) => setScheduleFor({ projectId, projectTitle: null })}
                   onStart={handleStartSession}
                   onNavigate={(href) => router.push(href)}
                 />
@@ -227,6 +222,8 @@ function Row({ row, onOpen, onSchedule, onStart, onNavigate }: {
 }) {
   const projectBySeq = (seq: number): ActiveEvalueeProjectRow | null =>
     row.projects?.find((p) => p.sequence === seq) ?? null;
+  const p1 = projectBySeq(1);
+  const p2 = projectBySeq(2);
   return (
     <tr className="cursor-pointer hover:bg-slate-50" onClick={onOpen}>
       <td className="px-3 py-2">
@@ -237,50 +234,72 @@ function Row({ row, onOpen, onSchedule, onStart, onNavigate }: {
         </p>
       </td>
       <td className="px-3 py-2 text-xs text-slate-700">{row.technology ?? '—'}</td>
-      <ProjectCell
-        project={projectBySeq(1)}
+      <StatusCell project={p1} />
+      <QuickActionCell
+        project={p1}
         onSchedule={onSchedule}
         onStart={onStart}
         onNavigate={onNavigate}
       />
-      <ProjectCell
-        project={projectBySeq(2)}
+      <StatusCell project={p2} />
+      <QuickActionCell
+        project={p2}
         onSchedule={onSchedule}
         onStart={onStart}
         onNavigate={onNavigate}
       />
-      <td className="px-3 py-2 text-right">
-        <ChevronRight className="h-4 w-4 text-slate-400" />
-      </td>
     </tr>
   );
 }
 
-function ProjectCell({ project, onSchedule, onStart, onNavigate }: {
+function StatusCell({ project }: { project: ActiveEvalueeProjectRow | null }) {
+  const label = evaluatorProjectStatusLabel({
+    projectStatus: project?.projectStatus,
+    evaluationStatus: project?.evaluationStatus,
+    hasProject: project != null,
+  });
+  const pill = pillClassFor(label);
+  return (
+    <td className="px-3 py-2">
+      <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${pill}`}>
+        {label}
+      </span>
+    </td>
+  );
+}
+
+function QuickActionCell({ project, onSchedule, onStart, onNavigate }: {
   project: ActiveEvalueeProjectRow | null;
   onSchedule: (projectId: string) => void;
   onStart: (evaluationId: string) => Promise<void> | void;
   onNavigate: (href: string) => void;
 }) {
+  // Empty slot → always shows "No action needed" (never a dash / blank).
   if (!project) {
-    return <td className="px-3 py-2 text-xs text-slate-400">—</td>;
+    return (
+      <td className="px-3 py-2">
+        <span className="text-[11px] italic text-slate-400">No action needed</span>
+      </td>
+    );
   }
   const disp = evaluatorProjectDisplay(project.projectStatus, project.evaluationStatus);
+  if (disp.actionKind === 'NONE') {
+    return (
+      <td className="px-3 py-2">
+        <span className="text-[11px] italic text-slate-400">No action needed</span>
+      </td>
+    );
+  }
   return (
     <td className="px-3 py-2">
-      <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${disp.pill}`}>
-        {disp.label}
-      </span>
-      <div className="mt-1">
-        <ActionButton
-          kind={disp.actionKind}
-          label={disp.actionLabel}
-          project={project}
-          onSchedule={onSchedule}
-          onStart={onStart}
-          onNavigate={onNavigate}
-        />
-      </div>
+      <ActionButton
+        kind={disp.actionKind}
+        label={disp.actionLabel}
+        project={project}
+        onSchedule={onSchedule}
+        onStart={onStart}
+        onNavigate={onNavigate}
+      />
     </td>
   );
 }
@@ -293,7 +312,6 @@ function ActionButton({ kind, label, project, onSchedule, onStart, onNavigate }:
   onStart: (evaluationId: string) => Promise<void> | void;
   onNavigate: (href: string) => void;
 }) {
-  if (kind === 'NONE') return null;
   const stop = (e: React.MouseEvent) => e.stopPropagation();
   const commonPrimary =
     'inline-flex items-center gap-1 rounded-md bg-brand-700 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-brand-800';
@@ -303,13 +321,10 @@ function ActionButton({ kind, label, project, onSchedule, onStart, onNavigate }:
     'inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100';
 
   if (kind === 'SCHEDULE' || kind === 'RESCHEDULE') {
-    // Both open the same scheduling dialog. Schedule uses primary tone;
-    // Reschedule (only reached from CANCELLED here) uses amber to hint at
-    // a recovery action.
     const cls = kind === 'SCHEDULE' ? commonPrimary : commonAmber;
     return (
       <button type="button" className={cls}
-        onClick={(e) => { stop(e); onSchedule(project.projectId!); }}
+        onClick={(e) => { stop(e); if (project.projectId) onSchedule(project.projectId); }}
       >
         <CalendarPlus className="h-2.5 w-2.5" />
         {label}
@@ -349,10 +364,29 @@ function ActionButton({ kind, label, project, onSchedule, onStart, onNavigate }:
           `/careers/evaluator/evaluations/${project.evaluationId}`);
       }}
     >
-      <Eye className="h-2.5 w-2.5" />
+      <CheckCircle2 className="h-2.5 w-2.5" />
       {label}
     </button>
   );
+}
+
+/** Pill tone per detailed status label. Keeps the table color-coded
+ *  even for the granular pre-verification states the cards collapse. */
+function pillClassFor(label: string): string {
+  switch (label) {
+    case 'Not Assigned':      return 'bg-slate-100 text-slate-500';
+    case 'Not Started':       return 'bg-slate-100 text-slate-700';
+    case 'In Progress':       return 'bg-slate-100 text-slate-700';
+    case 'Submitted':         return 'bg-blue-100 text-blue-800';
+    case 'Returned':          return 'bg-amber-100 text-amber-900';
+    case 'Tech Approved':     return 'bg-emerald-50 text-emerald-800';
+    case 'Pending Evaluation': return 'bg-amber-100 text-amber-900';
+    case 'Scheduled':         return 'bg-brand-100 text-brand-800';
+    case 'Session Completed': return 'bg-amber-100 text-amber-900';
+    case 'Completed':         return 'bg-emerald-100 text-emerald-800';
+    case 'Cancelled':         return 'bg-red-100 text-red-700';
+    default:                  return 'bg-slate-100 text-slate-700';
+  }
 }
 
 function EmptyState() {

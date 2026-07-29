@@ -116,3 +116,37 @@ export function evaluatorProjectDisplay(
     pill: cfg.pill,
   };
 }
+
+/**
+ * Table-facing status label — finer-grained than the card label so a
+ * dense row can show which pre-verification state the project is in
+ * (Not Started vs In Progress vs Submitted vs Returned vs Tech
+ * Approved). Post-verification states collapse to the same wording the
+ * cards use (Pending Evaluation / Scheduled / Session Completed /
+ * Completed / Cancelled). Always returns a real string — never blank,
+ * never a dash — including when the project slot is empty ("Not
+ * Assigned"), so the Active Evaluees table never renders empty cells.
+ */
+export function evaluatorProjectStatusLabel(args: {
+  projectStatus: string | null | undefined;
+  evaluationStatus: string | null | undefined;
+  hasProject: boolean;
+}): string {
+  if (!args.hasProject) return 'Not Assigned';
+  const s = args.evaluationStatus;
+  if (s === 'CANCELLED') return 'Cancelled';
+  if (s === 'PUBLISHED' || s === 'ACKNOWLEDGED' || s === 'AMENDED') return 'Completed';
+  if (s === 'IN_PROGRESS') return 'Session Completed';
+  if (s === 'SCHEDULED') return 'Scheduled';
+  if (args.projectStatus === 'PENDING_VIVA' || args.projectStatus === 'COMPLETED') {
+    return 'Pending Evaluation';
+  }
+  switch ((args.projectStatus ?? '').toUpperCase()) {
+    case 'NOT_STARTED':   return 'Not Started';
+    case 'IN_PROGRESS':   return 'In Progress';
+    case 'SUBMITTED':     return 'Submitted';
+    case 'RETURNED':      return 'Returned';
+    case 'TECH_APPROVED': return 'Tech Approved';
+    default:              return 'In Progress';
+  }
+}
