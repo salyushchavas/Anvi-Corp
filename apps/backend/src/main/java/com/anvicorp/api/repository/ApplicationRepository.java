@@ -65,6 +65,17 @@ public interface ApplicationRepository
     List<Application> findByCandidateIdWithPosting(@Param("candidateId") UUID candidateId);
 
     boolean existsByCandidateIdAndJobPostingId(UUID candidateId, UUID jobPostingId);
+
+    /**
+     * "Already applied" guard that ignores WITHDRAWN rows so an intern who
+     * withdrew a prior application can submit a fresh one for the same
+     * posting. Paired with the partial UNIQUE
+     * {@code uk_application_candidate_job_posting_active} maintained by
+     * {@code SchemaFixupRunner.ensureApplicationsReapplyAfterWithdrawSchema}.
+     */
+    boolean existsByCandidateIdAndJobPostingIdAndStatusNot(
+            UUID candidateId, UUID jobPostingId, ApplicationStatus status);
+
     boolean existsByResumeId(UUID resumeId);
     boolean existsByStatus(ApplicationStatus status);
 

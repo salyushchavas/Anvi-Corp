@@ -2519,6 +2519,12 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // additional indexes for the inbox/shortlist queries.
         ensureErmApplicationInboxSchema();
 
+        // Re-apply-after-withdraw — swap the legacy unconditional UNIQUE on
+        // applications(candidate_id, job_posting_id) for a partial one that
+        // ignores WITHDRAWN rows, so an intern who withdrew can apply again
+        // while the WITHDRAWN row stays put for ERM reporting.
+        ensureApplicationsReapplyAfterWithdrawSchema();
+
         // ERM Phase 3 — interview scheduler + decision center columns +
         // event log table + 2 indexes.
         ensureErmInterviewSchema();
@@ -3958,6 +3964,89 @@ public class SchemaFixupRunner implements CommandLineRunner {
             }
         }
         log.info("[SchemaFixupRunner] ensured ERM Phase 3 interview scheduler schema");
+    }
+
+    /**
+     * Re-apply after WITHDRAWN — replace the legacy unconditional UNIQUE
+     * {@code uk_application_candidate_job_posting} on
+     * {@code applications(candidate_id, job_posting_id)} with a partial
+     * unique index that ignores WITHDRAWN rows. Without this an intern who
+     * withdrew from a posting can never apply to it again (the entity-level
+     * "already applied" guard was updated to exclude WITHDRAWN, but the DB
+     * constraint would still 23505 the fresh INSERT). WITHDRAWN rows must
+     * stay put because {@code ErmReportsService} + the candidate-side "exit
+     * status" UI read them.
+     *
+     * <p>Postgres-specific — ddl-auto=update can't express partial indexes,
+     * so this runner owns the enforcement. Steps:</p>
+     * <ol>
+     *   <li>Drop any Hibernate-emitted unconditional variants of the
+     *       constraint/index (both {@code ALTER TABLE ... DROP CONSTRAINT}
+     *       and {@code DROP INDEX}, since Hibernate creates one or the
+     *       other depending on ordering).</li>
+     *   <li>Create the partial unique index
+     *       {@code uk_application_candidate_job_posting_active} on
+     *       {@code (candidate_id, job_posting_id) WHERE status <> 'WITHDRAWN'}.</li>
+     *   <li>Verify via {@code pg_indexes}. ERROR-log if it didn't take —
+     *       re-apply after withdrawal will keep 409'ing until resolved.</li>
+     * </ol>
+     */
+    private void ensureApplicationsReapplyAfterWithdrawSchema() {
+        // 1) Drop the legacy unconditional UNIQUE(candidate_id, job_posting_id).
+        //    Hibernate may have created it as a constraint OR as a plain unique
+        //    index depending on which ddl-auto pass ran first — belt-and-brace.
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE applications "
+                            + "DROP CONSTRAINT IF EXISTS uk_application_candidate_job_posting");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] legacy uk_application_candidate_job_posting "
+                    + "constraint drop skipped (non-fatal): {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute(
+                    "DROP INDEX IF EXISTS uk_application_candidate_job_posting");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] legacy uk_application_candidate_job_posting "
+                    + "index drop skipped (non-fatal): {}", e.getMessage());
+        }
+
+        // 2) Create the partial UNIQUE that excludes WITHDRAWN.
+        try {
+            jdbcTemplate.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                            + "uk_application_candidate_job_posting_active "
+                            + "ON applications (candidate_id, job_posting_id) "
+                            + "WHERE status <> 'WITHDRAWN'");
+            log.info("[SchemaFixupRunner] ensured applications partial UNIQUE "
+                    + "(candidate_id, job_posting_id) WHERE status <> 'WITHDRAWN'");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] applications partial UNIQUE ensure failed "
+                    + "(non-fatal): {}", e.getMessage(), e);
+        }
+
+        // 3) Verify via pg_indexes. If it didn't take, re-apply after
+        //    withdrawal will keep 23505'ing on the fresh INSERT.
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM pg_indexes "
+                            + "WHERE tablename = 'applications' AND indexname = ?",
+                    Integer.class, "uk_application_candidate_job_posting_active");
+            if (count != null && count > 0) {
+                log.info("[SchemaFixupRunner] verified "
+                        + "uk_application_candidate_job_posting_active present on applications");
+            } else {
+                log.error("[SchemaFixupRunner] uk_application_candidate_job_posting_active "
+                        + "is MISSING on applications after ensure attempt — re-apply after "
+                        + "withdrawal will continue to 23505 until this is resolved (check "
+                        + "DB user privileges + whether a legacy uk_application_candidate_job_posting "
+                        + "is still hanging around).");
+            }
+        } catch (Exception verifyErr) {
+            log.warn("[SchemaFixupRunner] post-ensure verify on "
+                    + "uk_application_candidate_job_posting_active failed (non-fatal): {}",
+                    verifyErr.getMessage());
+        }
     }
 
     /**

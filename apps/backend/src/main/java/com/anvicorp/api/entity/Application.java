@@ -8,13 +8,17 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(
-        name = "applications",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uk_application_candidate_job_posting",
-                columnNames = {"candidate_id", "job_posting_id"}
-        )
-)
+// NOTE: no @UniqueConstraint on (candidate_id, job_posting_id) here — an
+// intern who WITHDREW must be able to re-apply, so the "one active
+// application per (candidate, posting)" rule is enforced by a Postgres
+// PARTIAL UNIQUE index maintained by
+// SchemaFixupRunner.ensureApplicationsReapplyAfterWithdrawSchema (name:
+// uk_application_candidate_job_posting_active, WHERE status <> 'WITHDRAWN').
+// Hibernate ddl-auto=update can't express partial indexes, so we keep the
+// entity constraint out of its way and treat the runner as the source of
+// truth. The runner also drops the legacy unconditional
+// uk_application_candidate_job_posting so old databases converge.
+@Table(name = "applications")
 @Getter
 @Setter
 @NoArgsConstructor

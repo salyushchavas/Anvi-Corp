@@ -117,7 +117,13 @@ public class ApplicationService {
             throw new ForbiddenException("Resume does not belong to this user");
         }
 
-        if (applicationRepository.existsByCandidateIdAndJobPostingId(candidate.getId(), posting.getId())) {
+        // Re-apply after withdrawal is allowed — only a NON-WITHDRAWN prior
+        // application blocks. The WITHDRAWN row is kept for ERM reporting +
+        // candidate-side "exit status" UI. Partial UNIQUE
+        // uk_application_candidate_job_posting_active (SchemaFixupRunner)
+        // enforces the same shape at the DB level.
+        if (applicationRepository.existsByCandidateIdAndJobPostingIdAndStatusNot(
+                candidate.getId(), posting.getId(), ApplicationStatus.WITHDRAWN)) {
             throw new ConflictException("Already applied to this job posting");
         }
 
