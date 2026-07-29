@@ -64,4 +64,13 @@ public final class StandaloneRecordingDtos {
             String internName,
             String employeeId
     ) {}
+
+    /** Response of the side-effect-free project-name lookup — powers
+     *  the auto-fill on the evaluator upload form. {@code projectName}
+     *  is null when nothing resolves; the UI then prompts for a manual
+     *  entry rather than surfacing an error. */
+    public record LookupProjectNameResponse(
+            String projectName,
+            boolean autoRetrieved
+    ) {}
 }

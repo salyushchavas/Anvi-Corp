@@ -45,6 +45,11 @@ export default function EvaluatorUploadRecordingPage() {
   const [preparing, setPreparing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
+  const [autoFilled, setAutoFilled] = useState(false);
+  // Tracks whether the caller has manually typed into the field —
+  // once they have, we stop overwriting with auto-fill so we don't
+  // stomp on their edit while they're still typing.
+  const [manualEdit, setManualEdit] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -58,9 +63,44 @@ export default function EvaluatorUploadRecordingPage() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  // Auto-fill the project name from the projects table as soon as
+  // intern + month + scope are populated. P1 → project 1's name; P2 →
+  // project 2's name; P1_P2 → "Name1 / Name2". Falls back silently
+  // when nothing resolves — the field stays editable and the user can
+  // type their own. Skips when the caller has already typed into the
+  // field manually.
+  useEffect(() => {
+    if (!lifecycleId || !monthYear || manualEdit) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get<{ projectName: string | null; autoRetrieved: boolean }>(
+          '/api/v1/evaluator/upload-recording/lookup-project-name',
+          { params: { lifecycleId, monthYear, scope } });
+        if (cancelled) return;
+        if (res.data.projectName) {
+          setProjectName(res.data.projectName);
+          setAutoFilled(true);
+        } else {
+          setAutoFilled(false);
+        }
+      } catch {
+        // Silent — the field is still editable; the caller can type.
+        if (!cancelled) setAutoFilled(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [lifecycleId, monthYear, scope, manualEdit]);
+
   // Reset prepared eval whenever the caller changes a target field.
   useEffect(() => { setPrepared(null); setUploaded(null); },
     [lifecycleId, monthYear, scope, projectName]);
+
+  // A different intern / month / scope re-opens the auto-fill window —
+  // reset the "manually typed" flag so the lookup effect above runs
+  // again for the new selection.
+  useEffect(() => { setManualEdit(false); setProjectName(''); },
+    [lifecycleId, monthYear, scope]);
 
   async function prepare() {
     if (!lifecycleId) { setErr('Pick an intern.'); return; }
@@ -173,18 +213,18 @@ export default function EvaluatorUploadRecordingPage() {
         <label className="block">
           <span className="text-xs font-semibold text-slate-700">
             Project name *
-            {prepared?.projectNameAutoRetrieved && (
+            {(autoFilled || prepared?.projectNameAutoRetrieved) && !manualEdit && (
               <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
-                auto-retrieved
+                auto-filled
               </span>
             )}
           </span>
           <input
             type="text"
             value={projectName}
-            onChange={(e) => setProjectName(e.target.value)}
+            onChange={(e) => { setProjectName(e.target.value); setManualEdit(true); setAutoFilled(false); }}
             placeholder={scope === 'P1_P2'
-              ? 'Required — combined P1+P2 has no single project row'
+              ? 'e.g. "Object Detection / Employee Tracking" — auto-fills from both project rows when they exist'
               : 'Auto-fills from projects table when known'}
             className="mt-1 block w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
           />

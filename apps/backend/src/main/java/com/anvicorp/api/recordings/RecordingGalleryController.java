@@ -81,6 +81,19 @@ public class RecordingGalleryController {
         return evaluatorStandaloneService.listActiveInterns();
     }
 
+    /** Side-effect-free auto-fill lookup used by the evaluator upload
+     *  form as the caller changes intern / month / scope. Returns a
+     *  null projectName when the projects table can't resolve one —
+     *  the UI prompts for a manual entry rather than raising an error. */
+    @GetMapping("/api/v1/evaluator/upload-recording/lookup-project-name")
+    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
+    public StandaloneRecordingDtos.LookupProjectNameResponse lookupProjectName(
+            @RequestParam("lifecycleId") UUID lifecycleId,
+            @RequestParam("monthYear") String monthYear,
+            @RequestParam("scope") String scope) {
+        return evaluatorStandaloneService.lookupProjectName(lifecycleId, monthYear, scope);
+    }
+
     // ── Evaluation-recording gallery (legacy — kept for back-compat) ──
 
     /** Preserved for the existing ERM + Manager evaluation-recordings

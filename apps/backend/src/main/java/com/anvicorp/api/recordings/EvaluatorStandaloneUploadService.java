@@ -71,31 +71,27 @@ public class EvaluatorStandaloneUploadService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "InternLifecycle not found: " + req.internLifecycleId()));
 
-        // ── Resolve project name (auto-retrieve for P1/P2; require override for P1_P2)
-        String autoName = null;
-        UUID linkedProjectId = null;
-        boolean autoRetrieved = false;
-        if ("P1".equals(scope) || "P2".equals(scope)) {
-            short pn = (short) (scope.equals("P1") ? 1 : 2);
-            Optional<Project> p = projectRepo
-                    .findFirstByInternLifecycleIdAndMonthYearAndProjectNumber(
-                            lc.getId(), req.monthYear(), pn);
-            if (p.isPresent()) {
-                Project found = p.get();
-                linkedProjectId = found.getId();
-                autoName = found.getName() != null ? found.getName() : found.getTitle();
-                autoRetrieved = autoName != null && !autoName.isBlank();
-            }
-        }
+        // ── Resolve project name (auto-retrieve when the projects table
+        // can supply it) + resolve the target project id for single-scope
+        // recordings so the eval row links correctly.
+        ResolvedName resolved = resolveProjectName(lc.getId(), req.monthYear(), scope);
+        UUID linkedProjectId = resolved.linkedProjectId;
         String projectName = (req.projectNameOverride() != null
                 && !req.projectNameOverride().isBlank())
                 ? req.projectNameOverride().trim()
-                : autoName;
+                : resolved.name;
+        boolean autoRetrieved = (req.projectNameOverride() == null
+                || req.projectNameOverride().isBlank())
+                && resolved.name != null;
         if (projectName == null || projectName.isBlank()) {
+            // Auto-fill couldn't resolve AND the caller didn't type a name —
+            // fail at submit time (the field is required in the UI). This
+            // is the ONLY hard-error path; the pure lookup endpoint below
+            // returns nulls gracefully instead of throwing.
             throw new BadRequestException(
-                    "Project name required — the projects table has no matching row "
-                            + "for (intern, " + req.monthYear() + ", " + scope
-                            + "); supply projectNameOverride.");
+                    "Project name required — no matching project row for "
+                            + "(intern, " + req.monthYear() + ", " + scope
+                            + "); type one into the Project name field.");
         }
 
         // ── Find-or-create the target evaluation ───────────────────────
@@ -125,6 +121,88 @@ public class EvaluatorStandaloneUploadService {
         return new StandaloneRecordingDtos.EvaluatorPrepareResponse(
                 ev.getId(), projectName, autoRetrieved, scope, req.monthYear());
     }
+
+    /**
+     * Side-effect-free project-name lookup. Powers the auto-fill on the
+     * evaluator upload form: called as the caller changes intern /
+     * month / scope, returns whatever the projects table can resolve
+     * without creating an evaluation row. Returns a null / blank
+     * projectName when the lookup finds nothing — the UI then prompts
+     * for a manual entry rather than the caller seeing an error.
+     */
+    @Transactional(readOnly = true)
+    public StandaloneRecordingDtos.LookupProjectNameResponse lookupProjectName(
+            UUID lifecycleId, String monthYear, String scopeRaw) {
+        if (lifecycleId == null || monthYear == null
+                || !monthYear.matches("^\\d{4}-\\d{2}$")) {
+            return new StandaloneRecordingDtos.LookupProjectNameResponse(null, false);
+        }
+        String scope = scopeRaw == null ? "" : scopeRaw.trim().toUpperCase();
+        if (!"P1".equals(scope) && !"P2".equals(scope) && !"P1_P2".equals(scope)) {
+            return new StandaloneRecordingDtos.LookupProjectNameResponse(null, false);
+        }
+        // Verify the lifecycle exists — silently returns empty otherwise
+        // so a stale dropdown selection can't crash the panel.
+        if (lifecycleRepo.findById(lifecycleId).isEmpty()) {
+            return new StandaloneRecordingDtos.LookupProjectNameResponse(null, false);
+        }
+        ResolvedName r = resolveProjectName(lifecycleId, monthYear, scope);
+        return new StandaloneRecordingDtos.LookupProjectNameResponse(
+                r.name, r.name != null);
+    }
+
+    /**
+     * Shared resolution helper — used both by the lookup endpoint (no
+     * side effects) and by {@link #prepare} (which uses the resolved
+     * name + linkedProjectId to seed the evaluation row).
+     *
+     * <p>P1 / P2 → single row lookup by (lifecycle, month, projectNumber).
+     * P1_P2 → fetch project 1 AND project 2 for the (lifecycle, month)
+     * pair separately and combine their titles as "A / B". Falls back
+     * gracefully when only one exists: returns that one's name alone.
+     * Returns a null name when nothing resolves — the caller decides
+     * whether to prompt for manual input or hard-error.</p>
+     */
+    private ResolvedName resolveProjectName(UUID lifecycleId, String monthYear, String scope) {
+        if ("P1".equals(scope) || "P2".equals(scope)) {
+            short pn = (short) (scope.equals("P1") ? 1 : 2);
+            Optional<Project> p = projectRepo
+                    .findFirstByInternLifecycleIdAndMonthYearAndProjectNumber(
+                            lifecycleId, monthYear, pn);
+            if (p.isEmpty()) return new ResolvedName(null, null);
+            Project f = p.get();
+            String name = nameOf(f);
+            return new ResolvedName(
+                    name != null && !name.isBlank() ? name : null, f.getId());
+        }
+        // P1_P2 → combined "A / B" from the two separate project rows.
+        Optional<Project> p1 = projectRepo
+                .findFirstByInternLifecycleIdAndMonthYearAndProjectNumber(
+                        lifecycleId, monthYear, (short) 1);
+        Optional<Project> p2 = projectRepo
+                .findFirstByInternLifecycleIdAndMonthYearAndProjectNumber(
+                        lifecycleId, monthYear, (short) 2);
+        String n1 = p1.map(EvaluatorStandaloneUploadService::nameOf).orElse(null);
+        String n2 = p2.map(EvaluatorStandaloneUploadService::nameOf).orElse(null);
+        boolean has1 = n1 != null && !n1.isBlank();
+        boolean has2 = n2 != null && !n2.isBlank();
+        String combined;
+        if (has1 && has2)      combined = n1 + " / " + n2;
+        else if (has1)         combined = n1; // only P1 exists — surface it alone
+        else if (has2)         combined = n2; // only P2 exists — surface it alone
+        else                   combined = null;
+        // For P1_P2 the eval row keeps linkedProjectId=null (the recording
+        // spans both projects; no single row it can point at).
+        return new ResolvedName(combined, null);
+    }
+
+    private static String nameOf(Project p) {
+        return p.getName() != null ? p.getName() : p.getTitle();
+    }
+
+    /** Small container so the shared resolver can return both the
+     *  resolved name and the (optional) linked project id in one shot. */
+    private record ResolvedName(String name, UUID linkedProjectId) {}
 
     /** Active evaluees — populates the intern dropdown on the standalone
      *  upload pages. Joins User in one pass so the picker can show
