@@ -506,17 +506,18 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
                   className="w-full rounded-md border border-red-300 px-2 py-1.5 text-sm" />
               </Field>
             )}
-          </section>
 
-          {/* Q&A editor — full-width row inside the scrollable body so it
-              scrolls with everything else. Previously a sibling of the
-              grid with no height cap, which pushed the sticky footer
-              (and its action buttons) out of reach as pairs were added. */}
-          {detail && (
-            <section className="md:col-span-2">
-              <ReferenceQaEditor projectId={detail.projectId} />
-            </section>
-          )}
+            {/* Reference Q&A — folded into the Feedback Form as a labelled
+                field-group so added pairs just extend the RIGHT column and
+                scroll with the rest of the form. No longer a full-width
+                sibling strip that overlaps the submission card. */}
+            {detail && (
+              <>
+                <h4 className="mt-2 text-xs font-semibold uppercase text-slate-500">Reference Q&amp;A</h4>
+                <ReferenceQaEditor projectId={detail.projectId} />
+              </>
+            )}
+          </section>
         </div>
 
         {/* Sticky footer — always reachable regardless of body scroll.
