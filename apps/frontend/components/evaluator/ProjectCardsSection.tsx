@@ -297,8 +297,10 @@ function ProjectCard({
   return (
     <article className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
       {/* Prominent status bar — colored left border + labeled strip.
-          One-look answer to "what's this project's session state?" */}
-      <div className={`flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-2.5 ${styles.bar}`}>
+          One-look answer to "what's this project's session state?"
+          Right side carries the primary session action so the evaluator
+          can act on the status without hunting for a button. */}
+      <div className={`flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5 ${styles.bar}`}>
         <div className="flex min-w-0 items-center gap-2">
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${styles.badge}`}>
             {styles.label}
@@ -307,6 +309,14 @@ function ProjectCard({
             {scheduledLabel ?? styles.hint}
           </span>
         </div>
+        {canSchedule && (
+          <button type="button"
+            onClick={() => setScheduleOpen(true)}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-brand-700 px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:bg-brand-800">
+            <CalendarPlus className="h-3 w-3" />
+            {entry.evaluationStatus === 'SCHEDULED' ? 'Reschedule' : 'Start Session'}
+          </button>
+        )}
       </div>
 
       {/* Body */}
@@ -381,17 +391,11 @@ function ProjectCard({
         )}
       </div>
 
-      {/* Actions */}
+      {/* Actions — hidden when nothing to render (the Schedule action
+          now lives in the status bar). */}
+      {(canMarkConducted || (canEvaluate && composeHref) || (!canEvaluate && detailHref)) && (
       <div className="mt-auto pt-3">
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-          {canSchedule && (
-            <button type="button"
-              onClick={() => setScheduleOpen(true)}
-              className="inline-flex items-center gap-1 rounded-md border border-brand-300 bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-800 hover:bg-brand-100">
-              <CalendarPlus className="h-3 w-3" />
-              {entry.evaluationStatus === 'SCHEDULED' ? 'Reschedule session' : 'Schedule session'}
-            </button>
-          )}
           {canMarkConducted && (
             <button type="button"
               onClick={markConducted}
@@ -421,6 +425,7 @@ function ProjectCard({
           </p>
         )}
       </div>
+      )}
       </div>
 
       {scheduleOpen && (
