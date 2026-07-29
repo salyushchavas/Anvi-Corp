@@ -47,6 +47,11 @@ interface Props {
    *  flows that need to identify their target (e.g. the ERM
    *  standalone interview upload sending {@code internLifecycleId}). */
   presignExtras?: Record<string, unknown>;
+  /** Label for the initial file-picker button — defaults to
+   *  "Choose video file…" for video flows; callers using {@code accept}
+   *  other than {@code video/*} (e.g. admin template PDF uploads)
+   *  should pass a matching label like "Choose file…". */
+  chooseButtonLabel?: string;
 }
 
 export default function RecordingUploader({
@@ -57,7 +62,13 @@ export default function RecordingUploader({
   accept = 'video/*',
   helperText,
   presignExtras,
+  chooseButtonLabel,
 }: Props) {
+  // Default label mirrors the historical text for video flows so no
+  // existing caller changes behavior; non-video accepts pick a generic
+  // "Choose file…" unless the caller explicitly overrides.
+  const buttonLabel = chooseButtonLabel
+    ?? (accept.startsWith('video/') ? 'Choose video file…' : 'Choose file…');
   const [state, setState] = useState<UploadState>(initial ?? { kind: 'idle' });
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -154,7 +165,7 @@ export default function RecordingUploader({
           onClick={() => inputRef.current?.click()}
           className="w-full rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100"
         >
-          Choose video file…
+          {buttonLabel}
         </button>
       )}
       {state.kind === 'uploading' && (

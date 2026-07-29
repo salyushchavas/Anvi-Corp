@@ -264,9 +264,39 @@ function TemplateRow({ t, onReplace, onRemove }: {
 }) {
   const hasS3 = !!t.currentDocumentId;
   const hasLegacy = !!t.legacyStaticUrl;
-  const previewUrl = hasS3
-    ? `/api/v1/onboarding-templates/${encodeURIComponent(t.key)}/download-url`
-    : t.legacyStaticUrl ?? null;
+  const canPreview = hasS3 || hasLegacy;
+  const [previewing, setPreviewing] = useState(false);
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+
+  async function handlePreview() {
+    if (previewing) return;
+    setPreviewErr(null);
+    // Legacy-only rows point at a public static asset — no auth or presign
+    // needed, so open it directly and skip the round-trip.
+    if (!hasS3 && hasLegacy && t.legacyStaticUrl) {
+      window.open(t.legacyStaticUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    // For uploaded files we must hit the authenticated resolve endpoint to
+    // get a presigned S3 URL back, then open THAT — the endpoint returns
+    // JSON, not the file, and can't be linked to directly from a new tab
+    // (no Bearer token would be attached).
+    setPreviewing(true);
+    try {
+      const res = await api.get<{ url: string }>(
+        `/api/v1/onboarding-templates/${encodeURIComponent(t.key)}/download-url`
+      );
+      const url = res.data?.url;
+      if (!url) throw new Error('No URL returned by server');
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: string } }; message?: string };
+      setPreviewErr(ax.response?.data?.error ?? ax.message ?? 'Preview failed');
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
   return (
     <tr className={t.active ? 'group hover:bg-slate-50/50' : 'bg-slate-50/40 opacity-70'}>
       <td className="max-w-md px-4 py-3">
@@ -347,29 +377,36 @@ function TemplateRow({ t, onReplace, onRemove }: {
         {formatDate(t.updatedAt)}
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right">
-        <div className="inline-flex items-center gap-1">
-          {previewUrl && (
-            <a
-              href={previewUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-              title="Preview file"
-            >
-              <Eye className="h-3 w-3" /> Preview
-            </a>
+        <div className="inline-flex flex-col items-end gap-1">
+          <div className="inline-flex items-center gap-1">
+            {canPreview && (
+              <button
+                type="button"
+                onClick={() => void handlePreview()}
+                disabled={previewing}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                title="Preview file"
+              >
+                <Eye className="h-3 w-3" /> {previewing ? 'Opening…' : 'Preview'}
+              </button>
+            )}
+            <button type="button" onClick={onReplace}
+              className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-2 py-1 text-[11px] font-semibold text-white hover:bg-brand-800"
+              title="Upload a new file for this template">
+              <Upload className="h-3 w-3" /> Replace
+            </button>
+            <button type="button" onClick={onRemove}
+              disabled={!t.active}
+              className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+              title={t.active ? 'Soft-remove this template' : 'Already removed'}>
+              <Trash2 className="h-3 w-3" /> Remove
+            </button>
+          </div>
+          {previewErr && (
+            <p className="max-w-[260px] truncate text-[10px] text-red-600" title={previewErr}>
+              {previewErr}
+            </p>
           )}
-          <button type="button" onClick={onReplace}
-            className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-2 py-1 text-[11px] font-semibold text-white hover:bg-brand-800"
-            title="Upload a new file for this template">
-            <Upload className="h-3 w-3" /> Replace
-          </button>
-          <button type="button" onClick={onRemove}
-            disabled={!t.active}
-            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-            title={t.active ? 'Soft-remove this template' : 'Already removed'}>
-            <Trash2 className="h-3 w-3" /> Remove
-          </button>
         </div>
       </td>
     </tr>
@@ -595,10 +632,11 @@ function ReplaceFileModal({ template, onClose, onReplaced }: {
         </p>
         <RecordingUploader
           key={template.id}
-          accept="*/*"
+          accept="application/pdf,.pdf,.doc,.docx"
+          chooseButtonLabel="Choose document…"
           presignEndpoint={`/api/v1/admin/onboarding-templates/${template.id}/file/presign-upload`}
           onReady={(docId) => { void attach(docId); }}
-          helperText="Direct-to-S3 upload · 50 MB max · any file type (PDF recommended)."
+          helperText="Direct-to-S3 upload · 50 MB max · PDF / DOC / DOCX recommended."
         />
         {saving && (
           <p className="text-xs text-slate-500">Saving reference…</p>
