@@ -57,7 +57,7 @@ export default function PendingEvaluationsPage() {
           <p className="text-xs text-slate-500">
             <Link href="/careers/evaluator" className="hover:text-slate-700">← Evaluator home</Link>
           </p>
-          <h1 className="mt-1 text-xl font-semibold text-slate-900">Pending Evaluations</h1>
+          <h1 className="mt-1 text-xl font-semibold text-slate-900">Scheduled Evaluations</h1>
           <p className="text-xs text-slate-500">
             Track scheduled sessions and published evaluations waiting on intern acknowledgment.
           </p>

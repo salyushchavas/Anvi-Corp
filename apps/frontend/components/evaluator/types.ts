@@ -22,6 +22,13 @@ export interface DashboardResponse {
   kpis: KpiSnapshot[];
 }
 
+export interface ActiveEvalueeProjectRow {
+  sequence: number;
+  projectStatus: string | null;
+  evaluationId: string | null;
+  evaluationStatus: string | null;
+}
+
 export interface ActiveEvalueeRow {
   lifecycleId: string;
   internUserId: string;
@@ -38,6 +45,7 @@ export interface ActiveEvalueeRow {
   i983DueWithinDays: number | null;
   trainerName: string | null;
   ermName: string | null;
+  projects: ActiveEvalueeProjectRow[];
 }
 
 export interface ActiveEvalueesPage {

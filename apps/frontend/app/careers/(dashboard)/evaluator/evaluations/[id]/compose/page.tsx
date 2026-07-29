@@ -193,7 +193,7 @@ export default function ComposePage() {
           className="inline-flex items-center gap-1 hover:text-slate-700"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
-          Pending Evaluations
+          Scheduled Evaluations
         </Link>
       </p>
 

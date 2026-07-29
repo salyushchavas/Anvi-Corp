@@ -22,7 +22,7 @@ interface QuickAction {
 
 const ACTIONS: QuickAction[] = [
   { key: 'schedule',  label: 'Schedule Session',      phase: 2, href: '/careers/evaluator/schedule-session', icon: <CalendarPlus className="h-3.5 w-3.5" /> },
-  { key: 'compose',   label: 'Pending Evaluations',   phase: 2, href: '/careers/evaluator/pending-evaluations', icon: <ClipboardEdit className="h-3.5 w-3.5" /> },
+  { key: 'compose',   label: 'Scheduled Evaluations', phase: 2, href: '/careers/evaluator/pending-evaluations', icon: <ClipboardEdit className="h-3.5 w-3.5" /> },
   { key: 'publish',   label: 'Awaiting Acknowledgment', phase: 2, href: '/careers/evaluator/pending-evaluations', icon: <Send className="h-3.5 w-3.5" /> },
   { key: 'ack',       label: 'Evaluation History',    phase: 4, icon: <FileCheck className="h-3.5 w-3.5" /> },
   { key: 'i983',      label: 'Start I-983 Evaluation', phase: 3, icon: <FileText className="h-3.5 w-3.5" /> },

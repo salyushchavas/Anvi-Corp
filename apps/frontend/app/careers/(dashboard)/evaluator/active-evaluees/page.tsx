@@ -3,23 +3,22 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertTriangle, ChevronRight, Search } from 'lucide-react';
+import { ChevronRight, PenSquare, Search } from 'lucide-react';
 import api from '@/lib/careers/api';
 import type {
+  ActiveEvalueeProjectRow,
   ActiveEvalueeRow,
   ActiveEvalueesPage,
 } from '@/components/evaluator/types';
 
-const WORK_AUTH_OPTIONS: { value: string; label: string; tone: string }[] = [
-  { value: '',                label: 'All',          tone: 'border-slate-200' },
-  { value: 'US_CITIZEN',      label: 'US Citizen',   tone: 'border-green-200' },
-  { value: 'PERMANENT_RESIDENT', label: 'Permanent Resident', tone: 'border-green-200' },
-  { value: 'F1_CPT',          label: 'F-1 CPT',      tone: 'border-amber-200' },
-  { value: 'F1_OPT',          label: 'F-1 OPT',      tone: 'border-amber-200' },
-  { value: 'F1_STEM_OPT',     label: 'F-1 STEM OPT', tone: 'border-amber-200' },
-  { value: 'H1B',             label: 'H-1B',         tone: 'border-slate-300' },
-];
-
+/**
+ * Evaluator ⟶ Active Evaluees. One row per intern with per-project
+ * status + evaluation columns (P1 / P2 — capped at 2 by DB CHECK).
+ *
+ * Quick-action "Evaluate P{n}" button appears only when the project is
+ * ready (SUBMITTED or later) AND the evaluation isn't already finalized.
+ * Otherwise renders "View" (for finalized evaluations) or an em-dash.
+ */
 export default function ActiveEvalueesPage() {
   return (
     <Suspense fallback={<div className="mx-auto max-w-6xl p-6"><div className="h-48 animate-pulse rounded-lg bg-slate-100" /></div>}>
@@ -34,7 +33,6 @@ function ActiveEvalueesInner() {
   const prefillFilter = sp?.get('filter') ?? '';
 
   const [search, setSearch] = useState('');
-  const [workAuthType, setWorkAuthType] = useState('');
   const [needsAttention, setNeedsAttention] = useState(prefillFilter === 'overdue');
   const [page, setPage] = useState(0);
   const [data, setData] = useState<ActiveEvalueesPage | null>(null);
@@ -46,7 +44,6 @@ function ActiveEvalueesInner() {
     try {
       const params = new URLSearchParams();
       if (search.trim()) params.set('search', search.trim());
-      if (workAuthType) params.set('workAuthType', workAuthType);
       if (needsAttention) params.set('needsAttention', 'true');
       params.set('page', String(page));
       params.set('pageSize', '25');
@@ -61,13 +58,12 @@ function ActiveEvalueesInner() {
     } finally {
       setLoading(false);
     }
-  }, [search, workAuthType, needsAttention, page]);
+  }, [search, needsAttention, page]);
 
   useEffect(() => { void load(); }, [load]);
 
   function clearFilters() {
     setSearch('');
-    setWorkAuthType('');
     setNeedsAttention(false);
     setPage(0);
   }
@@ -117,27 +113,6 @@ function ActiveEvalueesInner() {
             {data?.totalElements ?? 0} evaluees
           </span>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] uppercase tracking-wide text-slate-400">Work auth:</span>
-          {WORK_AUTH_OPTIONS.map((opt) => {
-            const on = workAuthType === opt.value;
-            return (
-              <button
-                key={opt.value || 'all'}
-                type="button"
-                onClick={() => { setPage(0); setWorkAuthType(opt.value); }}
-                className={
-                  'rounded-full border px-2.5 py-0.5 text-[11px] ' +
-                  (on
-                    ? 'border-brand-700 bg-brand-700 text-white'
-                    : `${opt.tone} bg-white text-slate-700 hover:bg-slate-50`)
-                }
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
       </div>
 
       {err && (
@@ -157,10 +132,10 @@ function ActiveEvalueesInner() {
               <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-2">Intern</th>
                 <th className="px-3 py-2">Technology</th>
-                <th className="px-3 py-2">Months</th>
-                <th className="px-3 py-2">Work auth</th>
-                <th className="px-3 py-2">Last evaluation</th>
-                <th className="px-3 py-2">Pending ack</th>
+                <th className="px-3 py-2">Project 1 status</th>
+                <th className="px-3 py-2">Project 2 status</th>
+                <th className="px-3 py-2">Project 1 evaluation</th>
+                <th className="px-3 py-2">Project 2 evaluation</th>
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
@@ -169,7 +144,11 @@ function ActiveEvalueesInner() {
                 <Row
                   key={r.lifecycleId}
                   row={r}
-                  onClick={() => router.push(`/careers/evaluator/evaluees/${r.lifecycleId}`)}
+                  onOpen={() => router.push(`/careers/evaluator/evaluees/${r.lifecycleId}`)}
+                  onEvaluate={(evId, finalized) =>
+                    router.push(finalized
+                      ? `/careers/evaluator/evaluations/${evId}`
+                      : `/careers/evaluator/evaluations/${evId}/compose`)}
                 />
               ))}
             </tbody>
@@ -204,14 +183,20 @@ function ActiveEvalueesInner() {
   );
 }
 
-function Row({ row, onClick }: { row: ActiveEvalueeRow; onClick: () => void }) {
-  const stemOpt = row.workAuthType === 'F1_STEM_OPT';
-  const needsAck = row.pendingAckCount > 0;
-  const lastEvalLate = row.lastEvaluationAt
-    && Date.now() - new Date(row.lastEvaluationAt).getTime() > 30 * 86_400_000;
-  const noEvalYet = !row.lastEvaluationAt;
+const FINALIZED_EVAL_STATUSES = new Set(['PUBLISHED', 'ACKNOWLEDGED', 'AMENDED']);
+const READY_PROJECT_STATUSES = new Set(['SUBMITTED', 'COMPLETED']);
+
+function Row({ row, onOpen, onEvaluate }: {
+  row: ActiveEvalueeRow;
+  onOpen: () => void;
+  onEvaluate: (evaluationId: string, finalized: boolean) => void;
+}) {
+  const projectBySeq = (seq: number): ActiveEvalueeProjectRow | null =>
+    row.projects?.find((p) => p.sequence === seq) ?? null;
+  const p1 = projectBySeq(1);
+  const p2 = projectBySeq(2);
   return (
-    <tr className="cursor-pointer hover:bg-slate-50" onClick={onClick}>
+    <tr className="cursor-pointer hover:bg-slate-50" onClick={onOpen}>
       <td className="px-3 py-2">
         <p className="text-sm font-medium text-slate-900">{row.internName ?? '—'}</p>
         <p className="text-[11px] text-slate-500">
@@ -220,58 +205,79 @@ function Row({ row, onClick }: { row: ActiveEvalueeRow; onClick: () => void }) {
         </p>
       </td>
       <td className="px-3 py-2 text-xs text-slate-700">{row.technology ?? '—'}</td>
-      <td className="px-3 py-2">
-        <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
-          {row.monthsInProgram}mo
-        </span>
-      </td>
-      <td className="px-3 py-2">
-        {row.workAuthType ? (
-          <span
-            className={
-              'inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ' +
-              (stemOpt
-                ? 'bg-amber-100 text-amber-800'
-                : 'bg-slate-100 text-slate-700')
-            }
-          >
-            {row.workAuthType.replaceAll('_', ' ')}
-          </span>
-        ) : (
-          <span className="text-xs text-slate-400">—</span>
-        )}
-      </td>
-      <td className="px-3 py-2 text-xs">
-        {row.lastEvaluationAt ? (
-          <div>
-            <p className={lastEvalLate ? 'text-red-700 font-semibold' : 'text-slate-700'}>
-              {new Date(row.lastEvaluationAt).toLocaleDateString()}
-            </p>
-            <p className="text-[10px] text-slate-500">{row.lastEvaluationStatus}</p>
-          </div>
-        ) : (
-          <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-            <AlertTriangle className="h-3 w-3" />
-            Never
-          </span>
-        )}
-      </td>
-      <td className="px-3 py-2">
-        {needsAck ? (
-          <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
-            {row.pendingAckCount}
-          </span>
-        ) : (
-          <span className="text-xs text-slate-400">—</span>
-        )}
-        {noEvalYet && (
-          <span className="ml-1 text-[10px] text-amber-700">first</span>
-        )}
-      </td>
+      <ProjectStatusCell project={p1} />
+      <ProjectStatusCell project={p2} />
+      <ProjectEvaluationCell project={p1} label="P1" onEvaluate={onEvaluate} />
+      <ProjectEvaluationCell project={p2} label="P2" onEvaluate={onEvaluate} />
       <td className="px-3 py-2 text-right">
         <ChevronRight className="h-4 w-4 text-slate-400" />
       </td>
     </tr>
+  );
+}
+
+function ProjectStatusCell({ project }: { project: ActiveEvalueeProjectRow | null }) {
+  if (!project) {
+    return <td className="px-3 py-2 text-xs text-slate-400">—</td>;
+  }
+  return (
+    <td className="px-3 py-2">
+      <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+        {(project.projectStatus ?? '—').replaceAll('_', ' ')}
+      </span>
+    </td>
+  );
+}
+
+function ProjectEvaluationCell({ project, label, onEvaluate }: {
+  project: ActiveEvalueeProjectRow | null;
+  label: 'P1' | 'P2';
+  onEvaluate: (evaluationId: string, finalized: boolean) => void;
+}) {
+  if (!project) {
+    return <td className="px-3 py-2 text-xs text-slate-400">—</td>;
+  }
+  const evalStatus = project.evaluationStatus;
+  const projectReady = READY_PROJECT_STATUSES.has(project.projectStatus ?? '');
+  const finalized = evalStatus != null && FINALIZED_EVAL_STATUSES.has(evalStatus);
+  const showEvaluate = project.evaluationId != null && projectReady && !finalized;
+  const showView = project.evaluationId != null && finalized;
+  const statusLabel = evalStatus
+    ? evalStatus === 'DRAFT' ? 'Not scheduled'
+      : evalStatus === 'SCHEDULED' ? 'Scheduled'
+      : evalStatus === 'IN_PROGRESS' ? 'Session completed'
+      : finalized ? 'Evaluated'
+      : evalStatus.replaceAll('_', ' ')
+    : '—';
+  return (
+    <td className="px-3 py-2">
+      <p className="text-[11px] text-slate-600">{statusLabel}</p>
+      {showEvaluate && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEvaluate(project.evaluationId!, false);
+          }}
+          className="mt-1 inline-flex items-center gap-1 rounded-md bg-brand-700 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-brand-800"
+        >
+          <PenSquare className="h-2.5 w-2.5" />
+          Evaluate {label}
+        </button>
+      )}
+      {showView && !showEvaluate && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEvaluate(project.evaluationId!, true);
+          }}
+          className="mt-1 inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-50"
+        >
+          View
+        </button>
+      )}
+    </td>
   );
 }
 

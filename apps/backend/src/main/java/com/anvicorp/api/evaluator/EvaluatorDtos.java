@@ -43,6 +43,16 @@ public final class EvaluatorDtos {
 
     // ── Active Evaluees list ──────────────────────────────────────────────
 
+    /** Per-project summary embedded in each ActiveEvalueeRow so the list
+     *  can render Project 1 / Project 2 status + evaluation columns
+     *  without an N+1 fetch. Sequence is 1-based, capped at 2 by DB CHECK. */
+    public record ActiveEvalueeProjectRow(
+            int sequence,
+            String projectStatus,
+            UUID evaluationId,
+            String evaluationStatus
+    ) {}
+
     public record ActiveEvalueeRow(
             UUID lifecycleId,
             UUID internUserId,
@@ -58,7 +68,8 @@ public final class EvaluatorDtos {
             int pendingAckCount,
             Integer i983DueWithinDays,
             String trainerName,
-            String ermName
+            String ermName,
+            List<ActiveEvalueeProjectRow> projects
     ) {}
 
     public record ActiveEvalueesPage(

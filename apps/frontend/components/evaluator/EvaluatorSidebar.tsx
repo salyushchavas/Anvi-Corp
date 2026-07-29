@@ -17,16 +17,15 @@ import { BRAND } from '@/lib/careers/brand';
  * Phase 4 lights up Evaluation History + Reports + Settings + Help.</p>
  */
 const ITEMS: { href: string; label: string; phase: number }[] = [
-  { href: '/careers/evaluator',                       label: 'Home',                 phase: 1 },
-  { href: '/careers/evaluator/active-evaluees',       label: 'Active Evaluees',      phase: 1 },
-  { href: '/careers/evaluator/schedule-session',      label: 'Schedule Session',     phase: 2 },
-  { href: '/careers/evaluator/pending-evaluations',   label: 'Pending Evaluations',  phase: 2 },
-  { href: '/careers/evaluator/pending-vivas',         label: 'Pending Q&A',          phase: 2 },
-  { href: '/careers/evaluator/i983-evaluations',      label: 'I-983 Evaluations',    phase: 3 },
-  { href: '/careers/evaluator/evaluation-history',    label: 'Evaluation History',   phase: 4 },
-  { href: '/careers/evaluator/reports',               label: 'Reports',              phase: 4 },
-  { href: '/careers/evaluator/settings',              label: 'Settings',             phase: 4 },
-  { href: '/careers/evaluator/help',                  label: 'Help',                 phase: 4 },
+  { href: '/careers/evaluator',                       label: 'Home',                    phase: 1 },
+  { href: '/careers/evaluator/active-evaluees',       label: 'Active Evaluees',         phase: 1 },
+  { href: '/careers/evaluator/schedule-session',      label: 'Schedule Session',        phase: 2 },
+  { href: '/careers/evaluator/pending-evaluations',   label: 'Scheduled Evaluations',   phase: 2 },
+  { href: '/careers/evaluator/i983-evaluations',      label: 'I-983 Evaluations',       phase: 3 },
+  { href: '/careers/evaluator/evaluation-history',    label: 'Evaluation History',      phase: 4 },
+  { href: '/careers/evaluator/reports',               label: 'Reports',                 phase: 4 },
+  { href: '/careers/evaluator/settings',              label: 'Settings',                phase: 4 },
+  { href: '/careers/evaluator/help',                  label: 'Help',                    phase: 4 },
 ];
 
 export default function EvaluatorSidebar() {

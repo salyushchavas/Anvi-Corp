@@ -5,6 +5,8 @@ import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.repository.InternLifecycleRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -19,6 +21,7 @@ import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -36,6 +39,7 @@ public class EvaluatorEvalueesService {
     private final JdbcTemplate jdbc;
     private final InternLifecycleRepository lifecycleRepository;
     private final EvaluatorScopeGuard evaluatorScopeGuard;
+    private final ObjectMapper objectMapper;
 
     // ── Active Evaluees list ──────────────────────────────────────────────
 
@@ -129,7 +133,8 @@ public class EvaluatorEvalueesService {
                         rs.getInt("pending_ack_count"),
                         null,  // i983_due_within — Phase 3
                         rs.getString("trainer_name"),
-                        rs.getString("erm_name"));
+                        rs.getString("erm_name"),
+                        parseProjectsJson(rs.getString("projects_json")));
             });
         } catch (Exception e) {
             log.warn("[Evaluees.list] query failed: {}", e.getMessage());
@@ -156,7 +161,8 @@ public class EvaluatorEvalueesService {
                     + "lastEv.evaluation_type AS last_eval_type, "
                     + "COALESCE(pendingAck.cnt, 0)::int AS pending_ack_count, "
                     + "tu.full_name AS trainer_name, "
-                    + "ru.full_name AS erm_name "
+                    + "ru.full_name AS erm_name, "
+                    + "proj.projects_json AS projects_json "
                     + "FROM intern_lifecycles il "
                     + "JOIN users u ON u.id = il.user_id "
                     + "LEFT JOIN work_authorization_records w ON w.user_id = il.user_id "
@@ -175,7 +181,60 @@ public class EvaluatorEvalueesService {
                     + "     WHERE ev.intern_lifecycle_id = il.id "
                     + "       AND ev.status = 'PUBLISHED' "
                     + "       AND ev.intern_acknowledged_at IS NULL "
-                    + ") pendingAck ON TRUE ";
+                    + ") pendingAck ON TRUE "
+                    // Embed the intern's projects (up to 2 per DB CHECK)
+                    // in one shot via json_agg — avoids the N+1 that would
+                    // arise from a per-row lookup for the per-project
+                    // status + evaluation columns.
+                    + "LEFT JOIN LATERAL ( "
+                    + "    SELECT COALESCE(json_agg( "
+                    + "        json_build_object( "
+                    + "            'sequence', pp.project_seq, "
+                    + "            'projectStatus', pp.project_status, "
+                    + "            'evaluationId', pp.evaluation_id, "
+                    + "            'evaluationStatus', pp.evaluation_status) "
+                    + "        ORDER BY pp.project_seq ASC), '[]'::json) AS projects_json "
+                    + "      FROM ( "
+                    + "          SELECT p.id AS project_id, "
+                    + "                 ROW_NUMBER() OVER ( "
+                    + "                     PARTITION BY p.intern_lifecycle_id "
+                    + "                     ORDER BY COALESCE(p.start_date, p.created_at::date), "
+                    + "                              p.created_at "
+                    + "                 ) AS project_seq, "
+                    + "                 p.status AS project_status, "
+                    + "                 ev.id AS evaluation_id, "
+                    + "                 ev.status AS evaluation_status "
+                    + "            FROM projects p "
+                    + "            LEFT JOIN intern_evaluations ev "
+                    + "                   ON ev.linked_project_id = p.id "
+                    + "                  AND ev.evaluation_type = 'POST_PROJECT' "
+                    + "           WHERE p.intern_lifecycle_id = il.id "
+                    + "      ) pp "
+                    + ") proj ON TRUE ";
+
+    /** Parse the {@code projects_json} column produced by the LATERAL
+     *  join above into typed rows. Silently degrades to an empty list on
+     *  parse failure so a bad projects payload never breaks the list. */
+    private List<EvaluatorDtos.ActiveEvalueeProjectRow> parseProjectsJson(String json) {
+        if (json == null || json.isBlank()) return Collections.emptyList();
+        try {
+            JsonNode arr = objectMapper.readTree(json);
+            if (!arr.isArray() || arr.isEmpty()) return Collections.emptyList();
+            List<EvaluatorDtos.ActiveEvalueeProjectRow> out = new ArrayList<>(arr.size());
+            for (JsonNode n : arr) {
+                String evalId = n.hasNonNull("evaluationId") ? n.get("evaluationId").asText() : null;
+                out.add(new EvaluatorDtos.ActiveEvalueeProjectRow(
+                        n.hasNonNull("sequence") ? n.get("sequence").asInt() : 0,
+                        n.hasNonNull("projectStatus") ? n.get("projectStatus").asText() : null,
+                        evalId != null ? UUID.fromString(evalId) : null,
+                        n.hasNonNull("evaluationStatus") ? n.get("evaluationStatus").asText() : null));
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("[Evaluees.list] failed to parse projects_json: {}", e.getMessage());
+            return Collections.emptyList();
+        }
+    }
 
     // ── Evaluee detail ───────────────────────────────────────────────────
 
