@@ -260,8 +260,8 @@ function StatusCell({ project }: { project: ActiveEvalueeProjectRow | null }) {
   });
   const pill = pillClassFor(label);
   return (
-    <td className="px-3 py-2">
-      <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${pill}`}>
+    <td className="whitespace-nowrap px-3 py-2">
+      <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ${pill}`}>
         {label}
       </span>
     </td>
