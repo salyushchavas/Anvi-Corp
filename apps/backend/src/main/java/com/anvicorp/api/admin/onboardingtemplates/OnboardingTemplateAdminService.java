@@ -212,6 +212,19 @@ public class OnboardingTemplateAdminService {
             throw new BadRequestException(
                     "Document is not an onboarding template file (category=" + doc.getCategory() + ")");
         }
+        // Verify the bytes actually landed in S3 before flipping the pointer.
+        // Without this, a browser PUT that failed silently (CORS, aborted
+        // tab close between PUT-ack and attach) would leave the template
+        // pointing at a phantom key — every future Preview / intern download
+        // would then 404 from S3 with no on-server signal for the admin.
+        if (!s3.isReady()) {
+            throw new BadRequestException("S3 is not configured on this environment.");
+        }
+        if (!s3.exists(doc.getStorageKey())) {
+            throw new BadRequestException(
+                    "Uploaded file is not present in storage yet — the direct-to-S3 "
+                            + "upload may have failed. Try uploading again.");
+        }
         // Soft-delete the prior current-document — bytes stay in S3 for
         // audit, but the row disappears from any listing that filters on
         // deleted_at IS NULL. Intern packet tasks that were already
@@ -267,9 +280,18 @@ public class OnboardingTemplateAdminService {
             OnboardingDocumentTemplate t = tOpt.get();
             Document doc = documentRepo.findById(t.getCurrentDocumentId()).orElse(null);
             if (doc != null && doc.getDeletedAt() == null && s3.isReady()) {
-                String url = s3.presignGetUrl(doc.getStorageKey(), PRESIGN_TTL);
-                return new OnboardingTemplateDtos.DownloadResolutionResponse(
-                        url, "S3", doc.getFileName(), Instant.now().plus(PRESIGN_TTL));
+                // Defensive HEAD: if the stored object is missing (an old bad
+                // attach or a bucket-level lifecycle sweep), fall through to
+                // the legacy static asset instead of handing back a presigned
+                // URL that would 404 in the browser with no signal.
+                if (s3.exists(doc.getStorageKey())) {
+                    String url = s3.presignGetUrl(doc.getStorageKey(), PRESIGN_TTL);
+                    return new OnboardingTemplateDtos.DownloadResolutionResponse(
+                            url, "S3", doc.getFileName(), Instant.now().plus(PRESIGN_TTL));
+                }
+                log.warn("[OnboardingTemplateAdmin] resolveDownload found template={} "
+                                + "pointing at missing S3 object storageKey={} — falling back",
+                        t.getId(), doc.getStorageKey());
             }
         }
         String staticUrl = legacyStaticUrl(cleanKey);
