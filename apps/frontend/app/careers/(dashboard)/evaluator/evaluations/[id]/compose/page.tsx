@@ -554,9 +554,9 @@ export default function ComposePage() {
         </aside>
       </div>
 
-      {scheduleDialogOpen && (
+      {scheduleDialogOpen && data.linkedProjectId && (
         <SchedulePostProjectDialog
-          evaluationId={data.evaluationId}
+          projectId={data.linkedProjectId}
           projectTitle={data.linkedProject?.title ?? null}
           onClose={() => setScheduleDialogOpen(false)}
           onScheduled={() => { setScheduleDialogOpen(false); void load(); }}

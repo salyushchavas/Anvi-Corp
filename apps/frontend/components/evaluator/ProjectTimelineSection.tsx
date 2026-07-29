@@ -233,9 +233,9 @@ function ExpandableRow({ entry, onScheduled }: {
         </div>
       )}
 
-      {scheduleOpen && entry.evaluationId && (
+      {scheduleOpen && (
         <SchedulePostProjectDialog
-          evaluationId={entry.evaluationId}
+          projectId={entry.projectId}
           projectTitle={entry.title}
           onClose={() => setScheduleOpen(false)}
           onScheduled={() => { setScheduleOpen(false); onScheduled(); }}
