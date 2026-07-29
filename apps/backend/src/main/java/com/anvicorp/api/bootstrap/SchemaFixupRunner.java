@@ -151,6 +151,15 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // uploaded files + admin-added custom rows are never disturbed.
         seedOnboardingTemplatesFromEnum();
 
+        // Two-type model backfill — every seeded row gets its
+        // documentType corrected against the enum (filename null →
+        // NORMAL, else TEMPLATE). Idempotent + safe for admin-added
+        // custom rows (their keys don't match any enum value, so the
+        // UPDATE skips them). CHECK constraint rebuilt below to
+        // enforce the values.
+        backfillOnboardingDocumentTypes();
+        rebuildOnboardingDocumentTypeCheck();
+
         // ── 8-role finalize: rename HR_COMPLIANCE → HR and
         //                    TECHNICAL_SUPERVISOR → TECHNICAL_EVALUATOR.
         //
@@ -2886,17 +2895,19 @@ public class SchemaFixupRunner implements CommandLineRunner {
             for (com.anvicorp.api.erm.documents.SkyzenDocument d :
                     com.anvicorp.api.erm.documents.SkyzenDocument.values()) {
                 sortOrder += 10;
+                String type = d.getFilename() == null ? "NORMAL" : "TEMPLATE";
                 int rows = jdbcTemplate.update(
                         "INSERT INTO onboarding_document_templates "
                                 + "(id, key_, title, category, sensitivity, description, "
-                                + " active, sort_order, created_at, updated_at) "
-                                + "VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()) "
+                                + " document_type, active, sort_order, created_at, updated_at) "
+                                + "VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()) "
                                 + "ON CONFLICT (key_) DO NOTHING",
                         d.name(),
                         d.getTitle(),
                         d.getCategory(),
                         d.getSensitivity(),
                         d.getDescription(),
+                        type,
                         !d.isDeprecated(),
                         sortOrder);
                 if (rows > 0) seeded++;
@@ -2914,6 +2925,66 @@ public class SchemaFixupRunner implements CommandLineRunner {
             log.warn("[SchemaFixupRunner] seedOnboardingTemplatesFromEnum failed "
                     + "(non-fatal): {} — root: {}",
                     e.getMessage(), rootMessage(e));
+        }
+    }
+
+    /**
+     * Correct existing {@code onboarding_document_templates} rows to
+     * match the {@code SkyzenDocument.filename == null → NORMAL} rule.
+     * Prior boots seeded every row as {@code TEMPLATE} (the DDL default),
+     * so upload-only entries like passport / license need to be flipped
+     * to {@code NORMAL}. Admin-added custom rows aren't matched by
+     * {@code SkyzenDocument.name()} so the UPDATE skips them — their
+     * type comes from the create request.
+     */
+    private void backfillOnboardingDocumentTypes() {
+        try {
+            int normal = 0;
+            int template = 0;
+            for (com.anvicorp.api.erm.documents.SkyzenDocument d :
+                    com.anvicorp.api.erm.documents.SkyzenDocument.values()) {
+                String type = d.getFilename() == null ? "NORMAL" : "TEMPLATE";
+                int rows = jdbcTemplate.update(
+                        "UPDATE onboarding_document_templates SET document_type = ? "
+                                + "WHERE key_ = ? AND (document_type IS NULL OR document_type <> ?)",
+                        type, d.name(), type);
+                if (rows > 0) {
+                    if ("NORMAL".equals(type)) normal += rows;
+                    else template += rows;
+                }
+            }
+            log.info("[SchemaFixupRunner] onboarding document_type backfill: "
+                            + "{} → NORMAL, {} → TEMPLATE (custom rows untouched)",
+                    normal, template);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] backfillOnboardingDocumentTypes failed "
+                    + "(non-fatal): {} — root: {}", e.getMessage(), rootMessage(e));
+        }
+    }
+
+    /**
+     * Rebuild {@code onboarding_document_templates_document_type_check} —
+     * belt-and-suspenders around the two-value string enum. Same shape
+     * as the timesheets / recording-approval rebuilds.
+     */
+    private void rebuildOnboardingDocumentTypeCheck() {
+        final String constraint = "onboarding_document_templates_document_type_check";
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE onboarding_document_templates DROP CONSTRAINT IF EXISTS "
+                            + constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} DROP failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
+        }
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE onboarding_document_templates ADD CONSTRAINT " + constraint
+                            + " CHECK (document_type IN ('TEMPLATE','NORMAL'))");
+            log.info("[SchemaFixupRunner] rebuilt {} to (TEMPLATE,NORMAL)", constraint);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] {} ADD failed: {} — root: {}",
+                    constraint, e.getMessage(), rootMessage(e), e);
         }
     }
 

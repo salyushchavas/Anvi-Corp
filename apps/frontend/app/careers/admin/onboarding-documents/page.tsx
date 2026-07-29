@@ -6,9 +6,11 @@ import {
   Cloud,
   Eye,
   FileText,
+  FilePlus,
   FileX,
   Filter,
   Layers,
+  MinusCircle,
   Plus,
   RefreshCw,
   Search,
@@ -23,10 +25,17 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import RecordingUploader from '@/components/dashboard/RecordingUploader';
 
 /**
- * Admin ⟶ Onboarding Documents. Master list of blank templates that
- * interns download during onboarding. Wrapped in DashboardLayout so
- * the admin sidebar + topbar render alongside — the page owns only
- * the content column.
+ * Admin ⟶ Onboarding Documents. Two-type model:
+ *
+ * <ul>
+ *   <li>TEMPLATE — admin uploads a blank file, intern downloads it,
+ *       fills it, re-uploads. Has Replace + Preview.</li>
+ *   <li>NORMAL — no template file (passport, visa, driver's license,
+ *       transcripts). Intern uploads their own scan. No Replace, no
+ *       Preview — just name + category.</li>
+ * </ul>
+ * Wrapped in DashboardLayout so the admin sidebar + topbar render
+ * alongside — the page owns only the content column.
  */
 interface TemplateRow {
   id: string;
@@ -35,6 +44,7 @@ interface TemplateRow {
   category: string;
   sensitivity: string;
   description: string | null;
+  documentType: 'TEMPLATE' | 'NORMAL';
   currentDocumentId: string | null;
   currentFileName: string | null;
   currentFileBytes: number | null;
@@ -50,8 +60,7 @@ interface ListResponse { items: TemplateRow[] }
 const CATEGORIES = ['TAX', 'IMMIGRATION', 'EMPLOYMENT', 'LEGAL', 'INFORMATIONAL', 'OTHER'] as const;
 const SENSITIVITIES = ['GENERAL', 'FINANCIAL', 'GOVERNMENT_ID', 'PII'] as const;
 
-/** Per-category tone so the table reads at a glance without hunting
- *  for the label — colors chosen to be distinct without collision. */
+/** Per-category tone so the table reads at a glance. */
 const CATEGORY_TONE: Record<string, string> = {
   TAX:           'bg-emerald-50 text-emerald-800 border-emerald-200',
   IMMIGRATION:   'bg-violet-50 text-violet-800 border-violet-200',
@@ -81,11 +90,12 @@ function PageContent() {
   const [data, setData] = useState<ListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
+  const [addKind, setAddKind] = useState<'TEMPLATE' | 'NORMAL' | null>(null);
   const [replaceFor, setReplaceFor] = useState<TemplateRow | null>(null);
   const [removeFor, setRemoveFor] = useState<TemplateRow | null>(null);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('');
+  const [typeFilter, setTypeFilter] = useState<'' | 'TEMPLATE' | 'NORMAL'>('');
   const [showRemoved, setShowRemoved] = useState(false);
 
   const load = useCallback(async () => {
@@ -96,7 +106,7 @@ function PageContent() {
       setErr(null);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to load templates');
+      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to load documents');
     } finally {
       setLoading(false);
     }
@@ -110,17 +120,39 @@ function PageContent() {
     return items.filter((t) => {
       if (!showRemoved && !t.active) return false;
       if (categoryFilter && t.category !== categoryFilter) return false;
+      if (typeFilter && t.documentType !== typeFilter) return false;
       if (q && !`${t.title} ${t.key} ${t.description ?? ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [items, search, categoryFilter, showRemoved]);
+  }, [items, search, categoryFilter, typeFilter, showRemoved]);
 
   const stats = useMemo(() => {
     const active = items.filter((t) => t.active).length;
     const removed = items.filter((t) => !t.active).length;
-    const withUpload = items.filter((t) => !!t.currentDocumentId).length;
-    return { active, removed, withUpload, total: items.length };
+    const templates = items.filter((t) => t.active && t.documentType === 'TEMPLATE').length;
+    const normal = items.filter((t) => t.active && t.documentType === 'NORMAL').length;
+    return { active, removed, templates, normal, total: items.length };
   }, [items]);
+
+  // Group by category so the table reads by "sector" (Immigration,
+  // Employment, etc.) — user's mental model per the requirements.
+  const grouped = useMemo(() => {
+    const byCat = new Map<string, TemplateRow[]>();
+    for (const t of filtered) {
+      const list = byCat.get(t.category) ?? [];
+      list.push(t);
+      byCat.set(t.category, list);
+    }
+    // Stable order — known categories first, then any custom category.
+    const known = CATEGORIES.filter((c) => byCat.has(c));
+    const custom = Array.from(byCat.keys())
+      .filter((c) => !CATEGORIES.includes(c as typeof CATEGORIES[number]))
+      .sort();
+    return [...known, ...custom].map((c) => ({
+      category: c,
+      rows: byCat.get(c)!,
+    }));
+  }, [filtered]);
 
   return (
     <div className="space-y-6">
@@ -128,14 +160,16 @@ function PageContent() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-brand-700">
-            Super Admin · Templates
+            Super Admin · Onboarding
           </p>
           <h1 className="mt-1 text-2xl font-semibold text-slate-900">Onboarding Documents</h1>
           <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Master set of blank templates interns download during onboarding.
-            Uploading a new file replaces what interns receive on the next
-            download; removing a template deactivates it for new packets but
-            keeps in-progress ones intact.
+            Master set of documents ERM assigns to interns during onboarding.
+            <br />
+            <strong>Templates</strong> — admin uploads a blank file, intern
+            downloads → fills → uploads.{' '}
+            <strong>Documents</strong> — no template (passport, visa, license);
+            intern uploads their own scan.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -143,9 +177,15 @@ function PageContent() {
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50">
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </button>
-          <button type="button" onClick={() => setAddOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-brand-800">
-            <Plus className="h-3.5 w-3.5" /> Add template
+          <button type="button" onClick={() => setAddKind('NORMAL')}
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+            title="Add a normal document — no template file, intern uploads their own scan.">
+            <FilePlus className="h-3.5 w-3.5" /> Add document
+          </button>
+          <button type="button" onClick={() => setAddKind('TEMPLATE')}
+            className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-brand-800"
+            title="Add a template — admin uploads a blank file, intern downloads and fills it.">
+            <Upload className="h-3.5 w-3.5" /> Add template
           </button>
         </div>
       </div>
@@ -154,10 +194,10 @@ function PageContent() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard icon={<Layers className="h-4 w-4 text-slate-500" />}
           label="Total" value={stats.total} />
-        <StatCard icon={<CheckCircle2 className="h-4 w-4 text-emerald-600" />}
-          label="Active" value={stats.active} tone="emerald" />
-        <StatCard icon={<Cloud className="h-4 w-4 text-brand-600" />}
-          label="Custom file uploaded" value={stats.withUpload} tone="brand" />
+        <StatCard icon={<Upload className="h-4 w-4 text-brand-600" />}
+          label="Templates" value={stats.templates} tone="brand" />
+        <StatCard icon={<FilePlus className="h-4 w-4 text-slate-600" />}
+          label="Documents" value={stats.normal} />
         <StatCard icon={<FileX className="h-4 w-4 text-red-500" />}
           label="Removed" value={stats.removed} tone="red" />
       </div>
@@ -173,6 +213,13 @@ function PageContent() {
               placeholder="Search by name, key, or description"
               className="w-full rounded-md border border-slate-200 pl-8 pr-3 py-1.5 text-sm"
             />
+          </div>
+          <div className="inline-flex overflow-hidden rounded-md border border-slate-200">
+            <TypeToggle active={typeFilter === ''} onClick={() => setTypeFilter('')} label="All" />
+            <TypeToggle active={typeFilter === 'TEMPLATE'} onClick={() => setTypeFilter('TEMPLATE')}
+              label="Templates" />
+            <TypeToggle active={typeFilter === 'NORMAL'} onClick={() => setTypeFilter('NORMAL')}
+              label="Documents" />
           </div>
           <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
             <input type="checkbox" checked={showRemoved}
@@ -200,43 +247,34 @@ function PageContent() {
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{err}</p>
       )}
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        {loading && !data ? (
+      {/* Grouped table */}
+      {loading && !data ? (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <SkeletonRows />
-        ) : filtered.length === 0 ? (
+        </div>
+      ) : grouped.length === 0 ? (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState hasAny={items.length > 0}
-            onAdd={() => setAddOpen(true)} onClear={() => {
-              setSearch(''); setCategoryFilter(''); setShowRemoved(false);
+            onAddTemplate={() => setAddKind('TEMPLATE')}
+            onAddDocument={() => setAddKind('NORMAL')}
+            onClear={() => {
+              setSearch(''); setCategoryFilter(''); setTypeFilter(''); setShowRemoved(false);
             }} />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-slate-50">
-                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                  <th className="px-4 py-3">Template</th>
-                  <th className="px-4 py-3">Category</th>
-                  <th className="px-4 py-3">Current file</th>
-                  <th className="px-4 py-3">Updated</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map((t) => (
-                  <TemplateRow key={t.id} t={t}
-                    onReplace={() => setReplaceFor(t)}
-                    onRemove={() => setRemoveFor(t)} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {grouped.map(({ category, rows }) => (
+            <CategoryTable key={category} category={category} rows={rows}
+              onReplace={setReplaceFor} onRemove={setRemoveFor} />
+          ))}
+        </div>
+      )}
 
-      {addOpen && (
-        <AddTemplateModal
-          onClose={() => setAddOpen(false)}
-          onCreated={() => { setAddOpen(false); void load(); }}
+      {addKind && (
+        <AddModal
+          kind={addKind}
+          onClose={() => setAddKind(null)}
+          onCreated={() => { setAddKind(null); void load(); }}
         />
       )}
       {replaceFor && (
@@ -257,13 +295,57 @@ function PageContent() {
   );
 }
 
-function TemplateRow({ t, onReplace, onRemove }: {
+function CategoryTable({ category, rows, onReplace, onRemove }: {
+  category: string;
+  rows: TemplateRow[];
+  onReplace: (r: TemplateRow) => void;
+  onRemove: (r: TemplateRow) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2">
+        <span className={
+          'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold '
+          + (CATEGORY_TONE[category] ?? CATEGORY_TONE.OTHER)
+        }>
+          {category}
+        </span>
+        <span className="text-[11px] text-slate-500">
+          {rows.length} {rows.length === 1 ? 'entry' : 'entries'}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <thead className="bg-white">
+            <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              <th className="px-4 py-2">Name</th>
+              <th className="px-4 py-2">Type</th>
+              <th className="px-4 py-2">Current file</th>
+              <th className="px-4 py-2">Updated</th>
+              <th className="px-4 py-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((t) => (
+              <TemplateRowView key={t.id} t={t}
+                onReplace={() => onReplace(t)}
+                onRemove={() => onRemove(t)} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TemplateRowView({ t, onReplace, onRemove }: {
   t: TemplateRow;
   onReplace: () => void;
   onRemove: () => void;
 }) {
-  const hasS3 = !!t.currentDocumentId;
-  const hasLegacy = !!t.legacyStaticUrl;
+  const isTemplate = t.documentType === 'TEMPLATE';
+  const hasS3 = isTemplate && !!t.currentDocumentId;
+  const hasLegacy = isTemplate && !!t.legacyStaticUrl;
   const canPreview = hasS3 || hasLegacy;
   const [previewing, setPreviewing] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
@@ -283,11 +365,11 @@ function TemplateRow({ t, onReplace, onRemove }: {
     // (no Bearer token would be attached).
     setPreviewing(true);
     try {
-      const res = await api.get<{ url: string }>(
-        `/api/v1/onboarding-templates/${encodeURIComponent(t.key)}/download-url`
+      const res = await api.get<{ downloadUrl: string }>(
+        `/api/v1/onboarding-templates/${encodeURIComponent(t.key)}/download-url`,
       );
-      const url = res.data?.url;
-      if (!url) throw new Error('No URL returned by server');
+      const url = res.data?.downloadUrl;
+      if (!url) throw new Error('No download URL returned by server');
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -303,9 +385,11 @@ function TemplateRow({ t, onReplace, onRemove }: {
         <div className="flex items-start gap-2.5">
           <div className={
             'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md '
-            + (hasS3 ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-500')
+            + (isTemplate
+                ? (hasS3 ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-500')
+                : 'bg-amber-50 text-amber-700')
           }>
-            <FileText className="h-4 w-4" />
+            {isTemplate ? <FileText className="h-4 w-4" /> : <FilePlus className="h-4 w-4" />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
@@ -330,13 +414,8 @@ function TemplateRow({ t, onReplace, onRemove }: {
         </div>
       </td>
       <td className="px-4 py-3">
-        <div className="flex flex-col gap-1">
-          <span className={
-            'inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold '
-            + (CATEGORY_TONE[t.category] ?? CATEGORY_TONE.OTHER)
-          }>
-            {t.category}
-          </span>
+        <TypeBadge type={t.documentType} />
+        <div className="mt-1">
           <span className={
             'inline-flex w-fit rounded px-1.5 py-0.5 text-[10px] font-medium '
             + (SENSITIVITY_TONE[t.sensitivity] ?? SENSITIVITY_TONE.GENERAL)
@@ -346,7 +425,11 @@ function TemplateRow({ t, onReplace, onRemove }: {
         </div>
       </td>
       <td className="max-w-xs px-4 py-3">
-        {hasS3 ? (
+        {!isTemplate ? (
+          <p className="inline-flex items-center gap-1 text-[11px] italic text-slate-500">
+            <MinusCircle className="h-3 w-3" /> Not applicable — intern uploads own scan
+          </p>
+        ) : hasS3 ? (
           <div>
             <p className="truncate text-xs font-medium text-slate-800" title={t.currentFileName ?? ''}>
               {t.currentFileName ?? '—'}
@@ -368,8 +451,8 @@ function TemplateRow({ t, onReplace, onRemove }: {
             </p>
           </div>
         ) : (
-          <p className="text-[11px] italic text-slate-400">
-            Upload-only — intern uploads their own scan
+          <p className="text-[11px] italic text-amber-700">
+            No template uploaded yet — use Replace to add one.
           </p>
         )}
       </td>
@@ -377,39 +460,51 @@ function TemplateRow({ t, onReplace, onRemove }: {
         {formatDate(t.updatedAt)}
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right">
-        <div className="inline-flex flex-col items-end gap-1">
-          <div className="inline-flex items-center gap-1">
-            {canPreview && (
-              <button
-                type="button"
-                onClick={() => void handlePreview()}
-                disabled={previewing}
-                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                title="Preview file"
-              >
-                <Eye className="h-3 w-3" /> {previewing ? 'Opening…' : 'Preview'}
-              </button>
-            )}
+        <div className="inline-flex items-center gap-1">
+          {isTemplate && canPreview && (
+            <button type="button" onClick={handlePreview} disabled={previewing}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              title="Preview file">
+              <Eye className="h-3 w-3" /> {previewing ? 'Opening…' : 'Preview'}
+            </button>
+          )}
+          {isTemplate && (
             <button type="button" onClick={onReplace}
               className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-2 py-1 text-[11px] font-semibold text-white hover:bg-brand-800"
               title="Upload a new file for this template">
-              <Upload className="h-3 w-3" /> Replace
+              <Upload className="h-3 w-3" />
+              {hasS3 ? 'Replace' : 'Upload'}
             </button>
-            <button type="button" onClick={onRemove}
-              disabled={!t.active}
-              className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-              title={t.active ? 'Soft-remove this template' : 'Already removed'}>
-              <Trash2 className="h-3 w-3" /> Remove
-            </button>
-          </div>
-          {previewErr && (
-            <p className="max-w-[260px] truncate text-[10px] text-red-600" title={previewErr}>
-              {previewErr}
-            </p>
           )}
+          <button type="button" onClick={onRemove}
+            disabled={!t.active}
+            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+            title={t.active ? 'Soft-remove this row' : 'Already removed'}>
+            <Trash2 className="h-3 w-3" /> Remove
+          </button>
         </div>
+        {previewErr && (
+          <p className="mt-1 max-w-[260px] truncate text-[10px] text-red-600" title={previewErr}>
+            {previewErr}
+          </p>
+        )}
       </td>
     </tr>
+  );
+}
+
+function TypeBadge({ type }: { type: 'TEMPLATE' | 'NORMAL' }) {
+  if (type === 'TEMPLATE') {
+    return (
+      <span className="inline-flex w-fit items-center gap-1 rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-800">
+        <Upload className="h-2.5 w-2.5" /> Template
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex w-fit items-center gap-1 rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+      <FilePlus className="h-2.5 w-2.5" /> Document
+    </span>
   );
 }
 
@@ -417,12 +512,11 @@ function StatCard({ icon, label, value, tone = 'slate' }: {
   icon: React.ReactNode;
   label: string;
   value: number;
-  tone?: 'slate' | 'emerald' | 'brand' | 'red';
+  tone?: 'slate' | 'brand' | 'red';
 }) {
   const toneCls =
-    tone === 'emerald' ? 'text-emerald-700' :
-    tone === 'brand'   ? 'text-brand-700' :
-    tone === 'red'     ? 'text-red-700' :
+    tone === 'brand' ? 'text-brand-700' :
+    tone === 'red'   ? 'text-red-700' :
     'text-slate-800';
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
@@ -456,6 +550,20 @@ function FilterChip({ active, onClick, label, tone }: {
   );
 }
 
+function TypeToggle({ active, onClick, label }: {
+  active: boolean; onClick: () => void; label: string;
+}) {
+  return (
+    <button type="button" onClick={onClick}
+      className={
+        'border-r border-slate-200 px-3 py-1.5 text-xs font-medium transition-colors last:border-r-0 '
+        + (active ? 'bg-brand-700 text-white' : 'bg-white text-slate-700 hover:bg-slate-50')
+      }>
+      {label}
+    </button>
+  );
+}
+
 function SkeletonRows() {
   return (
     <div className="divide-y divide-slate-100">
@@ -471,8 +579,11 @@ function SkeletonRows() {
   );
 }
 
-function EmptyState({ hasAny, onAdd, onClear }: {
-  hasAny: boolean; onAdd: () => void; onClear: () => void;
+function EmptyState({ hasAny, onAddTemplate, onAddDocument, onClear }: {
+  hasAny: boolean;
+  onAddTemplate: () => void;
+  onAddDocument: () => void;
+  onClear: () => void;
 }) {
   return (
     <div className="flex flex-col items-center gap-3 p-12 text-center">
@@ -481,7 +592,7 @@ function EmptyState({ hasAny, onAdd, onClear }: {
       </div>
       {hasAny ? (
         <>
-          <p className="text-sm font-semibold text-slate-800">No templates match your filters.</p>
+          <p className="text-sm font-semibold text-slate-800">Nothing matches your filters.</p>
           <button type="button" onClick={onClear}
             className="text-xs font-medium text-brand-700 hover:underline">
             Clear filters
@@ -489,24 +600,36 @@ function EmptyState({ hasAny, onAdd, onClear }: {
         </>
       ) : (
         <>
-          <p className="text-sm font-semibold text-slate-800">No templates yet.</p>
+          <p className="text-sm font-semibold text-slate-800">No documents yet.</p>
           <p className="max-w-sm text-xs text-slate-500">
-            Add your first onboarding template — interns will see it in their
-            packet download list.
+            Start by adding a template (with a blank file) or a document
+            (name only — intern uploads their own scan).
           </p>
-          <button type="button" onClick={onAdd}
-            className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-800">
-            <Plus className="h-3.5 w-3.5" /> Add template
-          </button>
+          <div className="mt-1 flex gap-2">
+            <button type="button" onClick={onAddDocument}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50">
+              <FilePlus className="h-3.5 w-3.5" /> Add document
+            </button>
+            <button type="button" onClick={onAddTemplate}
+              className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-800">
+              <Upload className="h-3.5 w-3.5" /> Add template
+            </button>
+          </div>
         </>
       )}
     </div>
   );
 }
 
-function AddTemplateModal({ onClose, onCreated }: {
-  onClose: () => void; onCreated: () => void;
+/** Single Add modal, shape switches on {@code kind} — TEMPLATE flow
+ *  offers an inline file upload after the row is created; NORMAL flow
+ *  is name+category+sensitivity only. */
+function AddModal({ kind, onClose, onCreated }: {
+  kind: 'TEMPLATE' | 'NORMAL';
+  onClose: () => void;
+  onCreated: () => void;
 }) {
+  const isTemplate = kind === 'TEMPLATE';
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('EMPLOYMENT');
   const [sensitivity, setSensitivity] = useState('GENERAL');
@@ -514,73 +637,146 @@ function AddTemplateModal({ onClose, onCreated }: {
   const [key, setKey] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /** After creation, TEMPLATE flow keeps the modal open so the admin
+   *  can drop the blank file in one step instead of hunting the row. */
+  const [created, setCreated] = useState<{ id: string; title: string } | null>(null);
+  const [attached, setAttached] = useState(false);
 
   async function submit() {
-    if (!title.trim()) { setErr('Title required.'); return; }
+    if (!title.trim()) { setErr('Name required.'); return; }
     setSubmitting(true); setErr(null);
     try {
-      await api.post('/api/v1/admin/onboarding-templates', {
-        key: key.trim() || null,
-        title: title.trim(),
-        category,
-        sensitivity,
-        description: description.trim() || null,
-      });
-      onCreated();
+      const res = await api.post<{ id: string; title: string }>(
+        '/api/v1/admin/onboarding-templates',
+        {
+          key: key.trim() || null,
+          title: title.trim(),
+          category,
+          sensitivity,
+          description: description.trim() || null,
+          documentType: kind,
+        });
+      if (!isTemplate) {
+        // NORMAL flow — nothing more to do, close and refresh.
+        onCreated();
+        return;
+      }
+      setCreated({ id: res.data.id, title: res.data.title });
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to add template');
+      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to add');
     } finally { setSubmitting(false); }
   }
 
+  async function attachAfterUpload(docId: string) {
+    if (!created) return;
+    try {
+      await api.post(
+        `/api/v1/admin/onboarding-templates/${created.id}/file`,
+        { documentId: docId });
+      setAttached(true);
+      setTimeout(() => onCreated(), 900);
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: string } }; message?: string };
+      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to save file');
+    }
+  }
+
   return (
-    <ModalShell title="Add template" icon={<Plus className="h-4 w-4 text-brand-700" />} onClose={onClose}>
+    <ModalShell
+      title={isTemplate ? 'Add template' : 'Add document'}
+      icon={isTemplate
+        ? <Upload className="h-4 w-4 text-brand-700" />
+        : <FilePlus className="h-4 w-4 text-slate-700" />}
+      onClose={onClose}
+    >
       <div className="space-y-4 p-5 text-sm">
-        <Field label="Template name *">
-          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)}
-            maxLength={255}
-            placeholder="e.g. Custom Onboarding Addendum 2026"
-            className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" />
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Category *">
-            <select value={category} onChange={(e) => setCategory(e.target.value)}
-              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm">
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </Field>
-          <Field label="Sensitivity *">
-            <select value={sensitivity} onChange={(e) => setSensitivity(e.target.value)}
-              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm">
-              {SENSITIVITIES.map((s) => <option key={s} value={s}>{s.replaceAll('_', ' ')}</option>)}
-            </select>
-          </Field>
-        </div>
-        <Field label="Key (auto-derived from name if blank)">
-          <input type="text" value={key} onChange={(e) => setKey(e.target.value)}
-            placeholder="CUSTOM_ADDENDUM_2026"
-            className="w-full rounded-md border border-slate-200 px-3 py-2 font-mono text-xs" />
-        </Field>
-        <Field label="Description (optional)">
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)}
-            rows={3} maxLength={2000}
-            placeholder="One-line description shown to admins and to interns in their packet."
-            className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" />
-        </Field>
-        {err && <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">{err}</p>}
         <p className="rounded-md border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-600">
-          Next step: use <strong>Replace</strong> on the new row to upload the blank PDF file.
+          {isTemplate
+            ? 'Admin uploads a blank file. Intern downloads it, fills it, and uploads the completed copy.'
+            : 'No template file. Intern uploads their own scan (passport, visa, driver\'s license, transcripts).'}
         </p>
+
+        {!created && (
+          <>
+            <Field label="Name *">
+              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)}
+                maxLength={255}
+                placeholder={isTemplate ? 'e.g. Custom Onboarding Addendum 2026' : 'e.g. Passport — Front Page'}
+                className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Category *">
+                <select value={category} onChange={(e) => setCategory(e.target.value)}
+                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm">
+                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </Field>
+              <Field label="Sensitivity *">
+                <select value={sensitivity} onChange={(e) => setSensitivity(e.target.value)}
+                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm">
+                  {SENSITIVITIES.map((s) => <option key={s} value={s}>{s.replaceAll('_', ' ')}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Field label="Key (auto-derived from name if blank)">
+              <input type="text" value={key} onChange={(e) => setKey(e.target.value)}
+                placeholder={isTemplate ? 'CUSTOM_ADDENDUM_2026' : 'PASSPORT_FRONT'}
+                className="w-full rounded-md border border-slate-200 px-3 py-2 font-mono text-xs" />
+            </Field>
+            <Field label="Description (optional)">
+              <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+                rows={3} maxLength={2000}
+                placeholder="One-line description — shown to admins and to interns on their packet."
+                className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm" />
+            </Field>
+          </>
+        )}
+
+        {created && isTemplate && (
+          <>
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-900">
+              <span className="inline-flex items-center gap-1 font-semibold">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Row created — <span className="font-normal">"{created.title}"</span>
+              </span>
+              <p className="mt-1 text-[11px] text-emerald-800">
+                Now upload the blank template file so interns can download it.
+              </p>
+            </div>
+            <RecordingUploader
+              key={created.id}
+              accept="application/pdf,.pdf,.doc,.docx"
+              chooseButtonLabel="Choose template file…"
+              presignEndpoint={`/api/v1/admin/onboarding-templates/${created.id}/file/presign-upload`}
+              onReady={(docId) => { void attachAfterUpload(docId); }}
+              helperText="Direct-to-S3 upload · 50 MB max · PDF / DOC / DOCX recommended."
+            />
+            {attached && (
+              <p className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Template file attached — refreshing…
+              </p>
+            )}
+          </>
+        )}
+
+        {err && <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">{err}</p>}
       </div>
       <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">
         <button type="button" onClick={onClose}
           className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm hover:bg-slate-50">
-          Cancel
+          {created ? 'Close' : 'Cancel'}
         </button>
-        <button type="button" onClick={submit} disabled={submitting}
-          className="rounded-md bg-brand-700 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-800 disabled:bg-slate-300">
-          {submitting ? 'Adding…' : 'Add template'}
-        </button>
+        {!created && (
+          <button type="button" onClick={submit} disabled={submitting}
+            className={
+              'rounded-md px-4 py-1.5 text-sm font-semibold text-white disabled:bg-slate-300 '
+              + (isTemplate ? 'bg-brand-700 hover:bg-brand-800' : 'bg-slate-800 hover:bg-slate-900')
+            }>
+            {submitting ? 'Adding…' : (isTemplate ? 'Add & upload file' : 'Add document')}
+          </button>
+        )}
       </div>
     </ModalShell>
   );
@@ -600,7 +796,6 @@ function ReplaceFileModal({ template, onClose, onReplaced }: {
         `/api/v1/admin/onboarding-templates/${template.id}/file`,
         { documentId: docId });
       setAttached(true);
-      // Give the user a beat to see the success state before we reload.
       setTimeout(() => onReplaced(), 900);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -610,7 +805,7 @@ function ReplaceFileModal({ template, onClose, onReplaced }: {
 
   return (
     <ModalShell
-      title={`Replace file · ${template.title}`}
+      title={`${template.currentFileName ? 'Replace' : 'Upload'} template · ${template.title}`}
       icon={<Upload className="h-4 w-4 text-brand-700" />}
       onClose={onClose}
     >
@@ -626,14 +821,14 @@ function ReplaceFileModal({ template, onClose, onReplaced }: {
           </div>
         )}
         <p className="text-xs text-slate-600">
-          Upload a new blank file. Interns downloading this template next
-          will receive the <strong>new</strong> version; the previous
-          version is soft-deleted (bytes retained for audit).
+          Upload the blank template file. Interns downloading this template
+          next will receive the {template.currentFileName ? <strong>new</strong> : ''} version
+          {template.currentFileName ? '; the previous version is soft-deleted (bytes retained for audit).' : '.'}
         </p>
         <RecordingUploader
           key={template.id}
           accept="application/pdf,.pdf,.doc,.docx"
-          chooseButtonLabel="Choose document…"
+          chooseButtonLabel="Choose template file…"
           presignEndpoint={`/api/v1/admin/onboarding-templates/${template.id}/file/presign-upload`}
           onReady={(docId) => { void attach(docId); }}
           helperText="Direct-to-S3 upload · 50 MB max · PDF / DOC / DOCX recommended."
@@ -644,7 +839,7 @@ function ReplaceFileModal({ template, onClose, onReplaced }: {
         {attached && (
           <p className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
             <CheckCircle2 className="h-3.5 w-3.5" />
-            New file attached — the template now serves the uploaded version.
+            File attached — the template now serves the uploaded version.
           </p>
         )}
         {err && <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">{err}</p>}
@@ -676,7 +871,7 @@ function RemoveConfirmModal({ template, onClose, onRemoved }: {
   }
   return (
     <ModalShell
-      title={`Remove template`}
+      title="Remove"
       icon={<Trash2 className="h-4 w-4 text-red-600" />}
       onClose={onClose}
     >
@@ -687,10 +882,12 @@ function RemoveConfirmModal({ template, onClose, onRemoved }: {
         <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
           <p className="font-semibold text-slate-700">Soft-remove behavior:</p>
           <ul className="mt-1 list-disc space-y-1 pl-5">
-            <li>New packets won't include this template.</li>
-            <li>Interns already assigned it keep their download intact.</li>
-            <li>The row stays in the list flagged "removed" for audit.</li>
-            <li>Uploaded files stay in S3 (not deleted).</li>
+            <li>New packets won't include this row.</li>
+            <li>Interns already assigned it keep it intact.</li>
+            <li>Row stays in the list flagged "removed" for audit.</li>
+            {template.documentType === 'TEMPLATE' && (
+              <li>Uploaded template file stays in S3 (not deleted).</li>
+            )}
           </ul>
         </div>
         {err && <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">{err}</p>}
@@ -702,7 +899,7 @@ function RemoveConfirmModal({ template, onClose, onRemoved }: {
         </button>
         <button type="button" onClick={submit} disabled={busy}
           className="rounded-md bg-red-700 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-800 disabled:bg-slate-300">
-          {busy ? 'Removing…' : 'Remove template'}
+          {busy ? 'Removing…' : 'Remove'}
         </button>
       </div>
     </ModalShell>

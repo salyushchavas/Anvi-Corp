@@ -147,7 +147,11 @@ public enum SkyzenDocument {
         if (filename == null || filename.isBlank()) return null;
         String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8)
                 .replace("+", "%20");
-        return "/document-templates/" + encoded;
+        // Files live in apps/frontend/public/careers/document-templates/ and
+        // Next.js serves the public folder at "/", so the correct browser URL
+        // includes the "careers/" prefix. Prior "/document-templates/…"
+        // returned Next.js 404s (the /document-templates route doesn't exist).
+        return "/careers/document-templates/" + encoded;
     }
 
     /** Resolve a legacy {@code DocumentTemplate.title} to its enum value

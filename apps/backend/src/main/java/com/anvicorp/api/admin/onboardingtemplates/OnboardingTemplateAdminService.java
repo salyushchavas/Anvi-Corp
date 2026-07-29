@@ -55,6 +55,12 @@ public class OnboardingTemplateAdminService {
 
     public static final String CATEGORY_DOCUMENT = "ONBOARDING_TEMPLATE";
 
+    /** Two-type model — TEMPLATE has a file (admin uploads, intern
+     *  downloads-fills-uploads); NORMAL has no file (passport / visa /
+     *  license — intern uploads their own scan). */
+    public static final String TYPE_TEMPLATE = "TEMPLATE";
+    public static final String TYPE_NORMAL = "NORMAL";
+
     private static final Duration PRESIGN_TTL = Duration.ofMinutes(30);
 
     private final OnboardingDocumentTemplateRepository repo;
@@ -80,7 +86,11 @@ public class OnboardingTemplateAdminService {
         for (OnboardingDocumentTemplate t : rows) {
             Document doc = t.getCurrentDocumentId() != null
                     ? docs.get(t.getCurrentDocumentId()) : null;
-            String legacyUrl = legacyStaticUrl(t.getKey());
+            // NORMAL rows never carry a template file — null out the file-
+            // related fields so the admin UI can just render Replace-only
+            // controls off the documentType and never confuse the two.
+            boolean isNormal = TYPE_NORMAL.equals(t.getDocumentType());
+            String legacyUrl = isNormal ? null : legacyStaticUrl(t.getKey());
             items.add(new OnboardingTemplateDtos.TemplateRow(
                     t.getId(),
                     t.getKey(),
@@ -88,10 +98,11 @@ public class OnboardingTemplateAdminService {
                     t.getCategory(),
                     t.getSensitivity(),
                     t.getDescription(),
-                    doc != null ? doc.getId() : null,
-                    doc != null ? doc.getFileName() : null,
-                    doc != null ? doc.getFileSize() : null,
-                    doc != null ? doc.getMimeType() : null,
+                    t.getDocumentType(),
+                    isNormal ? null : (doc != null ? doc.getId() : null),
+                    isNormal ? null : (doc != null ? doc.getFileName() : null),
+                    isNormal ? null : (doc != null ? doc.getFileSize() : null),
+                    isNormal ? null : (doc != null ? doc.getMimeType() : null),
                     legacyUrl,
                     t.isActive(),
                     t.getSortOrder(),
@@ -115,7 +126,14 @@ public class OnboardingTemplateAdminService {
         String key = trimOrNull(req.key());
         if (key == null) key = deriveKey(title);
         if (repo.existsByKey(key)) {
-            throw new BadRequestException("A template already exists with key='" + key + "'");
+            throw new BadRequestException("A document already exists with key='" + key + "'");
+        }
+        String type = trimOrNull(req.documentType());
+        if (type == null) type = TYPE_TEMPLATE;
+        type = type.toUpperCase();
+        if (!TYPE_TEMPLATE.equals(type) && !TYPE_NORMAL.equals(type)) {
+            throw new BadRequestException(
+                    "documentType must be TEMPLATE or NORMAL (got '" + req.documentType() + "')");
         }
         OnboardingDocumentTemplate t = OnboardingDocumentTemplate.builder()
                 .key(key)
@@ -123,6 +141,7 @@ public class OnboardingTemplateAdminService {
                 .category(category.toUpperCase())
                 .sensitivity(sensitivity.toUpperCase())
                 .description(trimOrNull(req.description()))
+                .documentType(type)
                 .active(true)
                 .sortOrder(500) // custom rows land after the enum-seeded set
                 .build();
@@ -159,6 +178,11 @@ public class OnboardingTemplateAdminService {
             User caller) {
         OnboardingDocumentTemplate t = repo.findById(templateId).orElseThrow(() ->
                 new ResourceNotFoundException("Template not found: " + templateId));
+        if (TYPE_NORMAL.equals(t.getDocumentType())) {
+            throw new BadRequestException(
+                    "Normal documents (passport / visa / license) don't have templates — "
+                            + "the intern uploads their own scan, no file upload here.");
+        }
         String fileName = req == null || req.fileName() == null
                 ? "" : req.fileName().trim();
         String contentType = req == null || req.contentType() == null
@@ -206,6 +230,10 @@ public class OnboardingTemplateAdminService {
         }
         OnboardingDocumentTemplate t = repo.findById(templateId).orElseThrow(() ->
                 new ResourceNotFoundException("Template not found: " + templateId));
+        if (TYPE_NORMAL.equals(t.getDocumentType())) {
+            throw new BadRequestException(
+                    "Normal documents don't carry template files — cannot attach.");
+        }
         Document doc = documentRepo.findById(req.documentId()).orElseThrow(() ->
                 new ResourceNotFoundException("Document not found: " + req.documentId()));
         if (!CATEGORY_DOCUMENT.equals(doc.getCategory())) {
@@ -314,14 +342,16 @@ public class OnboardingTemplateAdminService {
 
     private OnboardingTemplateDtos.TemplateRow toRow(
             OnboardingDocumentTemplate t, Document doc) {
+        boolean isNormal = TYPE_NORMAL.equals(t.getDocumentType());
         return new OnboardingTemplateDtos.TemplateRow(
                 t.getId(), t.getKey(), t.getTitle(), t.getCategory(),
                 t.getSensitivity(), t.getDescription(),
-                doc != null ? doc.getId() : null,
-                doc != null ? doc.getFileName() : null,
-                doc != null ? doc.getFileSize() : null,
-                doc != null ? doc.getMimeType() : null,
-                legacyStaticUrl(t.getKey()),
+                t.getDocumentType(),
+                isNormal ? null : (doc != null ? doc.getId() : null),
+                isNormal ? null : (doc != null ? doc.getFileName() : null),
+                isNormal ? null : (doc != null ? doc.getFileSize() : null),
+                isNormal ? null : (doc != null ? doc.getMimeType() : null),
+                isNormal ? null : legacyStaticUrl(t.getKey()),
                 t.isActive(), t.getSortOrder(),
                 t.getCreatedAt(), t.getUpdatedAt());
     }

@@ -54,6 +54,25 @@ public class OnboardingDocumentTemplate {
     @Column(nullable = false, length = 40)
     private String sensitivity;
 
+    /**
+     * Two-type model:
+     * <ul>
+     *   <li>{@code TEMPLATE} — admin uploads a blank file, intern
+     *       downloads it, fills it, re-uploads. {@link #currentDocumentId}
+     *       carries the file; Replace is meaningful.</li>
+     *   <li>{@code NORMAL} — no template file (passport, visa, license,
+     *       transcripts). Intern uploads their own scan. Replace is
+     *       hidden in the admin UI; {@link #currentDocumentId} stays
+     *       null forever.</li>
+     * </ul>
+     * DB CHECK constraint rebuilt by {@code SchemaFixupRunner} so a
+     * bad value can't slip in.
+     */
+    @Column(name = "document_type", length = 16, nullable = false,
+            columnDefinition = "varchar(16) not null default 'TEMPLATE'")
+    @Builder.Default
+    private String documentType = "TEMPLATE";
+
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 

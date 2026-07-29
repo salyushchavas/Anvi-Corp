@@ -19,6 +19,9 @@ public final class OnboardingTemplateDtos {
             String category,
             String sensitivity,
             String description,
+            /** TEMPLATE (admin-uploads-file, intern-downloads-fills-uploads)
+             *  or NORMAL (no file, intern uploads their own scan). */
+            String documentType,
             /** Present when the admin has uploaded a replacement file. */
             UUID currentDocumentId,
             /** File name of the current uploaded file, else null. */
@@ -47,7 +50,11 @@ public final class OnboardingTemplateDtos {
             String title,
             String category,
             String sensitivity,
-            String description
+            String description,
+            /** TEMPLATE (default) or NORMAL — decides whether Replace
+             *  is offered on the admin row and whether the intern sees a
+             *  Download-template button on their packet task. */
+            String documentType
     ) {}
 
     public record UpdateTemplateMetadataRequest(
