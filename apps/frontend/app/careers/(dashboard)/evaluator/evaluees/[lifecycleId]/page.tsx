@@ -5,26 +5,27 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   AlertTriangle,
-  Award,
-  BadgeCheck,
   Briefcase,
   CalendarCheck,
+  CalendarCheck2,
   CalendarPlus,
   ChevronLeft,
   ClipboardEdit,
   FileText,
-  TrendingDown,
-  TrendingUp,
   Users,
-  X,
 } from 'lucide-react';
 import api from '@/lib/careers/api';
 import type {
   EvalueeDetail,
   EvaluationTimelineEntry,
 } from '@/components/evaluator/types';
+import type {
+  ProjectTimelineEntry,
+  ProjectTimelineResponse,
+} from '@/components/evaluator/perproject-types';
 import ProjectCardsSection from '@/components/evaluator/ProjectCardsSection';
 import AllWeeklyReportsPanel from '@/components/evaluator/AllWeeklyReportsPanel';
+import ScheduleFinalSessionDialog from '@/components/evaluator/ScheduleFinalSessionDialog';
 
 export default function EvalueeDetailPage() {
   const params = useParams<{ lifecycleId: string }>();
@@ -33,7 +34,15 @@ export default function EvalueeDetailPage() {
   const [data, setData] = useState<EvalueeDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [finalModalOpen, setFinalModalOpen] = useState(false);
+
+  // "Schedule Final" opens the bulk-schedule dialog (one Zoom covering
+  // every project's post-project evaluation). We fetch the project
+  // timeline lazily on button click so the hub avoids a duplicate
+  // request while ProjectCardsSection is also pulling it.
+  const [finalDialogOpen, setFinalDialogOpen] = useState(false);
+  const [finalDialogEligible, setFinalDialogEligible] = useState<ProjectTimelineEntry[]>([]);
+  const [finalDialogLoading, setFinalDialogLoading] = useState(false);
+  const [finalDialogErr, setFinalDialogErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!lifecycleId) return;
@@ -57,6 +66,30 @@ export default function EvalueeDetailPage() {
   }, [lifecycleId, router]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const openFinalDialog = useCallback(async () => {
+    if (!lifecycleId) return;
+    setFinalDialogLoading(true);
+    setFinalDialogErr(null);
+    try {
+      const res = await api.get<ProjectTimelineResponse>(
+        `/api/v1/evaluator/evaluees/${lifecycleId}/project-timeline`,
+      );
+      // Server rejects rows outside DRAFT/SCHEDULED; mirror the filter
+      // client-side so the dialog only shows what's actionable.
+      const eligible = res.data.entries.filter((e) =>
+        e.evaluationId != null
+        && (e.evaluationStatus === 'DRAFT' || e.evaluationStatus === 'SCHEDULED'));
+      setFinalDialogEligible(eligible);
+      setFinalDialogOpen(true);
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: string } }; message?: string };
+      setFinalDialogErr(ax.response?.data?.error ?? ax.message
+        ?? 'Failed to load projects');
+    } finally {
+      setFinalDialogLoading(false);
+    }
+  }, [lifecycleId]);
 
   if (loading && !data) {
     return (
@@ -138,15 +171,21 @@ export default function EvalueeDetailPage() {
             </Link>
             <button
               type="button"
-              onClick={() => setFinalModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100"
-              title="Schedule the Final evaluation. Requires an ExitRecord on this lifecycle (ERM initiates exit first)."
+              onClick={() => void openFinalDialog()}
+              disabled={finalDialogLoading}
+              className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60"
+              title="Schedule one final session covering every project's post-project evaluation."
             >
-              <Award className="h-4 w-4" />
-              Schedule Final
+              <CalendarCheck2 className="h-4 w-4" />
+              {finalDialogLoading ? 'Loading…' : 'Schedule Final'}
             </button>
           </div>
         </div>
+        {finalDialogErr && (
+          <p className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+            {finalDialogErr}
+          </p>
+        )}
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Total evaluations" value={data.profile.totalEvaluationsToDate} />
           <Stat
@@ -171,32 +210,26 @@ export default function EvalueeDetailPage() {
         </div>
       </section>
 
+      {/* Per-project hub — moved to the top so the evaluator lands on
+          the actionable surface (Project 1 / Project 2 cards) before
+          the monthly / trainer context cards. Trainer Q&A, recording,
+          and per-project actions all live inside each card. */}
+      <ProjectCardsSection lifecycleId={data.profile.lifecycleId} />
+
       {/* Monitor cards */}
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <MonitorCurrentMonth detail={data} />
-        <MonitorHistorySummary detail={data} />
         {stemOpt && <MonitorI983 detail={data} />}
         <MonitorTrainerContext detail={data} />
       </section>
 
-      {finalModalOpen && (
-        <ScheduleFinalModal
-          lifecycleId={data.profile.lifecycleId}
-          internName={data.profile.internName}
-          onClose={() => setFinalModalOpen(false)}
-          onScheduled={(evalId) => {
-            setFinalModalOpen(false);
-            router.push(`/careers/evaluator/evaluations/${evalId}/compose`);
-          }}
+      {finalDialogOpen && (
+        <ScheduleFinalSessionDialog
+          eligibleProjects={finalDialogEligible}
+          onClose={() => setFinalDialogOpen(false)}
+          onScheduled={() => setFinalDialogOpen(false)}
         />
       )}
-
-      {/* Per-project hub — every project as a full-height card with
-          details, trainer Q&A, recording, and per-project actions.
-          Header exposes "Schedule Final Session" for bulk multi-project
-          scheduling. The evaluator does everything from here without
-          navigating away. */}
-      <ProjectCardsSection lifecycleId={data.profile.lifecycleId} />
 
       {/* Every weekly report the intern has submitted — their own
           account of the work leading into each evaluation. */}
@@ -295,49 +328,6 @@ function MonitorCurrentMonth({ detail }: { detail: EvalueeDetail }) {
           View / amend
         </Link>
       )}
-    </div>
-  );
-}
-
-function MonitorHistorySummary({ detail }: { detail: EvalueeDetail }) {
-  const h = detail.historySummary;
-  const trendIcon = h.trend === 'IMPROVING'
-    ? <TrendingUp className="h-3.5 w-3.5 text-green-700" />
-    : h.trend === 'DECLINING'
-      ? <TrendingDown className="h-3.5 w-3.5 text-red-700" />
-      : null;
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
-        <BadgeCheck className="h-3.5 w-3.5" />
-        Evaluation History Summary
-      </h3>
-      {h.totalEvaluations === 0 ? (
-        <p className="mt-3 text-sm text-slate-500">First evaluation pending.</p>
-      ) : (
-        <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <dt className="text-[10px] uppercase text-slate-500">Total to date</dt>
-            <dd className="text-lg font-semibold text-slate-900">{h.totalEvaluations}</dd>
-          </div>
-          <div>
-            <dt className="text-[10px] uppercase text-slate-500">Avg overall</dt>
-            <dd className="text-lg font-semibold text-slate-900">
-              {h.averageOverallScore != null ? h.averageOverallScore.toFixed(2) : '—'}
-            </dd>
-          </div>
-          <div className="col-span-2 inline-flex items-center gap-1 text-xs text-slate-700">
-            {trendIcon}
-            <span>Trend: {h.trend.replaceAll('_', ' ').toLowerCase()}</span>
-          </div>
-        </dl>
-      )}
-      <Link
-        href={`/careers/evaluator/evaluation-history?intern=${detail.profile.lifecycleId}`}
-        className="mt-3 inline-flex items-center gap-0.5 text-xs font-medium text-brand-700 hover:underline"
-      >
-        Open full history →
-      </Link>
     </div>
   );
 }
@@ -451,164 +441,6 @@ function MonitorTrainerContext({ detail }: { detail: EvalueeDetail }) {
           )}
         </dl>
       )}
-    </div>
-  );
-}
-
-function ScheduleFinalModal({
-  lifecycleId,
-  internName,
-  onClose,
-  onScheduled,
-}: {
-  lifecycleId: string;
-  internName: string | null;
-  onClose: () => void;
-  onScheduled: (evaluationId: string) => void;
-}) {
-  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  const toLocalInput = (d: Date) =>
-    new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 16);
-
-  const [when, setWhen] = useState(toLocalInput(tomorrow));
-  const [duration, setDuration] = useState(60);
-  const [topic, setTopic] = useState('Final Evaluation — End of Internship');
-  const [agenda, setAgenda] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [modalErr, setModalErr] = useState<string | null>(null);
-
-  async function submit() {
-    setSubmitting(true);
-    setModalErr(null);
-    try {
-      const scheduledFor = new Date(when).toISOString();
-      const res = await api.post<{ evaluationId: string }>(
-        '/api/v1/evaluator/final-evaluations',
-        {
-          internLifecycleId: lifecycleId,
-          scheduledFor,
-          durationMinutes: duration,
-          topic,
-          agenda,
-          timezone:
-            Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-        },
-      );
-      onScheduled(res.data.evaluationId);
-    } catch (e) {
-      const ax = e as {
-        response?: { data?: { error?: string } };
-        message?: string;
-      };
-      setModalErr(
-        ax.response?.data?.error ??
-          ax.message ??
-          'Failed to schedule Final evaluation',
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-5 shadow-lg">
-        <div className="flex items-start justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">
-              Schedule Final evaluation
-            </h2>
-            <p className="text-xs text-slate-500">
-              {internName ?? '(unnamed intern)'} · End-of-internship review
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
-          Final evaluations require an open ExitRecord on this intern&apos;s
-          lifecycle. Ask ERM to initiate the exit flow first if you hit a
-          409 here.
-        </p>
-
-        <div className="mt-3 space-y-3 text-sm">
-          <label className="block">
-            <span className="text-xs font-semibold text-slate-700">
-              Scheduled for
-            </span>
-            <input
-              type="datetime-local"
-              value={when}
-              onChange={(e) => setWhen(e.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold text-slate-700">
-              Duration (minutes)
-            </span>
-            <input
-              type="number"
-              min={15}
-              max={180}
-              value={duration}
-              onChange={(e) => setDuration(parseInt(e.target.value, 10) || 60)}
-              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold text-slate-700">Topic</span>
-            <input
-              type="text"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold text-slate-700">
-              Agenda (optional)
-            </span>
-            <textarea
-              value={agenda}
-              onChange={(e) => setAgenda(e.target.value)}
-              rows={3}
-              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2"
-            />
-          </label>
-        </div>
-
-        {modalErr && (
-          <p className="mt-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
-            {modalErr}
-          </p>
-        )}
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={submitting}
-            className="rounded-md bg-amber-700 px-4 py-1.5 text-xs font-semibold text-white hover:bg-amber-800 disabled:opacity-60"
-          >
-            {submitting ? 'Scheduling…' : 'Schedule Final'}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
