@@ -2,20 +2,33 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { CheckCircle2, Clock, Hourglass, PlayCircle } from 'lucide-react';
+import {
+  CalendarPlus,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Hourglass,
+  PenSquare,
+  PlayCircle,
+} from 'lucide-react';
 import api from '@/lib/careers/api';
+import ProjectContextPanel from './ProjectContextPanel';
+import InlineRecordingPlayer from './InlineRecordingPlayer';
+import SchedulePostProjectDialog from './SchedulePostProjectDialog';
+import ReferenceQaPanel from '@/components/project/ReferenceQaPanel';
 import type { ProjectTimelineEntry, ProjectTimelineResponse } from './perproject-types';
 
 /**
- * The evaluator's per-intern project timeline — every project the intern
- * has, with its evaluation state derived server-side. Renders inline on
- * the Active Evaluee detail so the evaluator sees the complete picture
- * (which projects are done, which are awaiting evaluation, which
- * evaluations already published) without leaving the page.
+ * The evaluator's per-intern project hub — every project + its full
+ * context (project detail, trainer Q&A, recording, evaluation status +
+ * actions) inline as expandable rows. The evaluator does everything
+ * for a project from THIS one page — no navigating away for context.
  *
- * <p>Rows in {@code AWAITING_EVAL} state get a prominent "Evaluate" CTA
- * that jumps to the compose hub — same destination the dashboard queue
- * card links to.</p>
+ * <p>Panels inside each row lazy-mount only when the evaluator expands
+ * it, so the initial load stays fast even for interns with 10+ projects.
+ * Each panel handles its own empty state cleanly (returns null / shows
+ * a neutral note), so a project with no Q&A / no recording renders
+ * without broken skeletons.</p>
  */
 interface Props {
   lifecycleId: string;
@@ -47,9 +60,11 @@ export default function ProjectTimelineSection({ lifecycleId }: Props) {
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-slate-900">Project timeline</h2>
+          <h2 className="text-sm font-semibold text-slate-900">Projects</h2>
           <p className="mt-0.5 text-[11px] text-slate-500">
-            Every project this intern has taken on, with its evaluation state.
+            Every project this intern has taken on. Expand a row to see
+            its full details, trainer Q&amp;A, recording, and evaluation
+            actions — all inline.
           </p>
         </div>
         {data && (
@@ -84,15 +99,24 @@ export default function ProjectTimelineSection({ lifecycleId }: Props) {
       )}
       {data && data.entries.length > 0 && (
         <ol className="mt-3 space-y-2">
-          {data.entries.map((e) => <TimelineRow key={e.projectId} entry={e} />)}
+          {data.entries.map((e) => (
+            <ExpandableRow key={e.projectId} entry={e} onScheduled={load} />
+          ))}
         </ol>
       )}
     </section>
   );
 }
 
-function TimelineRow({ entry }: { entry: ProjectTimelineEntry }) {
+function ExpandableRow({ entry, onScheduled }: {
+  entry: ProjectTimelineEntry;
+  onScheduled: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const canEvaluate = entry.uiState === 'AWAITING_EVAL' && !!entry.evaluationId;
+  const canSchedule = canEvaluate
+    && (entry.evaluationStatus === 'DRAFT' || entry.evaluationStatus === 'SCHEDULED');
   const composeHref = entry.evaluationId
     ? `/careers/evaluator/evaluations/${entry.evaluationId}/compose`
     : null;
@@ -103,10 +127,18 @@ function TimelineRow({ entry }: { entry: ProjectTimelineEntry }) {
   const stateStyles = STATE_STYLES[entry.uiState];
 
   return (
-    <li className={`rounded-md border p-3 ${stateStyles.container}`}>
-      <div className="flex items-start justify-between gap-3">
+    <li className={`rounded-md border ${stateStyles.container}`}>
+      <button
+        type="button"
+        onClick={() => setExpanded((x) => !x)}
+        className="flex w-full items-start justify-between gap-3 rounded-md p-3 text-left hover:bg-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+        aria-expanded={expanded}
+      >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
+            <span className="text-slate-500">
+              {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </span>
             <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700">
               #{entry.projectSequence}
             </span>
@@ -142,21 +174,73 @@ function TimelineRow({ entry }: { entry: ProjectTimelineEntry }) {
             </p>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {canEvaluate && composeHref && (
-            <Link href={composeHref}
-              className="rounded-md bg-brand-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-brand-800">
-              Evaluate
-            </Link>
+      </button>
+
+      {expanded && (
+        <div className="space-y-3 border-t border-slate-200 bg-white/60 p-3">
+          {/* Full project detail — deliverables, requirements, dates,
+              trainer review notes. Lazy-fetched by the panel on mount. */}
+          <ProjectContextPanel projectId={entry.projectId} />
+
+          {/* Trainer's per-project reference Q&A. alwaysShow so the
+              panel renders a neutral empty-state note instead of a
+              silent void when the trainer hasn't attached any pairs. */}
+          <ReferenceQaPanel projectId={entry.projectId} alwaysShow />
+
+          {/* Recording playback — the button does the presign fetch
+              lazily; no signature minted for a row nobody opens. */}
+          {entry.evaluationId ? (
+            <InlineRecordingPlayer evaluationId={entry.evaluationId} />
+          ) : (
+            <p className="rounded-md border border-dashed border-slate-300 p-3 text-center text-[11px] text-slate-500">
+              No evaluation exists yet — recording will appear here once one
+              is auto-drafted on project completion.
+            </p>
           )}
-          {!canEvaluate && detailHref && (
-            <Link href={detailHref}
-              className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50">
-              Open
-            </Link>
-          )}
+
+          {/* Inline actions */}
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+            {canSchedule && entry.evaluationId && (
+              <button type="button"
+                onClick={() => setScheduleOpen(true)}
+                className="inline-flex items-center gap-1 rounded-md border border-brand-300 bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-800 hover:bg-brand-100">
+                <CalendarPlus className="h-3 w-3" />
+                {entry.evaluationStatus === 'SCHEDULED' ? 'Reschedule' : 'Schedule session'}
+              </button>
+            )}
+            {canEvaluate && composeHref && (
+              <Link href={composeHref}
+                className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-800">
+                <PenSquare className="h-3 w-3" />
+                {entry.evaluationStatus === 'IN_PROGRESS' ? 'Continue evaluation' : 'Compose evaluation'}
+              </Link>
+            )}
+            {!canEvaluate && detailHref && (
+              <Link href={detailHref}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                Open evaluation
+              </Link>
+            )}
+            {entry.evaluationStatus && (
+              <span className="text-[11px] text-slate-500">
+                Evaluation status:{' '}
+                <span className="font-semibold text-slate-700">
+                  {entry.evaluationStatus.replaceAll('_', ' ')}
+                </span>
+              </span>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {scheduleOpen && entry.evaluationId && (
+        <SchedulePostProjectDialog
+          evaluationId={entry.evaluationId}
+          projectTitle={entry.title}
+          onClose={() => setScheduleOpen(false)}
+          onScheduled={() => { setScheduleOpen(false); onScheduled(); }}
+        />
+      )}
     </li>
   );
 }

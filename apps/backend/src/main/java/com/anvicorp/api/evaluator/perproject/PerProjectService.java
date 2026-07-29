@@ -279,7 +279,11 @@ public class PerProjectService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "InternLifecycle not found: " + lifecycleId));
         evaluatorScopeGuard.requireEvaluatorOwnership(lc, caller);
-        int safeLimit = Math.max(1, Math.min(limit, 20));
+        // Cap at 100 — one intern year is ~52 reports; 100 comfortably
+        // covers a full engagement even with resubmissions. Bumped from
+        // 20 so the evaluee-detail hub can render the intern's full
+        // journey without pagination.
+        int safeLimit = Math.max(1, Math.min(limit, 100));
 
         // Weekly reports are keyed by candidate/intern id (not lifecycle).
         // Query the intern (candidate) id via the JDBC path that avoids

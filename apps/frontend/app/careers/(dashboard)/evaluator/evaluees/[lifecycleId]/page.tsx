@@ -24,6 +24,7 @@ import type {
   EvaluationTimelineEntry,
 } from '@/components/evaluator/types';
 import ProjectTimelineSection from '@/components/evaluator/ProjectTimelineSection';
+import AllWeeklyReportsPanel from '@/components/evaluator/AllWeeklyReportsPanel';
 
 export default function EvalueeDetailPage() {
   const params = useParams<{ lifecycleId: string }>();
@@ -190,10 +191,16 @@ export default function EvalueeDetailPage() {
         />
       )}
 
-      {/* Per-project timeline — the primary "complete picture" for this
-          intern. Every project + whether it's been evaluated yet, with
-          an inline Evaluate CTA for anything still awaiting action. */}
+      {/* Per-project hub — every project as an expandable row with full
+          details, trainer Q&A, recording playback, and evaluation
+          actions inline. This is the primary "complete picture" for
+          this intern; the evaluator does everything from here without
+          navigating away. */}
       <ProjectTimelineSection lifecycleId={data.profile.lifecycleId} />
+
+      {/* Every weekly report the intern has submitted — their own
+          account of the work leading into each evaluation. */}
+      <AllWeeklyReportsPanel lifecycleId={data.profile.lifecycleId} />
 
       {/* Legacy monthly-evaluation timeline. Left in place so amended /
           published monthly evaluations remain visible during the
