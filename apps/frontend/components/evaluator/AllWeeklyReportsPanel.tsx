@@ -117,39 +117,120 @@ export default function AllWeeklyReportsPanel({ lifecycleId }: Props) {
                 </div>
               )}
               {r.attachmentDocumentId && (
-                <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white p-2 text-[11px]">
-                  <Paperclip className="h-3 w-3 text-slate-500" />
-                  <span className="truncate font-mono text-slate-700">
-                    {r.attachmentFileName ?? 'attachment'}
-                  </span>
-                  {r.attachmentMimeType && (
-                    <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-600">
-                      {r.attachmentMimeType}
-                    </span>
-                  )}
-                  <div className="ml-auto flex items-center gap-1">
-                    <a
-                      href={`/api/v1/weekly-reports/${r.reportId}/attachment`}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-brand-700 hover:bg-brand-50"
-                    >
-                      Preview
-                    </a>
-                    <a
-                      href={`/api/v1/weekly-reports/${r.reportId}/attachment`}
-                      download
-                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-                    >
-                      <Download className="h-3 w-3" /> Download
-                    </a>
-                  </div>
-                </div>
+                <AttachmentRow
+                  reportId={r.reportId}
+                  fileName={r.attachmentFileName ?? null}
+                  mimeType={r.attachmentMimeType ?? null}
+                />
               )}
             </li>
           ))}
         </ol>
       )}
     </section>
+  );
+}
+
+/**
+ * Fetch the attachment bytes through the authenticated axios client
+ * (Bearer-token interceptor) and expose Preview / Download via a blob
+ * URL. Plain {@code <a href="/api/v1/...">} anchors 404 here because
+ * the browser routes them through the Next.js host and never carries
+ * the token — see WeeklyReportAttachmentPreview for the same pattern.
+ */
+function AttachmentRow({
+  reportId, fileName, mimeType,
+}: { reportId: string; fileName: string | null; mimeType: string | null }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const url = `/api/v1/weekly-reports/${reportId}/attachment`;
+
+  async function fetchBlob(): Promise<string | null> {
+    setErr(null);
+    try {
+      const res = await api.get<Blob>(url, { responseType: 'blob' });
+      return URL.createObjectURL(
+        new Blob([res.data], { type: mimeType || 'application/octet-stream' }),
+      );
+    } catch (e) {
+      const ax = e as {
+        response?: { status?: number; data?: { error?: string } };
+        message?: string;
+      };
+      const status = ax.response?.status;
+      const msg = ax.response?.data?.error ?? ax.message;
+      // Distinguish 403 (permission) from a real 404 (missing attachment)
+      // so the user gets a truthful reason instead of a generic failure.
+      setErr(
+        status === 403
+          ? 'You do not have permission to view this attachment.'
+          : status === 404
+          ? 'Attachment is no longer available.'
+          : msg ?? 'Failed to load attachment',
+      );
+      return null;
+    }
+  }
+
+  async function preview() {
+    setBusy(true);
+    const blobUrl = await fetchBlob();
+    setBusy(false);
+    if (!blobUrl) return;
+    window.open(blobUrl, '_blank', 'noopener,noreferrer');
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  }
+
+  async function download() {
+    setBusy(true);
+    const blobUrl = await fetchBlob();
+    setBusy(false);
+    if (!blobUrl) return;
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName ?? 'weekly-report';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  }
+
+  return (
+    <div className="mt-2 space-y-1">
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white p-2 text-[11px]">
+        <Paperclip className="h-3 w-3 text-slate-500" />
+        <span className="truncate font-mono text-slate-700">
+          {fileName ?? 'attachment'}
+        </span>
+        {mimeType && (
+          <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-600">
+            {mimeType}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => void preview()}
+            disabled={busy}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-60"
+          >
+            {busy ? 'Loading…' : 'Preview'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void download()}
+            disabled={busy}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            <Download className="h-3 w-3" /> Download
+          </button>
+        </div>
+      </div>
+      {err && (
+        <p className="rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-800">
+          {err}
+        </p>
+      )}
+    </div>
   );
 }
