@@ -506,24 +506,37 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
                   className="w-full rounded-md border border-red-300 px-2 py-1.5 text-sm" />
               </Field>
             )}
-
-            {err && <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">{err}</p>}
-
-            <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
-              <button type="button" onClick={onClose} className="rounded-md border border-slate-200 px-3 py-1.5 text-sm">Cancel</button>
-              <button type="button" onClick={submit} disabled={submitting}
-                className="rounded-md bg-brand-700 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-800 disabled:bg-slate-300">
-                <FileText className="mr-1 inline h-3.5 w-3.5" />
-                {submitting ? 'Submitting…' : 'Publish feedback'}
-              </button>
-            </div>
           </section>
+
+          {/* Q&A editor — full-width row inside the scrollable body so it
+              scrolls with everything else. Previously a sibling of the
+              grid with no height cap, which pushed the sticky footer
+              (and its action buttons) out of reach as pairs were added. */}
+          {detail && (
+            <section className="md:col-span-2">
+              <ReferenceQaEditor projectId={detail.projectId} />
+            </section>
+          )}
         </div>
-        {detail && (
-          <div className="border-t border-slate-200 bg-slate-50 p-5">
-            <ReferenceQaEditor projectId={detail.projectId} />
+
+        {/* Sticky footer — always reachable regardless of body scroll.
+            The err banner sits above the buttons so a validation failure
+            is instantly visible without scrolling back into the form. */}
+        <div className="sticky bottom-0 border-t border-slate-200 bg-white px-5 py-3">
+          {err && (
+            <p className="mb-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+              {err}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onClose} className="rounded-md border border-slate-200 px-3 py-1.5 text-sm">Cancel</button>
+            <button type="button" onClick={submit} disabled={submitting}
+              className="rounded-md bg-brand-700 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-800 disabled:bg-slate-300">
+              <FileText className="mr-1 inline h-3.5 w-3.5" />
+              {submitting ? 'Submitting…' : 'Publish feedback'}
+            </button>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
