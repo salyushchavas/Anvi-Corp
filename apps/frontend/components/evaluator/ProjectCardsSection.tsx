@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   CalendarCheck2,
   CalendarPlus,
@@ -19,6 +19,10 @@ import SchedulePostProjectDialog from './SchedulePostProjectDialog';
 import ScheduleFinalSessionDialog from './ScheduleFinalSessionDialog';
 import ReferenceQaPanel from '@/components/project/ReferenceQaPanel';
 import type { ProjectTimelineEntry, ProjectTimelineResponse } from './perproject-types';
+import {
+  evaluatorProjectDisplay,
+  type EvaluatorProjectDisplayState,
+} from './project-status';
 
 /**
  * The evaluator's Active Evaluee hub — every project rendered as a
@@ -37,58 +41,38 @@ interface Props {
   lifecycleId: string;
 }
 
-/** Presentational config for the per-card status bar. `bar` is applied
- *  as a colored left border + subtle tint on the top strip; `badge` is
- *  the compact pill in the header. */
-const CARD_DISPLAY_STATE: Record<string, {
-  label: string;
-  badge: string;
+/** Per-state visual chrome for the card status bar (colored left border +
+ *  tint). Label + primary action come from {@link evaluatorProjectDisplay}
+ *  so the card + Active Evaluees table stay in vocabulary lock-step. */
+const CARD_BAR_STYLES: Record<EvaluatorProjectDisplayState, {
   bar: string;
   hint: string;
 }> = {
-  NOT_SCHEDULED: {
-    label: 'Not scheduled',
-    badge: 'bg-slate-100 text-slate-700',
+  IN_PROGRESS: {
     bar: 'border-l-4 border-l-slate-400 bg-slate-50',
-    hint: 'Session hasn’t been scheduled yet.',
+    hint: 'Project is still in progress — wait for the trainer to verify.',
+  },
+  PENDING_EVAL: {
+    bar: 'border-l-4 border-l-amber-400 bg-amber-50/60',
+    hint: 'Trainer-verified — schedule the evaluation session.',
   },
   SCHEDULED: {
-    label: 'Scheduled',
-    badge: 'bg-brand-100 text-brand-800',
     bar: 'border-l-4 border-l-brand-500 bg-brand-50/60',
     hint: 'Session is on the calendar.',
   },
   SESSION_COMPLETED: {
-    label: 'Session completed',
-    badge: 'bg-amber-100 text-amber-900',
     bar: 'border-l-4 border-l-amber-400 bg-amber-50/60',
     hint: 'Session was conducted — evaluation in progress.',
   },
-  EVALUATED: {
-    label: 'Evaluated ✓',
-    badge: 'bg-emerald-100 text-emerald-800',
+  COMPLETED: {
     bar: 'border-l-4 border-l-emerald-500 bg-emerald-50/60',
     hint: 'Evaluation published.',
   },
-  IN_PROGRESS_PROJECT: {
-    label: 'Not scheduled',
-    badge: 'bg-slate-100 text-slate-700',
-    bar: 'border-l-4 border-l-slate-400 bg-slate-50',
-    hint: 'Project is still in progress — you can pre-schedule the session anyway.',
+  CANCELLED: {
+    bar: 'border-l-4 border-l-red-400 bg-red-50/60',
+    hint: 'Previous session was cancelled — reschedule when ready.',
   },
 };
-
-/** Derive the user-facing evaluation state from the timeline entry's
- *  raw project + evaluation status fields. */
-function displayState(entry: ProjectTimelineEntry): keyof typeof CARD_DISPLAY_STATE {
-  if (entry.evaluationStatus === 'PUBLISHED'
-      || entry.evaluationStatus === 'ACKNOWLEDGED'
-      || entry.evaluationStatus === 'AMENDED') return 'EVALUATED';
-  if (entry.evaluationStatus === 'IN_PROGRESS') return 'SESSION_COMPLETED';
-  if (entry.evaluationStatus === 'SCHEDULED') return 'SCHEDULED';
-  if (entry.evaluationStatus === 'DRAFT') return 'NOT_SCHEDULED';
-  return 'IN_PROGRESS_PROJECT';
-}
 
 export default function ProjectCardsSection({ lifecycleId }: Props) {
   const [data, setData] = useState<ProjectTimelineResponse | null>(null);
@@ -246,23 +230,12 @@ function ProjectCard({
   onToggleSelect: () => void;
   onChange: () => void;
 }) {
+  const router = useRouter();
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [markingConducted, setMarkingConducted] = useState(false);
-  const [markErr, setMarkErr] = useState<string | null>(null);
-  const state = displayState(entry);
-  const styles = CARD_DISPLAY_STATE[state];
-  const canEvaluate = !!entry.evaluationId
-    && entry.evaluationStatus !== 'PUBLISHED'
-    && entry.evaluationStatus !== 'ACKNOWLEDGED'
-    && entry.evaluationStatus !== 'AMENDED';
-  // Schedule button is visible on every card that isn't already evaluated.
-  // If no eval exists yet, the backend auto-drafts one on schedule.
-  const canSchedule = entry.evaluationStatus !== 'PUBLISHED'
-    && entry.evaluationStatus !== 'ACKNOWLEDGED'
-    && entry.evaluationStatus !== 'AMENDED'
-    && entry.evaluationStatus !== 'IN_PROGRESS';
-  const canMarkConducted = !!entry.evaluationId
-    && entry.evaluationStatus === 'SCHEDULED';
+  const [startingSession, setStartingSession] = useState(false);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const disp = evaluatorProjectDisplay(entry.projectStatus, entry.evaluationStatus);
+  const styles = CARD_BAR_STYLES[disp.state];
   // Bulk Final still requires an existing evaluation (the bulk endpoint
   // takes evaluationIds, not projectIds). Consistent with server contract.
   const eligibleForFinal = !!entry.evaluationId
@@ -273,48 +246,88 @@ function ProjectCard({
   const detailHref = entry.evaluationId
     ? `/careers/evaluator/evaluations/${entry.evaluationId}`
     : null;
+  // Secondary "Reschedule" surfaces only when the primary action is
+  // Start Session (i.e., the row is SCHEDULED) — evaluators sometimes
+  // need to move a booked slot instead of starting it.
+  const showRescheduleSecondary = disp.state === 'SCHEDULED';
 
-  async function markConducted() {
+  async function handleStartSession() {
     if (!entry.evaluationId) return;
-    setMarkErr(null);
-    setMarkingConducted(true);
+    setActionErr(null);
+    setStartingSession(true);
     try {
-      // Reuses the workflow start endpoint — SCHEDULED → IN_PROGRESS.
+      // SCHEDULED → IN_PROGRESS + route straight into the compose form.
       await api.post(`/api/v1/evaluator/evaluations/${entry.evaluationId}/start`);
-      onChange();
+      router.push(`/careers/evaluator/evaluations/${entry.evaluationId}/compose`);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      setMarkErr(ax.response?.data?.error ?? ax.message ?? 'Failed to mark conducted');
+      setActionErr(ax.response?.data?.error ?? ax.message ?? 'Failed to start session');
     } finally {
-      setMarkingConducted(false);
+      setStartingSession(false);
     }
   }
 
-  const scheduledLabel = entry.evaluationStatus === 'SCHEDULED' && entry.evaluationScheduledFor
+  function triggerPrimaryAction() {
+    switch (disp.actionKind) {
+      case 'SCHEDULE':
+      case 'RESCHEDULE':
+        setScheduleOpen(true);
+        return;
+      case 'START':
+        void handleStartSession();
+        return;
+      case 'CONTINUE':
+        if (composeHref) router.push(composeHref);
+        return;
+      case 'OPEN':
+        if (detailHref) router.push(detailHref);
+        return;
+      default:
+        return;
+    }
+  }
+
+  const scheduledLabel = disp.state === 'SCHEDULED' && entry.evaluationScheduledFor
     ? formatSchedule(entry.evaluationScheduledFor, entry.evaluationTimezone)
     : null;
+
+  const primaryButtonCls =
+    disp.actionKind === 'RESCHEDULE'
+      ? 'inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100'
+      : disp.actionKind === 'OPEN'
+      ? 'inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50'
+      : 'inline-flex shrink-0 items-center gap-1 rounded-md bg-brand-700 px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:bg-brand-800';
+
+  const PrimaryIcon =
+    disp.actionKind === 'START'
+      ? PlayCircle
+      : disp.actionKind === 'CONTINUE'
+      ? PenSquare
+      : disp.actionKind === 'OPEN'
+      ? CheckCircle2
+      : CalendarPlus;
 
   return (
     <article className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
       {/* Prominent status bar — colored left border + labeled strip.
           One-look answer to "what's this project's session state?"
-          Right side carries the primary session action so the evaluator
-          can act on the status without hunting for a button. */}
+          Right side carries the single primary action per state. */}
       <div className={`flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5 ${styles.bar}`}>
         <div className="flex min-w-0 items-center gap-2">
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${styles.badge}`}>
-            {styles.label}
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${disp.pill}`}>
+            {disp.label}
           </span>
           <span className="truncate text-[11px] text-slate-600">
             {scheduledLabel ?? styles.hint}
           </span>
         </div>
-        {canSchedule && (
+        {disp.actionKind !== 'NONE' && (
           <button type="button"
-            onClick={() => setScheduleOpen(true)}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-brand-700 px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:bg-brand-800">
-            <CalendarPlus className="h-3 w-3" />
-            {entry.evaluationStatus === 'SCHEDULED' ? 'Reschedule' : 'Start Session'}
+            onClick={triggerPrimaryAction}
+            disabled={startingSession}
+            className={primaryButtonCls + ' disabled:opacity-60'}>
+            <PrimaryIcon className="h-3 w-3" />
+            {startingSession ? 'Starting…' : disp.actionLabel}
           </button>
         )}
       </div>
@@ -391,37 +404,24 @@ function ProjectCard({
         )}
       </div>
 
-      {/* Actions — hidden when nothing to render (the Schedule action
-          now lives in the status bar). */}
-      {(canMarkConducted || (canEvaluate && composeHref) || (!canEvaluate && detailHref)) && (
+      {/* Secondary action row — surfaces "Reschedule" when the primary
+          action is Start Session so evaluators can move a scheduled
+          slot instead of starting it. Hidden otherwise. */}
+      {(showRescheduleSecondary || actionErr) && (
       <div className="mt-auto pt-3">
-        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-          {canMarkConducted && (
+        {showRescheduleSecondary && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
             <button type="button"
-              onClick={markConducted}
-              disabled={markingConducted}
-              className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60">
-              <CalendarCheck2 className="h-3 w-3" />
-              {markingConducted ? 'Marking…' : 'Mark session conducted'}
-            </button>
-          )}
-          {canEvaluate && composeHref && (
-            <Link href={composeHref}
-              className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-800">
-              <PenSquare className="h-3 w-3" />
-              {entry.evaluationStatus === 'IN_PROGRESS' ? 'Continue evaluation' : 'Compose evaluation'}
-            </Link>
-          )}
-          {!canEvaluate && detailHref && (
-            <Link href={detailHref}
+              onClick={() => setScheduleOpen(true)}
               className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
-              Open evaluation
-            </Link>
-          )}
-        </div>
-        {markErr && (
+              <CalendarPlus className="h-3 w-3" />
+              Reschedule
+            </button>
+          </div>
+        )}
+        {actionErr && (
           <p className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-800">
-            {markErr}
+            {actionErr}
           </p>
         )}
       </div>

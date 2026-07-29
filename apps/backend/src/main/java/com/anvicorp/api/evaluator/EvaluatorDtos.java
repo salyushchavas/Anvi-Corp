@@ -47,6 +47,7 @@ public final class EvaluatorDtos {
      *  can render Project 1 / Project 2 status + evaluation columns
      *  without an N+1 fetch. Sequence is 1-based, capped at 2 by DB CHECK. */
     public record ActiveEvalueeProjectRow(
+            UUID projectId,
             int sequence,
             String projectStatus,
             UUID evaluationId,

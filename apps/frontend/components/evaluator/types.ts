@@ -23,6 +23,7 @@ export interface DashboardResponse {
 }
 
 export interface ActiveEvalueeProjectRow {
+  projectId: string | null;
   sequence: number;
   projectStatus: string | null;
   evaluationId: string | null;

@@ -3,21 +3,33 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ChevronRight, PenSquare, Search } from 'lucide-react';
+import {
+  CalendarPlus,
+  ChevronRight,
+  Eye,
+  PenSquare,
+  PlayCircle,
+  Search,
+} from 'lucide-react';
 import api from '@/lib/careers/api';
+import SchedulePostProjectDialog from '@/components/evaluator/SchedulePostProjectDialog';
 import type {
   ActiveEvalueeProjectRow,
   ActiveEvalueeRow,
   ActiveEvalueesPage,
 } from '@/components/evaluator/types';
+import {
+  evaluatorProjectDisplay,
+  type EvaluatorProjectActionKind,
+} from '@/components/evaluator/project-status';
 
 /**
- * Evaluator ⟶ Active Evaluees. One row per intern with per-project
- * status + evaluation columns (P1 / P2 — capped at 2 by DB CHECK).
- *
- * Quick-action "Evaluate P{n}" button appears only when the project is
- * ready (SUBMITTED or later) AND the evaluation isn't already finalized.
- * Otherwise renders "View" (for finalized evaluations) or an em-dash.
+ * Evaluator ⟶ Active Evaluees. One row per intern with two per-project
+ * columns (P1 / P2 — capped at 2 by DB CHECK). Each cell shows the
+ * derived evaluator label + a single quick-action button that lines up
+ * with the label per {@link evaluatorProjectDisplay}. The vocabulary
+ * matches ProjectCardsSection so the list and the detail hub speak
+ * identically for the same underlying state.
  */
 export default function ActiveEvalueesPage() {
   return (
@@ -38,6 +50,10 @@ function ActiveEvalueesInner() {
   const [data, setData] = useState<ActiveEvalueesPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  /** Which (projectId, projectTitle) the schedule dialog is bound to. */
+  const [scheduleFor, setScheduleFor] = useState<
+    { projectId: string; projectTitle: string | null } | null
+  >(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,6 +82,16 @@ function ActiveEvalueesInner() {
     setSearch('');
     setNeedsAttention(false);
     setPage(0);
+  }
+
+  async function handleStartSession(evaluationId: string) {
+    try {
+      await api.post(`/api/v1/evaluator/evaluations/${evaluationId}/start`);
+      router.push(`/careers/evaluator/evaluations/${evaluationId}/compose`);
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: string } }; message?: string };
+      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to start session');
+    }
   }
 
   const rows = data?.items ?? [];
@@ -132,10 +158,8 @@ function ActiveEvalueesInner() {
               <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-2">Intern</th>
                 <th className="px-3 py-2">Technology</th>
-                <th className="px-3 py-2">Project 1 status</th>
-                <th className="px-3 py-2">Project 2 status</th>
-                <th className="px-3 py-2">Project 1 evaluation</th>
-                <th className="px-3 py-2">Project 2 evaluation</th>
+                <th className="px-3 py-2">Project 1</th>
+                <th className="px-3 py-2">Project 2</th>
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
@@ -145,10 +169,12 @@ function ActiveEvalueesInner() {
                   key={r.lifecycleId}
                   row={r}
                   onOpen={() => router.push(`/careers/evaluator/evaluees/${r.lifecycleId}`)}
-                  onEvaluate={(evId, finalized) =>
-                    router.push(finalized
-                      ? `/careers/evaluator/evaluations/${evId}`
-                      : `/careers/evaluator/evaluations/${evId}/compose`)}
+                  onSchedule={(projectId) => setScheduleFor({
+                    projectId,
+                    projectTitle: null, // list endpoint doesn't carry titles
+                  })}
+                  onStart={handleStartSession}
+                  onNavigate={(href) => router.push(href)}
                 />
               ))}
             </tbody>
@@ -179,22 +205,28 @@ function ActiveEvalueesInner() {
           </div>
         </div>
       )}
+
+      {scheduleFor && (
+        <SchedulePostProjectDialog
+          projectId={scheduleFor.projectId}
+          projectTitle={scheduleFor.projectTitle}
+          onClose={() => setScheduleFor(null)}
+          onScheduled={() => { setScheduleFor(null); void load(); }}
+        />
+      )}
     </div>
   );
 }
 
-const FINALIZED_EVAL_STATUSES = new Set(['PUBLISHED', 'ACKNOWLEDGED', 'AMENDED']);
-const READY_PROJECT_STATUSES = new Set(['SUBMITTED', 'COMPLETED']);
-
-function Row({ row, onOpen, onEvaluate }: {
+function Row({ row, onOpen, onSchedule, onStart, onNavigate }: {
   row: ActiveEvalueeRow;
   onOpen: () => void;
-  onEvaluate: (evaluationId: string, finalized: boolean) => void;
+  onSchedule: (projectId: string) => void;
+  onStart: (evaluationId: string) => Promise<void> | void;
+  onNavigate: (href: string) => void;
 }) {
   const projectBySeq = (seq: number): ActiveEvalueeProjectRow | null =>
     row.projects?.find((p) => p.sequence === seq) ?? null;
-  const p1 = projectBySeq(1);
-  const p2 = projectBySeq(2);
   return (
     <tr className="cursor-pointer hover:bg-slate-50" onClick={onOpen}>
       <td className="px-3 py-2">
@@ -205,10 +237,18 @@ function Row({ row, onOpen, onEvaluate }: {
         </p>
       </td>
       <td className="px-3 py-2 text-xs text-slate-700">{row.technology ?? '—'}</td>
-      <ProjectStatusCell project={p1} />
-      <ProjectStatusCell project={p2} />
-      <ProjectEvaluationCell project={p1} label="P1" onEvaluate={onEvaluate} />
-      <ProjectEvaluationCell project={p2} label="P2" onEvaluate={onEvaluate} />
+      <ProjectCell
+        project={projectBySeq(1)}
+        onSchedule={onSchedule}
+        onStart={onStart}
+        onNavigate={onNavigate}
+      />
+      <ProjectCell
+        project={projectBySeq(2)}
+        onSchedule={onSchedule}
+        onStart={onStart}
+        onNavigate={onNavigate}
+      />
       <td className="px-3 py-2 text-right">
         <ChevronRight className="h-4 w-4 text-slate-400" />
       </td>
@@ -216,68 +256,102 @@ function Row({ row, onOpen, onEvaluate }: {
   );
 }
 
-function ProjectStatusCell({ project }: { project: ActiveEvalueeProjectRow | null }) {
-  if (!project) {
-    return <td className="px-3 py-2 text-xs text-slate-400">—</td>;
-  }
-  return (
-    <td className="px-3 py-2">
-      <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
-        {(project.projectStatus ?? '—').replaceAll('_', ' ')}
-      </span>
-    </td>
-  );
-}
-
-function ProjectEvaluationCell({ project, label, onEvaluate }: {
+function ProjectCell({ project, onSchedule, onStart, onNavigate }: {
   project: ActiveEvalueeProjectRow | null;
-  label: 'P1' | 'P2';
-  onEvaluate: (evaluationId: string, finalized: boolean) => void;
+  onSchedule: (projectId: string) => void;
+  onStart: (evaluationId: string) => Promise<void> | void;
+  onNavigate: (href: string) => void;
 }) {
   if (!project) {
     return <td className="px-3 py-2 text-xs text-slate-400">—</td>;
   }
-  const evalStatus = project.evaluationStatus;
-  const projectReady = READY_PROJECT_STATUSES.has(project.projectStatus ?? '');
-  const finalized = evalStatus != null && FINALIZED_EVAL_STATUSES.has(evalStatus);
-  const showEvaluate = project.evaluationId != null && projectReady && !finalized;
-  const showView = project.evaluationId != null && finalized;
-  const statusLabel = evalStatus
-    ? evalStatus === 'DRAFT' ? 'Not scheduled'
-      : evalStatus === 'SCHEDULED' ? 'Scheduled'
-      : evalStatus === 'IN_PROGRESS' ? 'Session completed'
-      : finalized ? 'Evaluated'
-      : evalStatus.replaceAll('_', ' ')
-    : '—';
+  const disp = evaluatorProjectDisplay(project.projectStatus, project.evaluationStatus);
   return (
     <td className="px-3 py-2">
-      <p className="text-[11px] text-slate-600">{statusLabel}</p>
-      {showEvaluate && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEvaluate(project.evaluationId!, false);
-          }}
-          className="mt-1 inline-flex items-center gap-1 rounded-md bg-brand-700 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-brand-800"
-        >
-          <PenSquare className="h-2.5 w-2.5" />
-          Evaluate {label}
-        </button>
-      )}
-      {showView && !showEvaluate && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEvaluate(project.evaluationId!, true);
-          }}
-          className="mt-1 inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-50"
-        >
-          View
-        </button>
-      )}
+      <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${disp.pill}`}>
+        {disp.label}
+      </span>
+      <div className="mt-1">
+        <ActionButton
+          kind={disp.actionKind}
+          label={disp.actionLabel}
+          project={project}
+          onSchedule={onSchedule}
+          onStart={onStart}
+          onNavigate={onNavigate}
+        />
+      </div>
     </td>
+  );
+}
+
+function ActionButton({ kind, label, project, onSchedule, onStart, onNavigate }: {
+  kind: EvaluatorProjectActionKind;
+  label: string;
+  project: ActiveEvalueeProjectRow;
+  onSchedule: (projectId: string) => void;
+  onStart: (evaluationId: string) => Promise<void> | void;
+  onNavigate: (href: string) => void;
+}) {
+  if (kind === 'NONE') return null;
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+  const commonPrimary =
+    'inline-flex items-center gap-1 rounded-md bg-brand-700 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-brand-800';
+  const commonSecondary =
+    'inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-50';
+  const commonAmber =
+    'inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100';
+
+  if (kind === 'SCHEDULE' || kind === 'RESCHEDULE') {
+    // Both open the same scheduling dialog. Schedule uses primary tone;
+    // Reschedule (only reached from CANCELLED here) uses amber to hint at
+    // a recovery action.
+    const cls = kind === 'SCHEDULE' ? commonPrimary : commonAmber;
+    return (
+      <button type="button" className={cls}
+        onClick={(e) => { stop(e); onSchedule(project.projectId!); }}
+      >
+        <CalendarPlus className="h-2.5 w-2.5" />
+        {label}
+      </button>
+    );
+  }
+  if (kind === 'START') {
+    return (
+      <button type="button" className={commonPrimary}
+        onClick={(e) => { stop(e); if (project.evaluationId) void onStart(project.evaluationId); }}
+      >
+        <PlayCircle className="h-2.5 w-2.5" />
+        {label}
+      </button>
+    );
+  }
+  if (kind === 'CONTINUE') {
+    return (
+      <button type="button" className={commonPrimary}
+        onClick={(e) => {
+          stop(e);
+          if (project.evaluationId) onNavigate(
+            `/careers/evaluator/evaluations/${project.evaluationId}/compose`);
+        }}
+      >
+        <PenSquare className="h-2.5 w-2.5" />
+        {label}
+      </button>
+    );
+  }
+  // OPEN
+  return (
+    <button type="button" className={commonSecondary}
+      onClick={(e) => {
+        stop(e);
+        if (project.evaluationId) onNavigate(
+          `/careers/evaluator/evaluations/${project.evaluationId}`);
+      }}
+    >
+      <Eye className="h-2.5 w-2.5" />
+      {label}
+    </button>
   );
 }
 

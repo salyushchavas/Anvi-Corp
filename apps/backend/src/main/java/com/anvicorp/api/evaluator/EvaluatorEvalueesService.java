@@ -189,6 +189,7 @@ public class EvaluatorEvalueesService {
                     + "LEFT JOIN LATERAL ( "
                     + "    SELECT COALESCE(json_agg( "
                     + "        json_build_object( "
+                    + "            'projectId', pp.project_id, "
                     + "            'sequence', pp.project_seq, "
                     + "            'projectStatus', pp.project_status, "
                     + "            'evaluationId', pp.evaluation_id, "
@@ -222,8 +223,10 @@ public class EvaluatorEvalueesService {
             if (!arr.isArray() || arr.isEmpty()) return Collections.emptyList();
             List<EvaluatorDtos.ActiveEvalueeProjectRow> out = new ArrayList<>(arr.size());
             for (JsonNode n : arr) {
+                String pid = n.hasNonNull("projectId") ? n.get("projectId").asText() : null;
                 String evalId = n.hasNonNull("evaluationId") ? n.get("evaluationId").asText() : null;
                 out.add(new EvaluatorDtos.ActiveEvalueeProjectRow(
+                        pid != null ? UUID.fromString(pid) : null,
                         n.hasNonNull("sequence") ? n.get("sequence").asInt() : 0,
                         n.hasNonNull("projectStatus") ? n.get("projectStatus").asText() : null,
                         evalId != null ? UUID.fromString(evalId) : null,
