@@ -62,6 +62,25 @@ public class SchemaFixupRunner implements CommandLineRunner {
             log.warn("applications_status_check drop failed (non-fatal): {}", e.getMessage(), e);
         }
 
+        // Re-apply-after-withdraw partial UNIQUE — HOISTED to the top of
+        // run() so a throw anywhere in the ~2500-line preamble below can't
+        // skip it (an earlier boot on the deployed DB clearly did skip it:
+        // the legacy uk_application_candidate_job_posting is still present
+        // and uk_application_candidate_job_posting_active is missing). The
+        // method is idempotent + self-healing, so calling it twice per
+        // boot (here AND at line ~2504 below in its original location) is
+        // harmless. The outer try/catch here belts-and-suspenders — any
+        // internal explosion (rare, given the per-statement try/catch inside)
+        // cannot propagate to the runner and cause a cascade of skipped
+        // fixups.
+        try {
+            ensureApplicationsReapplyAfterWithdrawSchema();
+        } catch (Exception e) {
+            log.error("[SchemaFixupRunner] top-of-run reapply-after-withdraw "
+                    + "hoist threw (non-fatal, later call at ~L2504 will retry): {}",
+                    e.getMessage(), e);
+        }
+
         // Password-reset tokens now store 6-digit codes (same shape as the
         // registration verification code) rather than UUIDs. Different users
         // can legitimately hold the same 6-digit value, so the previous
@@ -4084,6 +4103,30 @@ public class SchemaFixupRunner implements CommandLineRunner {
      * </ol>
      */
     private void ensureApplicationsReapplyAfterWithdrawSchema() {
+        // 0) Pre-state snapshot — list every UNIQUE / partial index on the
+        //    applications table so Railway logs show exactly what was there
+        //    BEFORE we touched anything. Prior boots that crashed elsewhere
+        //    in run() before reaching this method left the legacy
+        //    uk_application_candidate_job_posting in place with no diagnostic
+        //    trail; the snapshot below makes it obvious what state we found
+        //    the DB in, then what we changed.
+        try {
+            List<Map<String, Object>> before = jdbcTemplate.queryForList(
+                    "SELECT indexname, indexdef FROM pg_indexes "
+                            + "WHERE tablename = 'applications' "
+                            + "  AND indexname IN (?, ?)",
+                    "uk_application_candidate_job_posting",
+                    "uk_application_candidate_job_posting_active");
+            log.info("[SchemaFixupRunner] applications-uk pre-state: {} matching indexes present: {}",
+                    before.size(),
+                    before.stream()
+                            .map(r -> r.get("indexname") + " => " + r.get("indexdef"))
+                            .toList());
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] applications-uk pre-state snapshot failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+
         // 1) Drop the legacy unconditional UNIQUE(candidate_id, job_posting_id).
         //    Hibernate may have created it as a constraint OR as a plain unique
         //    index depending on which ddl-auto pass ran first — belt-and-brace.
@@ -4091,6 +4134,8 @@ public class SchemaFixupRunner implements CommandLineRunner {
             jdbcTemplate.execute(
                     "ALTER TABLE applications "
                             + "DROP CONSTRAINT IF EXISTS uk_application_candidate_job_posting");
+            log.info("[SchemaFixupRunner] ALTER TABLE applications DROP CONSTRAINT "
+                    + "uk_application_candidate_job_posting (IF EXISTS) — done");
         } catch (Exception e) {
             log.warn("[SchemaFixupRunner] legacy uk_application_candidate_job_posting "
                     + "constraint drop skipped (non-fatal): {}", e.getMessage());
@@ -4098,6 +4143,8 @@ public class SchemaFixupRunner implements CommandLineRunner {
         try {
             jdbcTemplate.execute(
                     "DROP INDEX IF EXISTS uk_application_candidate_job_posting");
+            log.info("[SchemaFixupRunner] DROP INDEX uk_application_candidate_job_posting "
+                    + "(IF EXISTS) — done");
         } catch (Exception e) {
             log.warn("[SchemaFixupRunner] legacy uk_application_candidate_job_posting "
                     + "index drop skipped (non-fatal): {}", e.getMessage());
@@ -4111,6 +4158,7 @@ public class SchemaFixupRunner implements CommandLineRunner {
                             + "ON applications (candidate_id, job_posting_id) "
                             + "WHERE status <> 'WITHDRAWN'");
             log.info("[SchemaFixupRunner] ensured applications partial UNIQUE "
+                    + "uk_application_candidate_job_posting_active "
                     + "(candidate_id, job_posting_id) WHERE status <> 'WITHDRAWN'");
         } catch (Exception e) {
             log.warn("[SchemaFixupRunner] applications partial UNIQUE ensure failed "
@@ -4120,19 +4168,32 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // 3) Verify via pg_indexes. If it didn't take, re-apply after
         //    withdrawal will keep 23505'ing on the fresh INSERT.
         try {
-            Integer count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM pg_indexes "
-                            + "WHERE tablename = 'applications' AND indexname = ?",
-                    Integer.class, "uk_application_candidate_job_posting_active");
-            if (count != null && count > 0) {
-                log.info("[SchemaFixupRunner] verified "
-                        + "uk_application_candidate_job_posting_active present on applications");
+            List<Map<String, Object>> after = jdbcTemplate.queryForList(
+                    "SELECT indexname, indexdef FROM pg_indexes "
+                            + "WHERE tablename = 'applications' "
+                            + "  AND indexname IN (?, ?)",
+                    "uk_application_candidate_job_posting",
+                    "uk_application_candidate_job_posting_active");
+            boolean legacyGone = after.stream()
+                    .noneMatch(r -> "uk_application_candidate_job_posting"
+                            .equals(String.valueOf(r.get("indexname"))));
+            boolean partialPresent = after.stream()
+                    .anyMatch(r -> "uk_application_candidate_job_posting_active"
+                            .equals(String.valueOf(r.get("indexname"))));
+            log.info("[SchemaFixupRunner] applications-uk post-state: legacyGone={} partialPresent={} rows={}",
+                    legacyGone, partialPresent,
+                    after.stream()
+                            .map(r -> r.get("indexname") + " => " + r.get("indexdef"))
+                            .toList());
+            if (partialPresent && legacyGone) {
+                log.info("[SchemaFixupRunner] re-apply-after-withdraw schema is HEALTHY "
+                        + "— withdrawn interns can submit a fresh application.");
             } else {
-                log.error("[SchemaFixupRunner] uk_application_candidate_job_posting_active "
-                        + "is MISSING on applications after ensure attempt — re-apply after "
-                        + "withdrawal will continue to 23505 until this is resolved (check "
-                        + "DB user privileges + whether a legacy uk_application_candidate_job_posting "
-                        + "is still hanging around).");
+                log.error("[SchemaFixupRunner] re-apply-after-withdraw schema is BROKEN "
+                        + "— legacyGone={} partialPresent={}. Re-apply will 23505 until "
+                        + "resolved. Check DB user privileges (needs CREATE INDEX + ALTER "
+                        + "TABLE on `applications`).",
+                        legacyGone, partialPresent);
             }
         } catch (Exception verifyErr) {
             log.warn("[SchemaFixupRunner] post-ensure verify on "
