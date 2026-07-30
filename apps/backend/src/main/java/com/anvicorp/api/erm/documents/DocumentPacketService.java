@@ -1,6 +1,9 @@
 package com.anvicorp.api.erm.documents;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.anvicorp.api.admin.onboardingtemplates.OnboardingDocumentTemplate;
+import com.anvicorp.api.admin.onboardingtemplates.OnboardingDocumentTemplateRepository;
+import com.anvicorp.api.admin.onboardingtemplates.OnboardingTemplateAdminService;
 import com.anvicorp.api.entity.*;
 import com.anvicorp.api.enums.InternLifecycleStatus;
 import com.anvicorp.api.enums.UserRole;
@@ -64,6 +67,43 @@ public class DocumentPacketService {
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
     private final JdbcTemplate jdbc;
+    /** Post-enum-widening resolver — every documentKey (enum-seeded OR
+     *  admin-added custom) is validated against this table before it can
+     *  be written to a task, and used for title/category/sensitivity in
+     *  DTOs. Kept optional-lookup: legacy rows whose template was
+     *  soft-deleted still render with an "(unknown)" title fallback. */
+    private final OnboardingDocumentTemplateRepository templateRepository;
+    private final OnboardingTemplateAdminService templateAdminService;
+
+    /** ERM Phase 8.9 — resolve + validate a documentKey against the
+     *  {@code onboarding_document_templates} table (enum-seeded rows +
+     *  admin-added custom rows). Returns the row for downstream title /
+     *  category / sensitivity lookups; throws BadRequestException when
+     *  the key isn't in the DB (safer than accepting arbitrary strings —
+     *  matches the prior enum whitelist behavior while allowing custom
+     *  keys). */
+    private OnboardingDocumentTemplate requireTemplate(String key) {
+        if (key == null || key.isBlank()) {
+            throw new BadRequestException("documentKey required");
+        }
+        return templateRepository.findByKey(key.trim())
+                .orElseThrow(() -> new BadRequestException(
+                        "Unknown document key: " + key));
+    }
+
+    /** Look up a template row for read-only DTO rendering. Returns null
+     *  when the row was deleted out-of-band; callers fall back to the
+     *  raw key so old tasks still surface. */
+    private OnboardingDocumentTemplate lookupTemplate(String key) {
+        if (key == null || key.isBlank()) return null;
+        return templateRepository.findByKey(key).orElse(null);
+    }
+
+    private String resolveTitleForKey(String key) {
+        if (key == null || key.isBlank()) return "(unknown)";
+        OnboardingDocumentTemplate t = lookupTemplate(key);
+        return t != null ? t.getTitle() : key;
+    }
 
     // ── List reads ───────────────────────────────────────────────────────
 
@@ -153,17 +193,22 @@ public class DocumentPacketService {
             throw new BadRequestException(
                     "internLifecycleId + selectedDocumentKeys (≥1) are required");
         }
-        // ERM Phase 8.2 — de-dupe + null-strip + cap.
-        List<SkyzenDocument> docs = new ArrayList<>(
+        // ERM Phase 8.2 — de-dupe + null/blank-strip + cap. Post-widening,
+        // keys are String (enum-seeded OR admin-added custom) — each is
+        // validated against the DB template table.
+        List<String> keys = new ArrayList<>(
                 new LinkedHashSet<>(req.selectedDocumentKeys()));
-        docs.removeIf(Objects::isNull);
-        if (docs.isEmpty()) {
-            throw new BadRequestException("selectedDocumentKeys must contain ≥1 valid SkyzenDocument");
+        keys.removeIf(k -> k == null || k.isBlank());
+        if (keys.isEmpty()) {
+            throw new BadRequestException(
+                    "selectedDocumentKeys must contain ≥1 valid document key");
         }
-        if (docs.size() > MAX_TEMPLATES_PER_PACKET) {
+        if (keys.size() > MAX_TEMPLATES_PER_PACKET) {
             throw new BadRequestException(
                     "Cannot assign more than " + MAX_TEMPLATES_PER_PACKET + " documents per packet");
         }
+        List<OnboardingDocumentTemplate> docs = new ArrayList<>(keys.size());
+        for (String k : keys) docs.add(requireTemplate(k));
 
         InternLifecycle lc = lifecycleRepository.findById(req.internLifecycleId())
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -206,14 +251,14 @@ public class DocumentPacketService {
                 .build();
         pk = packetRepository.save(pk);
 
-        Map<SkyzenDocument, String> perInstr = req.perDocumentInstructions() != null
+        Map<String, String> perInstr = req.perDocumentInstructions() != null
                 ? req.perDocumentInstructions() : Map.of();
         List<String> titles = new ArrayList<>();
-        for (SkyzenDocument d : docs) {
+        for (OnboardingDocumentTemplate d : docs) {
             DocumentTask task = DocumentTask.builder()
                     .packetId(pk.getId())
-                    .documentKey(d)
-                    .taskInstructions(perInstr.get(d))
+                    .documentKey(d.getKey())
+                    .taskInstructions(perInstr.get(d.getKey()))
                     .status("PENDING")
                     .version(1)
                     .build();
@@ -238,7 +283,8 @@ public class DocumentPacketService {
                 caller.getId(), intern.getId(),
                 null,
                 Map.of("documentCount", docs.size(),
-                        "documentKeys", docs.stream().map(Enum::name).toList()));
+                        "documentKeys", docs.stream()
+                                .map(OnboardingDocumentTemplate::getKey).toList()));
         try {
             eventPublisher.publishEvent(new DocumentPacketAssignedEvent(
                     pk.getId(), lc.getId(), intern.getId(), caller.getId(), titles));
@@ -285,13 +331,15 @@ public class DocumentPacketService {
             throw new BadRequestException(
                     "selectedDocumentKeys (≥1) are required");
         }
-        List<SkyzenDocument> docs = new ArrayList<>(
+        List<String> keys = new ArrayList<>(
                 new LinkedHashSet<>(req.selectedDocumentKeys()));
-        docs.removeIf(Objects::isNull);
-        if (docs.isEmpty()) {
+        keys.removeIf(k -> k == null || k.isBlank());
+        if (keys.isEmpty()) {
             throw new BadRequestException(
-                    "selectedDocumentKeys must contain ≥1 valid SkyzenDocument");
+                    "selectedDocumentKeys must contain ≥1 valid document key");
         }
+        List<OnboardingDocumentTemplate> docs = new ArrayList<>(keys.size());
+        for (String k : keys) docs.add(requireTemplate(k));
 
         DocumentPacket pk = mustLoadPacket(packetId);
         if ("CANCELLED".equals(pk.getStatus())) {
@@ -306,7 +354,7 @@ public class DocumentPacketService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Intern user not found: " + lc.getUserId()));
 
-        Map<SkyzenDocument, String> perInstr = req.perDocumentInstructions() != null
+        Map<String, String> perInstr = req.perDocumentInstructions() != null
                 ? req.perDocumentInstructions() : Map.of();
         List<String> notifyTitles = new ArrayList<>();
         List<String> addedKeys = new ArrayList<>();
@@ -314,14 +362,15 @@ public class DocumentPacketService {
         List<String> renotifiedKeys = new ArrayList<>();
         boolean anyReopenedFromTerminal = false;
 
-        for (SkyzenDocument d : docs) {
+        for (OnboardingDocumentTemplate d : docs) {
+            String key = d.getKey();
             Optional<DocumentTask> existing =
-                    taskRepository.findByPacketIdAndDocumentKey(packetId, d);
+                    taskRepository.findByPacketIdAndDocumentKey(packetId, key);
             if (existing.isEmpty()) {
                 DocumentTask task = DocumentTask.builder()
                         .packetId(packetId)
-                        .documentKey(d)
-                        .taskInstructions(perInstr.get(d))
+                        .documentKey(key)
+                        .taskInstructions(perInstr.get(key))
                         .status("PENDING")
                         .version(1)
                         .build();
@@ -329,7 +378,7 @@ public class DocumentPacketService {
                 appendLog(task.getId(), caller.getId(), "TEMPLATE_ASSIGNED",
                         null, "PENDING", null, null);
                 notifyTitles.add(d.getTitle());
-                addedKeys.add(d.name());
+                addedKeys.add(key);
                 continue;
             }
 
@@ -351,7 +400,7 @@ public class DocumentPacketService {
                 t.setDownloadedById(null);
                 // Preserve waived_* on the row for audit; status flip
                 // makes it re-active regardless.
-                String instr = perInstr.get(d);
+                String instr = perInstr.get(key);
                 if (instr != null && !instr.isBlank()) {
                     t.setTaskInstructions(instr);
                 }
@@ -360,7 +409,7 @@ public class DocumentPacketService {
                         previous, "RESEND_REQUESTED", null,
                         "ERM re-assigned an already-closed document");
                 notifyTitles.add(d.getTitle());
-                reopenedKeys.add(d.name());
+                reopenedKeys.add(key);
                 anyReopenedFromTerminal = true;
             } else {
                 // In-flight — just re-notify. Don't clobber intern's
@@ -369,7 +418,7 @@ public class DocumentPacketService {
                         previous, previous, null,
                         "ERM re-sent notification for an in-flight document");
                 notifyTitles.add(d.getTitle());
-                renotifiedKeys.add(d.name());
+                renotifiedKeys.add(key);
             }
         }
 
@@ -493,9 +542,10 @@ public class DocumentPacketService {
             UUID internLifecycleId, int page, int pageSize) {
         int p = Math.max(0, page);
         int ps = Math.min(100, Math.max(1, pageSize));
-        // ERM Phase 8.2 — document_templates is gone; category lives in
-        // the SkyzenDocument enum, so we filter category Java-side by
-        // mapping it to the matching document_key set.
+        // ERM Phase 8.9 — post-widening the whitelist of keys per category
+        // lives on {@code onboarding_document_templates}, so we resolve
+        // the category filter against that table (covers both enum-seeded
+        // rows and admin-added custom rows).
         StringBuilder where = new StringBuilder(
                 " WHERE t.status = 'SUBMITTED' ");
         List<Object> params = new ArrayList<>();
@@ -505,12 +555,13 @@ public class DocumentPacketService {
         }
         if (category != null && !category.isBlank()) {
             String cat = category.trim().toUpperCase();
-            List<String> keys = new ArrayList<>();
-            for (SkyzenDocument d : SkyzenDocument.values()) {
-                if (cat.equals(d.getCategory())) keys.add(d.name());
-            }
+            List<String> keys = templateRepository
+                    .findAllByOrderBySortOrderAscTitleAsc().stream()
+                    .filter(t -> cat.equals(t.getCategory()))
+                    .map(OnboardingDocumentTemplate::getKey)
+                    .toList();
             if (keys.isEmpty()) {
-                // No SkyzenDocument matches this category — return empty page.
+                // No template row matches this category — return empty page.
                 return new DocumentTaskListPage(List.of(), p, ps, 0L, 0);
             }
             where.append(" AND t.document_key IN (")
@@ -546,13 +597,15 @@ public class DocumentPacketService {
                 Instant submittedAt = instantOf((java.sql.Timestamp) r.get("submitted_at"));
                 long hoursWaiting = submittedAt == null ? 0
                         : Duration.between(submittedAt, Instant.now()).toHours();
-                SkyzenDocument d = SkyzenDocument.fromKey((String) r.get("document_key"));
+                String key = (String) r.get("document_key");
+                OnboardingDocumentTemplate d = key == null ? null
+                        : templateRepository.findByKey(key).orElse(null);
                 rows.add(new DocumentTaskRow(
                         uuid(r.get("id")), uuid(r.get("packet_id")),
                         uuid(r.get("intern_lifecycle_id")), uuid(r.get("user_id")),
                         (String) r.get("full_name"),
-                        d,
-                        d != null ? d.getTitle() : "(unknown)",
+                        key,
+                        d != null ? d.getTitle() : (key != null ? key : "(unknown)"),
                         d != null ? d.getCategory() : null,
                         (String) r.get("status"),
                         intVal(r.get("version")), submittedAt, hoursWaiting));
@@ -737,8 +790,7 @@ public class DocumentPacketService {
                 Map.of("previousStatus", previous),
                 auditAfter);
 
-        String templateTitle = saved.getDocumentKey() != null
-                ? saved.getDocumentKey().getTitle() : "(unknown)";
+        String templateTitle = resolveTitleForKey(saved.getDocumentKey());
         UUID internUserId = lifecycleRepository.findById(
                 packetRepository.findById(saved.getPacketId())
                         .map(DocumentPacket::getInternLifecycleId).orElse(null))
@@ -953,17 +1005,20 @@ public class DocumentPacketService {
         List<TaskSummary> tasks = new ArrayList<>();
         boolean readyToClose = true;
         for (DocumentTask t : taskRepository.findByPacketIdOrderByCreatedAtAsc(pk.getId())) {
-            SkyzenDocument d = t.getDocumentKey();
+            String key = t.getDocumentKey();
+            OnboardingDocumentTemplate d = lookupTemplate(key);
             String fileName = t.getUploadedFileId() != null
                     ? documentRepository.findById(t.getUploadedFileId())
                             .map(Document::getFileName).orElse(null)
                     : null;
+            String publicUrl = key != null
+                    ? templateAdminService.resolveDownloadUrlOrNull(key) : null;
             tasks.add(new TaskSummary(
-                    t.getId(), d,
-                    d != null ? d.getTitle() : "(unknown)",
+                    t.getId(), key,
+                    d != null ? d.getTitle() : (key != null ? key : "(unknown)"),
                     d != null ? d.getCategory() : null,
                     d != null ? d.getSensitivity() : null,
-                    d != null ? d.publicUrl() : null,
+                    publicUrl,
                     t.getStatus(),
                     t.getVersion(), t.getSubmittedAt(), t.getReviewedAt(),
                     t.getReviewReasonCode(), t.getReviewComments(),
@@ -984,7 +1039,8 @@ public class DocumentPacketService {
     }
 
     private DocumentTaskDetail toTaskDetail(DocumentTask t) {
-        SkyzenDocument d = t.getDocumentKey();
+        String key = t.getDocumentKey();
+        OnboardingDocumentTemplate d = lookupTemplate(key);
         Document uploaded = t.getUploadedFileId() != null
                 ? documentRepository.findById(t.getUploadedFileId()).orElse(null) : null;
         User reviewer = t.getReviewedById() != null
@@ -1005,13 +1061,15 @@ public class DocumentPacketService {
                     l.getEventType(), l.getPreviousStatus(), l.getNewStatus(),
                     l.getReasonCode(), l.getComments(), l.getCreatedAt()));
         }
+        String publicUrl = key != null
+                ? templateAdminService.resolveDownloadUrlOrNull(key) : null;
         return new DocumentTaskDetail(
                 t.getId(), t.getPacketId(),
-                d,
-                d != null ? d.getTitle() : null,
+                key,
+                d != null ? d.getTitle() : (key != null ? key : null),
                 d != null ? d.getCategory() : null,
                 d != null ? d.getSensitivity() : null,
-                d != null ? d.publicUrl() : null,
+                publicUrl,
                 t.getStatus(), t.getVersion(), t.getTaskInstructions(),
                 t.getUploadedFileId(),
                 uploaded != null ? uploaded.getFileName() : null,

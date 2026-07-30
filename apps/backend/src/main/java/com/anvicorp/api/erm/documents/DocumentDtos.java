@@ -18,26 +18,33 @@ public final class DocumentDtos {
 
     // ── Assign packet ───────────────────────────────────────────────────
 
+    /**
+     * ERM Phase 8.9 — {@code selectedDocumentKeys} carries String keys
+     * resolved against the {@code onboarding_document_templates} table.
+     * Enum-seeded rows (W4_2026, etc.) still work; admin-added custom
+     * rows (DD_FORM, DSO_FORM, etc.) are now assignable end-to-end.
+     */
     public record AssignPacketRequest(
             UUID internLifecycleId,
-            List<SkyzenDocument> selectedDocumentKeys,
+            List<String> selectedDocumentKeys,
             String customInstructions,
-            Map<SkyzenDocument, String> perDocumentInstructions
+            Map<String, String> perDocumentInstructions
     ) {}
 
     /**
      * ERM "assign additional / forgotten document" — layered on top of
      * an existing packet so ERM doesn't have to rebuild the packet flow
-     * when they realise a doc was missed. Reuses SkyzenDocument keys +
-     * the per-task instructions map. Re-assigning a document that's
+     * when they realise a doc was missed. Keys are String (DB-validated
+     * against onboarding_document_templates), accepting both enum-seeded
+     * and admin-added custom keys. Re-assigning a document that's
      * already on the packet is graceful: an ACCEPTED / WAIVED task is
      * reopened (bumped version, RESEND_REQUESTED), other statuses just
      * re-notify without duplicating the row.
      */
     public record AddDocumentsRequest(
-            List<SkyzenDocument> selectedDocumentKeys,
+            List<String> selectedDocumentKeys,
             String customInstructions,
-            Map<SkyzenDocument, String> perDocumentInstructions
+            Map<String, String> perDocumentInstructions
     ) {}
 
     // ── Packets ─────────────────────────────────────────────────────────
@@ -71,7 +78,7 @@ public final class DocumentDtos {
 
     public record TaskSummary(
             UUID taskId,
-            SkyzenDocument documentKey,
+            String documentKey,
             String templateTitle,
             String category,
             String sensitivity,
@@ -114,7 +121,7 @@ public final class DocumentDtos {
             UUID internLifecycleId,
             UUID internUserId,
             String internName,
-            SkyzenDocument documentKey,
+            String documentKey,
             String templateTitle,
             String category,
             String status,
@@ -163,7 +170,7 @@ public final class DocumentDtos {
     public record DocumentTaskDetail(
             UUID taskId,
             UUID packetId,
-            SkyzenDocument documentKey,
+            String documentKey,
             String templateTitle,
             String category,
             String sensitivity,
@@ -226,7 +233,7 @@ public final class DocumentDtos {
 
     public record InternTaskView(
             UUID taskId,
-            SkyzenDocument documentKey,
+            String documentKey,
             String templateTitle,
             String description,
             String category,

@@ -1,6 +1,5 @@
 package com.anvicorp.api.entity;
 
-import com.anvicorp.api.erm.documents.SkyzenDocument;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -8,13 +7,14 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * ERM Phase 8.2 — one row per (packet, SkyzenDocument) combo. The
- * blank PDF the intern downloads lives as a static asset at
- * {@code /document-templates/{filename}} — no per-task snapshot column
- * needed since the file is committed to the repo (versioned by git,
- * cacheable by CDN). The intern's filled-in upload still flows through
+ * ERM Phase 8.2 — one row per (packet, documentKey) combo. The
+ * blank PDF the intern downloads lives either as a static asset at
+ * {@code /careers/document-templates/{filename}} (enum-seeded rows) or
+ * as an admin-uploaded S3 file (custom rows) — resolved at read time
+ * via {@code OnboardingTemplateAdminService.resolveDownloadUrlOrNull}.
+ * The intern's filled-in upload still flows through
  * {@link com.anvicorp.api.intern.DocumentVaultService} with the
- * sensitivity tag carried over from {@link SkyzenDocument}.
+ * sensitivity tag carried over from the resolved template row.
  *
  * <p>Lifecycle: {@code PENDING → SUBMITTED → UNDER_REVIEW → ACCEPTED |
  * REJECTED | RESEND_REQUESTED}; {@code WAIVED} is the SUPER_ADMIN
@@ -48,10 +48,15 @@ public class DocumentTask {
     private UUID packetId;
 
     /** ERM Phase 8.2 — replaces template_id + snapshot columns.
-     *  Persisted as VARCHAR via {@link EnumType#STRING}. */
-    @Enumerated(EnumType.STRING)
+     *  Widened enum → String so admin-added custom templates whose keys
+     *  aren't in {@code SkyzenDocument} are assignable end-to-end.
+     *  Enum-seeded rows keep their old key value (e.g. {@code "W4_2026"}),
+     *  admin rows carry their free-form key (e.g. {@code "DD_FORM"}).
+     *  Column stays VARCHAR — no destructive migration; the boot-time
+     *  CHECK constraint is now dropped by SchemaFixupRunner because the
+     *  enum whitelist would reject custom keys. */
     @Column(name = "document_key", nullable = false, length = 80)
-    private SkyzenDocument documentKey;
+    private String documentKey;
 
     @Column(name = "task_instructions", columnDefinition = "TEXT")
     private String taskInstructions;

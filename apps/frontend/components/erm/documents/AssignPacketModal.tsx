@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { X, ExternalLink, AlertCircle } from 'lucide-react';
+import { X, ExternalLink } from 'lucide-react';
 import api from '@/lib/careers/api';
 import {
   SKYZEN_DOCUMENT_BY_KEY,
@@ -24,19 +24,13 @@ type Props = {
 };
 
 /**
- * ERM Phase 8.2 → 8.7 — assignment modal now sources its list from
+ * ERM Phase 8.2 → 8.9 — assignment modal sources its list from
  * {@code /api/v1/erm/onboarding-templates/pickable} which returns every
- * active row from {@code onboarding_document_templates}: the enum-seeded
- * rows AND any admin-added templates. Previously enumerated the frontend
- * SKYZEN_DOCUMENTS constant, so admin-added templates never appeared.
- *
- * <p>Row shape mirrors the enum spec closely so the render is unchanged.
- * Admin-added rows whose key isn't in the enum are surfaced with an
- * "admin-added" badge and shown disabled — the downstream assignPacket
- * endpoint still deserializes into the SkyzenDocument enum, so custom
- * keys can't be submitted yet. Full end-to-end assignability of custom
- * keys is a follow-up (requires changing DocumentTask.documentKey from
- * enum → String).</p>
+ * active row from {@code onboarding_document_templates}: enum-seeded
+ * rows AND admin-added custom templates. Post-widening of
+ * DocumentTask.documentKey from enum → String, every row is selectable +
+ * assignable end-to-end (the backend now DB-validates the key against
+ * the same table).
  */
 interface PickableTemplate {
   key: string;
@@ -88,8 +82,7 @@ export default function AssignPacketModal({
 
   const categories = useMemo(() => Array.from(grouped.keys()).sort(), [grouped]);
 
-  function toggle(k: string, disabled: boolean) {
-    if (disabled) return;
+  function toggle(k: string) {
     setSelected((cur) => {
       const next = new Set(cur);
       if (next.has(k)) next.delete(k); else next.add(k);
@@ -183,11 +176,11 @@ export default function AssignPacketModal({
                 </h4>
                 <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
                   {items.map((d) => {
-                    // Enum spec — undefined for admin-added rows that
-                    // aren't in the SkyzenDocument enum. Those rows show
-                    // but are non-assignable until the entity refactor.
-                    const enumSpec = SKYZEN_DOCUMENT_BY_KEY[d.key as SkyzenDocumentKey];
-                    const enumAssignable = !!enumSpec;
+                    // Post-widening — enum-seeded AND admin-added custom
+                    // rows are both selectable + assignable end-to-end.
+                    // Enum lookup is just a display cue for the "admin-
+                    // added" badge, not a gate.
+                    const isCustom = !SKYZEN_DOCUMENT_BY_KEY[d.key as SkyzenDocumentKey];
                     const on = selected.has(d.key);
                     const sensBadge = SENSITIVITY_BADGE[d.sensitivity as SkyzenDocumentSensitivity]
                       ?? 'bg-slate-100 text-slate-700';
@@ -199,15 +192,11 @@ export default function AssignPacketModal({
                           id={`doc-${d.key}`}
                           type="checkbox"
                           checked={on}
-                          onChange={() => toggle(d.key, !enumAssignable)}
-                          disabled={!enumAssignable}
-                          className="mt-1 disabled:opacity-40"
+                          onChange={() => toggle(d.key)}
+                          className="mt-1"
                         />
                         <label htmlFor={`doc-${d.key}`}
-                          className={
-                            'flex-1 '
-                            + (enumAssignable ? 'cursor-pointer' : 'cursor-not-allowed opacity-70')
-                          }>
+                          className="flex-1 cursor-pointer">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-sm font-medium text-slate-900">
                               {d.title}
@@ -215,15 +204,10 @@ export default function AssignPacketModal({
                             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${sensBadge}`}>
                               {sensLabel}
                             </span>
-                            {d.hasCustomFile && (
-                              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
-                                admin file
-                              </span>
-                            )}
-                            {!enumAssignable && (
-                              <span className="inline-flex items-center gap-0.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900"
-                                title="Admin-added templates aren't assignable yet — entity refactor pending. Enum-seeded templates work as before.">
-                                <AlertCircle className="h-2.5 w-2.5" /> admin-added — assignment pending
+                            {isCustom && (
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700"
+                                title="Admin-added template — key is stored as-is and DB-validated on assign.">
+                                admin-added
                               </span>
                             )}
                           </div>
@@ -231,7 +215,7 @@ export default function AssignPacketModal({
                             <p className="text-[11px] text-slate-500">{d.description}</p>
                           )}
                         </label>
-                        <PreviewLink templateKey={d.key} enumSpec={enumSpec} />
+                        <PreviewLink templateKey={d.key} documentType={d.documentType} />
                       </li>
                     );
                   })}
@@ -282,40 +266,59 @@ export default function AssignPacketModal({
   );
 }
 
-function PreviewLink({ templateKey, enumSpec }: {
+/**
+ * Preview button — always hits the resolver on click (no baked-in
+ * static fallback), so ERM sees whatever the template's
+ * currentDocumentId points at RIGHT NOW. The resolver returns an S3
+ * presigned URL when the admin has uploaded a file, else the legacy
+ * static asset URL, else 404. Mirrors the admin preview + intern
+ * download button — same round-trip, same freshness guarantee.
+ */
+function PreviewLink({ templateKey, documentType }: {
   templateKey: string;
-  enumSpec: { publicUrl: string | null } | undefined;
+  documentType: string;
 }) {
   const [busy, setBusy] = useState(false);
-  const staticFallback = enumSpec?.publicUrl ?? null;
+  const [err, setErr] = useState<string | null>(null);
 
   async function open() {
     if (busy) return;
     setBusy(true);
+    setErr(null);
     try {
       const res = await api.get<{ downloadUrl: string | null }>(
         `/api/v1/onboarding-templates/${encodeURIComponent(templateKey)}/download-url`);
-      const url = res.data?.downloadUrl ?? staticFallback;
-      if (url) window.open(url, '_blank', 'noopener,noreferrer');
-    } catch {
-      if (staticFallback) window.open(staticFallback, '_blank', 'noopener,noreferrer');
+      const url = res.data?.downloadUrl;
+      if (!url) throw new Error('No template file available');
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: string } }; message?: string };
+      setErr(ax.response?.data?.error ?? ax.message ?? 'Preview failed');
     } finally {
       setBusy(false);
     }
   }
 
-  if (!enumSpec && !staticFallback) {
+  // NORMAL rows have no template file — intern uploads their own scan.
+  if (documentType !== 'TEMPLATE') {
     return <span className="text-[11px] text-slate-400">Upload only</span>;
   }
   return (
-    <button
-      type="button"
-      onClick={open}
-      disabled={busy}
-      className="inline-flex items-center gap-0.5 text-[11px] font-medium text-brand-700 hover:underline disabled:opacity-60"
-      title="Open the current blank PDF in a new tab (admin file if uploaded, else the seeded default)"
-    >
-      {busy ? 'Opening…' : 'Preview'} <ExternalLink className="h-3 w-3" />
-    </button>
+    <div className="flex flex-col items-end">
+      <button
+        type="button"
+        onClick={open}
+        disabled={busy}
+        className="inline-flex items-center gap-0.5 text-[11px] font-medium text-brand-700 hover:underline disabled:opacity-60"
+        title="Open the current blank PDF in a new tab — resolves fresh so admin replacements appear immediately"
+      >
+        {busy ? 'Opening…' : 'Preview'} <ExternalLink className="h-3 w-3" />
+      </button>
+      {err && (
+        <p className="mt-1 max-w-[180px] truncate text-[10px] text-red-600" title={err}>
+          {err}
+        </p>
+      )}
+    </div>
   );
 }

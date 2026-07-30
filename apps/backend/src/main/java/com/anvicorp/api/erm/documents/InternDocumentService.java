@@ -1,5 +1,7 @@
 package com.anvicorp.api.erm.documents;
 
+import com.anvicorp.api.admin.onboardingtemplates.OnboardingDocumentTemplate;
+import com.anvicorp.api.admin.onboardingtemplates.OnboardingDocumentTemplateRepository;
 import com.anvicorp.api.entity.*;
 import com.anvicorp.api.erm.documents.DocumentDtos.*;
 import com.anvicorp.api.event.DocumentTaskSubmittedEvent;
@@ -62,6 +64,10 @@ public class InternDocumentService {
      *  instead of always serving the seeded static asset. */
     private final com.anvicorp.api.admin.onboardingtemplates
             .OnboardingTemplateAdminService onboardingTemplateAdminService;
+    /** Post-enum-widening — sensitivity / category come from the DB
+     *  template row (enum-seeded or admin-added). Keeps the upload
+     *  vault tagging correct for BOTH enum + custom keys. */
+    private final OnboardingDocumentTemplateRepository templateRepository;
 
     // ── Read ─────────────────────────────────────────────────────────────
 
@@ -114,7 +120,9 @@ public class InternDocumentService {
                             + "Wait for ERM to reject a document or contact them to reopen.");
         }
 
-        SkyzenDocument doc = t.getDocumentKey();
+        String key = t.getDocumentKey();
+        OnboardingDocumentTemplate doc = key == null ? null
+                : templateRepository.findByKey(key).orElse(null);
         String sensitivity = doc != null ? doc.getSensitivity() : "GENERAL";
         String category = doc != null ? doc.getCategory() : "OTHER";
 
@@ -301,22 +309,24 @@ public class InternDocumentService {
     }
 
     private InternTaskView toInternTaskView(DocumentTask t) {
-        SkyzenDocument d = t.getDocumentKey();
-        // Bug fix: prior code called d.publicUrl() which is hardcoded
-        // to the seeded static asset from the SkyzenDocument enum and
-        // NEVER read OnboardingDocumentTemplate.currentDocumentId —
-        // so every admin upload via the Onboarding Documents admin
-        // page was silently ignored on the intern side (they always
-        // got the default). Route through the admin resolver instead:
-        // S3-backed admin-uploaded file wins over the legacy static
-        // enum asset, null returned for upload-only docs.
-        String templateUrl = d != null
-                ? onboardingTemplateAdminService.resolveDownloadUrlOrNull(d.name())
+        // Post-enum-widening — the key is a String (enum-seeded or
+        // admin-added custom). Resolve title / category / sensitivity
+        // from the {@code onboarding_document_templates} table which
+        // covers BOTH cases; fall through to the raw key if the row was
+        // deleted out-of-band so legacy tasks still surface.
+        String key = t.getDocumentKey();
+        OnboardingDocumentTemplate d = key == null ? null
+                : templateRepository.findByKey(key).orElse(null);
+        // Route through the admin resolver so admin-uploaded S3 files
+        // win over the legacy static enum asset, and custom keys also
+        // resolve to their uploaded blank PDF (or null for upload-only).
+        String templateUrl = key != null
+                ? onboardingTemplateAdminService.resolveDownloadUrlOrNull(key)
                 : null;
         return new InternTaskView(
                 t.getId(),
-                d,
-                d != null ? d.getTitle() : "(unknown)",
+                key,
+                d != null ? d.getTitle() : (key != null ? key : "(unknown)"),
                 d != null ? d.getDescription() : null,
                 d != null ? d.getCategory() : null,
                 d != null ? d.getSensitivity() : null,

@@ -174,7 +174,7 @@ public class OnboardingMigrationRunner implements CommandLineRunner {
                 }
                 DocumentTask t = DocumentTask.builder()
                         .packetId(newPacket.getId())
-                        .documentKey(doc)
+                        .documentKey(doc.name())
                         .status(mapTaskStatus((String) it.get("status")))
                         .uploadedFileId(uuid(it.get("document_id")))
                         .submittedAt(instantOf((java.sql.Timestamp) it.get("submitted_at")))

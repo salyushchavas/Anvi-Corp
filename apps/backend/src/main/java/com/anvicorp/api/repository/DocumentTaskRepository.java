@@ -1,7 +1,6 @@
 package com.anvicorp.api.repository;
 
 import com.anvicorp.api.entity.DocumentTask;
-import com.anvicorp.api.erm.documents.SkyzenDocument;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -19,9 +18,10 @@ public interface DocumentTaskRepository
 
     List<DocumentTask> findByPacketIdOrderByCreatedAtAsc(UUID packetId);
 
-    /** ERM Phase 8.2 — replaces findByPacketIdAndTemplateId. */
+    /** ERM Phase 8.2 — replaces findByPacketIdAndTemplateId. Widened
+     *  enum→String to accept admin-defined custom keys. */
     Optional<DocumentTask> findByPacketIdAndDocumentKey(
-            UUID packetId, SkyzenDocument documentKey);
+            UUID packetId, String documentKey);
 
     long countByPacketIdAndStatus(UUID packetId, String status);
 

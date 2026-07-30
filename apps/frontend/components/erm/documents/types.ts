@@ -1,9 +1,8 @@
-// ERM Phase 8.2 — mirrors of com.skyzen.careers.erm.documents.DocumentDtos.
-// All template-management types are gone — the 13 docs live in
-// `lib/skyzen-documents.ts` and the backend exposes a `documentKey` (the
-// SkyzenDocument enum name) + `templatePublicUrl` on every task DTO.
-
-import type { SkyzenDocumentKey } from '@/lib/careers/skyzen-documents';
+// ERM Phase 8.2 → 8.9 — mirrors of com.anvicorp.api.erm.documents.DocumentDtos.
+// documentKey was widened from the SkyzenDocument enum to a free-form
+// String so admin-added custom templates (keys outside the enum) are
+// assignable end-to-end. The 13 enum-seeded docs still live in
+// `lib/skyzen-documents.ts` for the static-fallback preview URL.
 
 export type PacketStatus =
   | 'DRAFT'
@@ -53,7 +52,7 @@ export type DocumentPacketListPage = {
 
 export type TaskSummary = {
   taskId: string;
-  documentKey: SkyzenDocumentKey | null;
+  documentKey: string | null;
   templateTitle: string;
   category: string | null;
   sensitivity: string | null;
@@ -94,7 +93,7 @@ export type DocumentTaskRow = {
   internLifecycleId: string | null;
   internUserId: string | null;
   internName: string | null;
-  documentKey: SkyzenDocumentKey | null;
+  documentKey: string | null;
   templateTitle: string;
   category: string | null;
   status: TaskStatus;
@@ -143,7 +142,7 @@ export type ReviewEventEntry = {
 export type DocumentTaskDetail = {
   taskId: string;
   packetId: string;
-  documentKey: SkyzenDocumentKey | null;
+  documentKey: string | null;
   templateTitle: string;
   category: string | null;
   sensitivity: string | null;
@@ -187,9 +186,9 @@ export type ReasonCodeGroup = {
 
 export type AssignPacketRequest = {
   internLifecycleId: string;
-  selectedDocumentKeys: SkyzenDocumentKey[];
+  selectedDocumentKeys: string[];
   customInstructions?: string | null;
-  perDocumentInstructions?: Partial<Record<SkyzenDocumentKey, string>> | null;
+  perDocumentInstructions?: Record<string, string> | null;
 };
 
 export type ReviewTaskRequest = {
@@ -218,7 +217,7 @@ export type BulkReviewResult = {
 
 export type InternTaskView = {
   taskId: string;
-  documentKey: SkyzenDocumentKey | null;
+  documentKey: string | null;
   templateTitle: string;
   description: string | null;
   category: string | null;

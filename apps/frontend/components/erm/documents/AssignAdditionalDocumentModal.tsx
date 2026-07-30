@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { X, ExternalLink, RotateCcw, AlertCircle } from 'lucide-react';
+import { X, ExternalLink, RotateCcw } from 'lucide-react';
 import api from '@/lib/careers/api';
 import {
   SKYZEN_DOCUMENT_BY_KEY,
@@ -26,9 +26,9 @@ type Props = {
 /**
  * ERM "assign additional / forgotten document" modal. Same list source
  * as AssignPacketModal: {@code /api/v1/erm/onboarding-templates/pickable}
- * so admin-added templates surface here too. Admin-added rows show but
- * are disabled until the DocumentTask.documentKey entity refactor
- * lands.
+ * so admin-added templates surface here too. Post-widening of
+ * DocumentTask.documentKey (enum → String) both enum-seeded AND
+ * admin-added custom rows are selectable + assignable end-to-end.
  */
 interface PickableTemplate {
   key: string;
@@ -87,8 +87,7 @@ export default function AssignAdditionalDocumentModal({
 
   const categories = useMemo(() => Array.from(grouped.keys()).sort(), [grouped]);
 
-  function toggle(k: string, disabled: boolean) {
-    if (disabled) return;
+  function toggle(k: string) {
     setSelected((cur) => {
       const next = new Set(cur);
       if (next.has(k)) next.delete(k); else next.add(k);
@@ -185,8 +184,10 @@ export default function AssignAdditionalDocumentModal({
                 </h4>
                 <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
                   {items.map((d) => {
-                    const enumSpec = SKYZEN_DOCUMENT_BY_KEY[d.key as SkyzenDocumentKey];
-                    const enumAssignable = !!enumSpec;
+                    // Post-widening — every DB template row (enum-seeded
+                    // AND admin-added custom) is selectable + assignable
+                    // end-to-end.
+                    const isCustom = !SKYZEN_DOCUMENT_BY_KEY[d.key as SkyzenDocumentKey];
                     const on = selected.has(d.key);
                     const currentStatus = statusByKey.get(d.key);
                     const sensBadge = SENSITIVITY_BADGE[d.sensitivity as SkyzenDocumentSensitivity]
@@ -199,15 +200,11 @@ export default function AssignAdditionalDocumentModal({
                           id={`add-doc-${d.key}`}
                           type="checkbox"
                           checked={on}
-                          onChange={() => toggle(d.key, !enumAssignable)}
-                          disabled={!enumAssignable}
-                          className="mt-1 disabled:opacity-40"
+                          onChange={() => toggle(d.key)}
+                          className="mt-1"
                         />
                         <label htmlFor={`add-doc-${d.key}`}
-                          className={
-                            'flex-1 '
-                            + (enumAssignable ? 'cursor-pointer' : 'cursor-not-allowed opacity-70')
-                          }>
+                          className="flex-1 cursor-pointer">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-sm font-medium text-slate-900">
                               {d.title}
@@ -215,16 +212,11 @@ export default function AssignAdditionalDocumentModal({
                             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${sensBadge}`}>
                               {sensLabel}
                             </span>
-                            {d.hasCustomFile && (
-                              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
-                                admin file
-                              </span>
-                            )}
                             {currentStatus && <StateBadge status={currentStatus} />}
-                            {!enumAssignable && (
-                              <span className="inline-flex items-center gap-0.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900"
-                                title="Admin-added templates aren't assignable yet — entity refactor pending. Enum-seeded templates work as before.">
-                                <AlertCircle className="h-2.5 w-2.5" /> admin-added — assignment pending
+                            {isCustom && (
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700"
+                                title="Admin-added template — key is stored as-is and DB-validated on assign.">
+                                admin-added
                               </span>
                             )}
                           </div>
@@ -232,7 +224,7 @@ export default function AssignAdditionalDocumentModal({
                             <p className="text-[11px] text-slate-500">{d.description}</p>
                           )}
                         </label>
-                        <PreviewLink templateKey={d.key} enumSpec={enumSpec} />
+                        <PreviewLink templateKey={d.key} documentType={d.documentType} />
                       </li>
                     );
                   })}
@@ -297,39 +289,57 @@ export default function AssignAdditionalDocumentModal({
   );
 }
 
-function PreviewLink({ templateKey, enumSpec }: {
+/**
+ * Preview button — always hits the resolver on click (no baked-in
+ * static fallback), so ERM sees whatever the template's
+ * currentDocumentId points at RIGHT NOW. Mirrors the admin preview +
+ * intern download button — same round-trip, same freshness guarantee.
+ */
+function PreviewLink({ templateKey, documentType }: {
   templateKey: string;
-  enumSpec: { publicUrl: string | null } | undefined;
+  documentType: string;
 }) {
   const [busy, setBusy] = useState(false);
-  const staticFallback = enumSpec?.publicUrl ?? null;
+  const [err, setErr] = useState<string | null>(null);
+
   async function open() {
     if (busy) return;
     setBusy(true);
+    setErr(null);
     try {
       const res = await api.get<{ downloadUrl: string | null }>(
         `/api/v1/onboarding-templates/${encodeURIComponent(templateKey)}/download-url`);
-      const url = res.data?.downloadUrl ?? staticFallback;
-      if (url) window.open(url, '_blank', 'noopener,noreferrer');
-    } catch {
-      if (staticFallback) window.open(staticFallback, '_blank', 'noopener,noreferrer');
+      const url = res.data?.downloadUrl;
+      if (!url) throw new Error('No template file available');
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: string } }; message?: string };
+      setErr(ax.response?.data?.error ?? ax.message ?? 'Preview failed');
     } finally {
       setBusy(false);
     }
   }
-  if (!enumSpec && !staticFallback) {
+
+  if (documentType !== 'TEMPLATE') {
     return <span className="text-[11px] text-slate-400">Upload only</span>;
   }
   return (
-    <button
-      type="button"
-      onClick={open}
-      disabled={busy}
-      className="inline-flex items-center gap-0.5 text-[11px] font-medium text-brand-700 hover:underline disabled:opacity-60"
-      title="Open the current blank PDF in a new tab (admin file if uploaded, else the seeded default)"
-    >
-      {busy ? 'Opening…' : 'Preview'} <ExternalLink className="h-3 w-3" />
-    </button>
+    <div className="flex flex-col items-end">
+      <button
+        type="button"
+        onClick={open}
+        disabled={busy}
+        className="inline-flex items-center gap-0.5 text-[11px] font-medium text-brand-700 hover:underline disabled:opacity-60"
+        title="Open the current blank PDF in a new tab — resolves fresh so admin replacements appear immediately"
+      >
+        {busy ? 'Opening…' : 'Preview'} <ExternalLink className="h-3 w-3" />
+      </button>
+      {err && (
+        <p className="mt-1 max-w-[180px] truncate text-[10px] text-red-600" title={err}>
+          {err}
+        </p>
+      )}
+    </div>
   );
 }
 

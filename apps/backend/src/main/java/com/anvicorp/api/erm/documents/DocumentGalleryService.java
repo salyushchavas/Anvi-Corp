@@ -1,5 +1,7 @@
 package com.anvicorp.api.erm.documents;
 
+import com.anvicorp.api.admin.onboardingtemplates.OnboardingDocumentTemplate;
+import com.anvicorp.api.admin.onboardingtemplates.OnboardingDocumentTemplateRepository;
 import com.anvicorp.api.entity.Document;
 import com.anvicorp.api.entity.DocumentPacket;
 import com.anvicorp.api.entity.DocumentTask;
@@ -46,6 +48,10 @@ public class DocumentGalleryService {
     private final DocumentPacketRepository packetRepository;
     private final DocumentTaskRepository taskRepository;
     private final DocumentRepository documentRepository;
+    /** Post-enum-widening — document_key is now a String (enum-seeded or
+     *  admin-added). Title / category / sensitivity come from the DB
+     *  template row instead of the SkyzenDocument enum. */
+    private final OnboardingDocumentTemplateRepository templateRepository;
 
     /**
      * Per-intern gallery roster. {@code status} is a coarse filter:
@@ -245,7 +251,9 @@ public class DocumentGalleryService {
 
     private DocumentGalleryDtos.TaskView toTaskView(
             DocumentTask t, Map<UUID, Document> documentsById) {
-        SkyzenDocument key = t.getDocumentKey();
+        String key = t.getDocumentKey();
+        OnboardingDocumentTemplate tpl = key == null ? null
+                : templateRepository.findByKey(key).orElse(null);
         DocumentGalleryDtos.FileRef fileRef = null;
         if (t.getUploadedFileId() != null) {
             Document d = documentsById.get(t.getUploadedFileId());
@@ -265,10 +273,10 @@ public class DocumentGalleryService {
         }
         return new DocumentGalleryDtos.TaskView(
                 t.getId(),
-                key != null ? key.name() : null,
-                key != null ? key.getTitle() : null,
-                key != null ? key.getCategory() : null,
-                key != null ? key.getSensitivity() : null,
+                key,
+                tpl != null ? tpl.getTitle() : key,
+                tpl != null ? tpl.getCategory() : null,
+                tpl != null ? tpl.getSensitivity() : null,
                 t.getStatus(),
                 t.getVersion(),
                 fileRef,

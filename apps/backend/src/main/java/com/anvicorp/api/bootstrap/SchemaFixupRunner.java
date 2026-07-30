@@ -2,7 +2,6 @@ package com.anvicorp.api.bootstrap;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.anvicorp.api.erm.documents.SkyzenDocument;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -2267,28 +2266,20 @@ public class SchemaFixupRunner implements CommandLineRunner {
     }
 
     /**
-     * Re-sync the {@code document_tasks.document_key} CHECK constraint
-     * with the current {@link SkyzenDocument} enum value list. Runs on
-     * every boot — NOT migration_log-gated — because the enum is still
-     * growing (Phase E added 10 upload-only docs; future phases will
-     * likely add more). Idempotent: if the existing constraint already
-     * contains every current enum value, no-op.
+     * ERM Phase 8.9 — DROP any value-whitelist CHECK constraint on
+     * {@code document_tasks.document_key}. Post-widening, the column is
+     * a String that carries either an enum-seeded key ({@code W4_2026})
+     * or an admin-added custom key ({@code DD_FORM}); a CHECK constraint
+     * pinned to the {@code SkyzenDocument} enum values would 23514 every
+     * insert of a custom key. Validation moved to the application layer:
+     * {@code DocumentPacketService.requireTemplate} rejects keys that
+     * aren't rows in {@code onboarding_document_templates}.
      *
-     * <p>Background: Hibernate auto-generates a CHECK constraint with
-     * the enum values that exist when the column is first created.
-     * {@code spring.jpa.hibernate.ddl-auto=update} does NOT refresh
-     * existing CHECK constraints when the Java enum grows — so
-     * inserting a PASSPORT_FRONT row hits a 23514
-     * {@code check_violation}, which the assignPacket flow surfaces as
-     * "Data integrity violation". This sync drops the stale constraint
-     * and recreates it with the full current value list so every
-     * SkyzenDocument value is accepted.</p>
-     *
-     * <p>Longer-term: the right call is probably to drop the CHECK
-     * entirely and rely on application-layer enforcement
-     * (Hibernate's @Enumerated(STRING) only ever writes a valid value;
-     * out-of-band raw SQL is the only path to a bad row). Tracked as
-     * a follow-up — for now we keep the safety net.</p>
+     * <p>Idempotent + every-boot — no migration_log gate so a freshly
+     * introduced constraint (Hibernate auto-DDL, manual DBA add) is
+     * removed the next time the app comes up. Only drops constraints
+     * whose definition contains a single-quoted literal (i.e. an IN
+     * list); NOT NULL / length / FK remain intact.</p>
      */
     private void syncDocumentKeyCheckConstraint() {
         final String table = "document_tasks";
@@ -2304,11 +2295,6 @@ public class SchemaFixupRunner implements CommandLineRunner {
                 return;
             }
 
-            List<String> currentValues = java.util.Arrays
-                    .stream(SkyzenDocument.values())
-                    .map(Enum::name)
-                    .toList();
-
             List<Map<String, Object>> constraints = jdbcTemplate.queryForList(
                     "SELECT con.conname AS name, "
                             + "pg_get_constraintdef(con.oid) AS def "
@@ -2321,54 +2307,30 @@ public class SchemaFixupRunner implements CommandLineRunner {
                             + "  AND con.contype = 'c'",
                     table, column);
 
-            boolean aligned = constraints.stream().anyMatch(c -> {
-                String def = String.valueOf(c.get("def"));
-                return currentValues.stream().allMatch(
-                        v -> def.contains("'" + v + "'"));
-            });
-            if (aligned) {
-                log.debug("[SchemaFixup] {}.{} CHECK already covers every "
-                                + "SkyzenDocument value — skip", table, column);
+            List<Map<String, Object>> whitelist = constraints.stream()
+                    .filter(c -> String.valueOf(c.get("def")).contains("'"))
+                    .toList();
+            if (whitelist.isEmpty()) {
+                log.debug("[SchemaFixup] {}.{} — no value-whitelist CHECK "
+                        + "constraint to drop", table, column);
                 return;
             }
 
-            String before = constraints.stream()
-                    .map(c -> c.get("name") + " => " + c.get("def"))
-                    .reduce((a, b) -> a + " | " + b)
-                    .orElse("(none)");
-
-            for (Map<String, Object> c : constraints) {
+            for (Map<String, Object> c : whitelist) {
                 String name = String.valueOf(c.get("name"));
-                String def = String.valueOf(c.get("def"));
-                // Same heuristic as V1 — only drop value-whitelist
-                // constraints (definition contains a single-quoted
-                // token). NOT NULL / length / FK constraints are
-                // left intact.
-                if (!def.contains("'")) continue;
                 try {
                     jdbcTemplate.execute(
                             "ALTER TABLE " + table
                                     + " DROP CONSTRAINT IF EXISTS " + name);
+                    log.info("[SchemaFixup] dropped {}.{} CHECK constraint {} "
+                                    + "— column is now free-form String to allow "
+                                    + "admin-added custom document keys",
+                            table, column, name);
                 } catch (Exception e) {
                     log.warn("[SchemaFixup] drop {}.{} ({}) failed: {}",
                             table, column, name, e.getMessage());
                 }
             }
-
-            String inList = currentValues.stream()
-                    .map(v -> "'" + v + "'")
-                    .reduce((a, b) -> a + "," + b)
-                    .orElse("''");
-            String newName = table + "_" + column + "_check";
-            jdbcTemplate.execute(
-                    "ALTER TABLE " + table
-                            + " ADD CONSTRAINT " + newName
-                            + " CHECK (" + column
-                            + " IN (" + inList + "))");
-
-            log.info("[SchemaFixup] Re-synced {}.{} CHECK constraint to "
-                            + "{} SkyzenDocument values. Previous: [{}]",
-                    table, column, currentValues.size(), before);
         } catch (Exception e) {
             log.warn("[SchemaFixup] sync {}.{} CHECK failed (non-fatal): {}",
                     table, column, e.getMessage());
