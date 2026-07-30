@@ -6,7 +6,6 @@ import com.anvicorp.api.mail.entity.MailDomain;
 import com.anvicorp.api.mail.entity.MailRole;
 import com.anvicorp.api.mail.repository.MailAccountRepository;
 import com.anvicorp.api.mail.repository.MailDomainRepository;
-import com.anvicorp.api.notification.NotificationSenderRoles;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -72,13 +71,20 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
      *  drops the column default. */
     private static final long DEFAULT_QUOTA_BYTES = 1_073_741_824L;
 
+    // Literal local-parts — MUST STAY IN LOCK-STEP with
+    // com.anvicorp.api.notification.NotificationSenderRoles constants
+    // ("noreply" / "erm" / "trainer" / "evaluator" / "manager"). Not
+    // imported from that class because those constants are package-
+    // private in the notification package and would fail to compile
+    // from this bootstrap package. If NotificationSenderRoles ever
+    // makes them public, swap this list back to the constants.
     private static final List<RoleMailbox> ROLE_MAILBOXES = List.of(
-            new RoleMailbox(NotificationSenderRoles.NOREPLY,   "Anvi (No Reply)"),
-            new RoleMailbox(NotificationSenderRoles.ERM,       "Anvi ERM"),
-            new RoleMailbox(NotificationSenderRoles.TRAINER,   "Anvi Trainer"),
-            new RoleMailbox(NotificationSenderRoles.EVALUATOR, "Anvi Evaluator"),
-            new RoleMailbox(NotificationSenderRoles.MANAGER,   "Anvi Manager"),
-            new RoleMailbox("reporting-manager",               "Anvi Reporting Manager"));
+            new RoleMailbox("noreply",           "Anvi (No Reply)"),
+            new RoleMailbox("erm",               "Anvi ERM"),
+            new RoleMailbox("trainer",           "Anvi Trainer"),
+            new RoleMailbox("evaluator",         "Anvi Evaluator"),
+            new RoleMailbox("manager",           "Anvi Manager"),
+            new RoleMailbox("reporting-manager", "Anvi Reporting Manager"));
 
     private record RoleMailbox(String localPart, String displayName) {}
 
