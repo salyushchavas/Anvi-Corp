@@ -140,7 +140,14 @@ public class DocumentVaultService {
                         "documents", ownerUserId.toString(), storageUuid + ".bin");
                 s3StorageService.putObject(storageKey, toWrite,
                         "application/octet-stream");
+                log.info("Uploaded document to S3 key={} category={} sensitivity={} "
+                        + "encryptedBytes={} originalBytes={}",
+                        storageKey, category, sensitivity, toWrite.length, bytes.length);
             } else {
+                log.warn("S3 not configured — writing document to EPHEMERAL local "
+                        + "disk at {}/{}. In production, set AWS_S3_* env vars so "
+                        + "compliance/PII documents persist across restarts.",
+                        storageRoot, ownerUserId);
                 Path dir = Paths.get(storageRoot, ownerUserId.toString());
                 Files.createDirectories(dir);
                 Path target = dir.resolve(storageUuid + ".bin");
