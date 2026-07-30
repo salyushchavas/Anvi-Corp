@@ -25,6 +25,21 @@ public final class DocumentDtos {
             Map<SkyzenDocument, String> perDocumentInstructions
     ) {}
 
+    /**
+     * ERM "assign additional / forgotten document" — layered on top of
+     * an existing packet so ERM doesn't have to rebuild the packet flow
+     * when they realise a doc was missed. Reuses SkyzenDocument keys +
+     * the per-task instructions map. Re-assigning a document that's
+     * already on the packet is graceful: an ACCEPTED / WAIVED task is
+     * reopened (bumped version, RESEND_REQUESTED), other statuses just
+     * re-notify without duplicating the row.
+     */
+    public record AddDocumentsRequest(
+            List<SkyzenDocument> selectedDocumentKeys,
+            String customInstructions,
+            Map<SkyzenDocument, String> perDocumentInstructions
+    ) {}
+
     // ── Packets ─────────────────────────────────────────────────────────
 
     public record DocumentPacketRow(

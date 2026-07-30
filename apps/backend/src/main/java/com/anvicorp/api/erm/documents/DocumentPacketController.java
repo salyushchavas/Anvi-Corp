@@ -68,6 +68,23 @@ public class DocumentPacketController {
         return service.assignPacket(req, caller);
     }
 
+    /**
+     * ERM "assign additional / forgotten document" — layered on top of
+     * an existing packet. Idempotent per (packet, documentKey): a doc
+     * already on the packet is reopened (if closed) or just re-notified
+     * (if in-flight); a new doc is created as a fresh PENDING task.
+     * Reuses {@code DocumentPacketAssignedEvent} for the intern email +
+     * in-app nudge.
+     */
+    @PostMapping("/document-packets/{id}/add-documents")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public DocumentDtos.DocumentPacketDetail addDocuments(
+            @PathVariable UUID id,
+            @RequestBody DocumentDtos.AddDocumentsRequest req,
+            @AuthenticationPrincipal User caller) {
+        return service.addDocumentsToPacket(id, req, caller);
+    }
+
     @PostMapping("/document-packets/{id}/cancel")
     @PreAuthorize("hasRole('SUPER_ADMIN')")
     public DocumentDtos.DocumentPacketDetail cancel(

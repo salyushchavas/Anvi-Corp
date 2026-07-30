@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronLeft, ExternalLink } from 'lucide-react';
+import { ChevronLeft, ExternalLink, Plus } from 'lucide-react';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import AssignAdditionalDocumentModal from '@/components/erm/documents/AssignAdditionalDocumentModal';
 import type {
   DocumentPacketDetail,
   TaskSummary,
@@ -23,6 +24,7 @@ export default function DocumentPacketDetailPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -166,7 +168,15 @@ export default function DocumentPacketDetailPage() {
           </table>
         </div>
 
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            disabled={p.status === 'CANCELLED'}
+            className="inline-flex items-center gap-1 rounded-md border border-brand-300 bg-white px-3 py-1.5 text-xs font-medium text-brand-800 hover:bg-brand-50 disabled:opacity-50"
+          >
+            <Plus className="h-3 w-3" /> Assign additional document
+          </button>
           <button
             type="button"
             onClick={waivePending}
@@ -184,6 +194,18 @@ export default function DocumentPacketDetailPage() {
             Cancel packet (SUPER_ADMIN)
           </button>
         </div>
+
+        <AssignAdditionalDocumentModal
+          open={addOpen}
+          packetId={p.packetId}
+          internName={p.internName}
+          existingTasks={p.tasks}
+          onClose={() => setAddOpen(false)}
+          onAssigned={() => {
+            setAddOpen(false);
+            void load();
+          }}
+        />
       </DashboardLayout>
     </ProtectedRoute>
   );

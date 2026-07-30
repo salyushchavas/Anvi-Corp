@@ -249,6 +249,176 @@ public class DocumentPacketService {
         return toPacketDetail(pk);
     }
 
+    // ── Assign additional / forgotten documents ──────────────────────────
+
+    /**
+     * ERM add-more-docs path. Layered on top of the existing packet:
+     *
+     * <ul>
+     *   <li>Docs not yet on the packet → create a fresh PENDING task
+     *       exactly like {@link #assignPacket}.</li>
+     *   <li>Docs already on the packet in a terminal-good status
+     *       (ACCEPTED / WAIVED) → reopen: bump version, flip to
+     *       RESEND_REQUESTED, clear the prior review/submit metadata,
+     *       and unlock the packet so the intern can act.</li>
+     *   <li>Docs already on the packet in any in-flight status
+     *       (PENDING / SUBMITTED / UNDER_REVIEW / REJECTED /
+     *       RESEND_REQUESTED) → keep the row untouched but include the
+     *       title in the re-notification so the intern is nudged.</li>
+     * </ul>
+     *
+     * <p>If the packet had already COMPLETED, adding a new or reopened
+     * task rolls its status back to IN_PROGRESS. Lifecycle status is
+     * intentionally NOT rolled back — an already-ACTIVE intern stays
+     * active while the supplemental doc is outstanding.</p>
+     *
+     * <p>Fires {@link DocumentPacketAssignedEvent} with the affected
+     * titles so the intern gets the same email + in-app notification
+     * they got for the original packet.</p>
+     */
+    @Transactional
+    public DocumentPacketDetail addDocumentsToPacket(
+            UUID packetId, AddDocumentsRequest req, User caller) {
+        requireErm(caller);
+        if (req == null || req.selectedDocumentKeys() == null
+                || req.selectedDocumentKeys().isEmpty()) {
+            throw new BadRequestException(
+                    "selectedDocumentKeys (≥1) are required");
+        }
+        List<SkyzenDocument> docs = new ArrayList<>(
+                new LinkedHashSet<>(req.selectedDocumentKeys()));
+        docs.removeIf(Objects::isNull);
+        if (docs.isEmpty()) {
+            throw new BadRequestException(
+                    "selectedDocumentKeys must contain ≥1 valid SkyzenDocument");
+        }
+
+        DocumentPacket pk = mustLoadPacket(packetId);
+        if ("CANCELLED".equals(pk.getStatus())) {
+            throw new ConflictException(
+                    "Packet is CANCELLED; cannot add documents");
+        }
+
+        InternLifecycle lc = lifecycleRepository.findById(pk.getInternLifecycleId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "InternLifecycle not found: " + pk.getInternLifecycleId()));
+        User intern = userRepository.findById(lc.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Intern user not found: " + lc.getUserId()));
+
+        Map<SkyzenDocument, String> perInstr = req.perDocumentInstructions() != null
+                ? req.perDocumentInstructions() : Map.of();
+        List<String> notifyTitles = new ArrayList<>();
+        List<String> addedKeys = new ArrayList<>();
+        List<String> reopenedKeys = new ArrayList<>();
+        List<String> renotifiedKeys = new ArrayList<>();
+        boolean anyReopenedFromTerminal = false;
+
+        for (SkyzenDocument d : docs) {
+            Optional<DocumentTask> existing =
+                    taskRepository.findByPacketIdAndDocumentKey(packetId, d);
+            if (existing.isEmpty()) {
+                DocumentTask task = DocumentTask.builder()
+                        .packetId(packetId)
+                        .documentKey(d)
+                        .taskInstructions(perInstr.get(d))
+                        .status("PENDING")
+                        .version(1)
+                        .build();
+                task = taskRepository.save(task);
+                appendLog(task.getId(), caller.getId(), "TEMPLATE_ASSIGNED",
+                        null, "PENDING", null, null);
+                notifyTitles.add(d.getTitle());
+                addedKeys.add(d.name());
+                continue;
+            }
+
+            DocumentTask t = existing.get();
+            String previous = t.getStatus();
+            if (Set.of("ACCEPTED", "WAIVED").contains(previous)) {
+                // Reopen — bump version, clear prior review/submit state
+                // so the intern sees a fresh task to re-upload.
+                t.setStatus("RESEND_REQUESTED");
+                t.setVersion(t.getVersion() == null ? 2 : t.getVersion() + 1);
+                t.setSubmittedAt(null);
+                t.setReviewedAt(null);
+                t.setReviewedById(null);
+                t.setReviewReasonCode(null);
+                t.setReviewComments(null);
+                t.setUploadedFileId(null);
+                t.setDownloadCount(0);
+                t.setLastDownloadedAt(null);
+                t.setDownloadedById(null);
+                // Preserve waived_* on the row for audit; status flip
+                // makes it re-active regardless.
+                String instr = perInstr.get(d);
+                if (instr != null && !instr.isBlank()) {
+                    t.setTaskInstructions(instr);
+                }
+                taskRepository.save(t);
+                appendLog(t.getId(), caller.getId(), "REASSIGNED",
+                        previous, "RESEND_REQUESTED", null,
+                        "ERM re-assigned an already-closed document");
+                notifyTitles.add(d.getTitle());
+                reopenedKeys.add(d.name());
+                anyReopenedFromTerminal = true;
+            } else {
+                // In-flight — just re-notify. Don't clobber intern's
+                // in-progress upload or ERM's pending review.
+                appendLog(t.getId(), caller.getId(), "RENOTIFIED",
+                        previous, previous, null,
+                        "ERM re-sent notification for an in-flight document");
+                notifyTitles.add(d.getTitle());
+                renotifiedKeys.add(d.name());
+            }
+        }
+
+        // If we added new tasks OR reopened terminal ones, a COMPLETED
+        // packet must roll back to IN_PROGRESS so the ERM listing +
+        // completion checks work again. Pure re-notify against in-flight
+        // tasks leaves the packet status alone.
+        if (!addedKeys.isEmpty() || anyReopenedFromTerminal) {
+            if ("COMPLETED".equals(pk.getStatus())) {
+                pk.setStatus("IN_PROGRESS");
+                pk.setCompletedAt(null);
+                if (Boolean.TRUE.equals(pk.getInternLocked())) {
+                    pk.setInternLocked(Boolean.FALSE);
+                }
+                packetRepository.save(pk);
+            } else if (Boolean.TRUE.equals(pk.getInternLocked())) {
+                // Adding fresh work reopens the packet for the intern.
+                pk.setInternLocked(Boolean.FALSE);
+                packetRepository.save(pk);
+            }
+        }
+
+        // Optional custom-instructions append (kept simple: overwrite
+        // only if caller supplied a non-blank value).
+        String extra = safeTrim(req.customInstructions());
+        if (extra != null) {
+            String cur = pk.getCustomInstructions();
+            pk.setCustomInstructions(cur == null || cur.isBlank()
+                    ? extra : cur + "\n\n" + extra);
+            packetRepository.save(pk);
+        }
+
+        writeAudit(pk.getId(), "DOCUMENT_PACKET_ADD_DOCUMENTS",
+                caller.getId(), intern.getId(),
+                Map.of("previousPacketStatus", pk.getStatus()),
+                Map.of("added", addedKeys,
+                        "reopened", reopenedKeys,
+                        "renotified", renotifiedKeys));
+        try {
+            eventPublisher.publishEvent(new DocumentPacketAssignedEvent(
+                    pk.getId(), lc.getId(), intern.getId(),
+                    caller.getId(), notifyTitles));
+        } catch (Exception e) {
+            log.warn("[DocumentPacket] add-documents event publish failed: {}",
+                    e.getMessage());
+        }
+        return toPacketDetail(pk);
+    }
+
     // ── Cancel + waive (SUPER_ADMIN) ─────────────────────────────────────
 
     @Transactional
