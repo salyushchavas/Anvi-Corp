@@ -1,16 +1,13 @@
 package com.anvicorp.api.bootstrap;
 
-import com.anvicorp.api.mail.entity.MailAccount;
-import com.anvicorp.api.mail.entity.MailAccountStatus;
 import com.anvicorp.api.mail.entity.MailDomain;
-import com.anvicorp.api.mail.entity.MailRole;
-import com.anvicorp.api.mail.repository.MailAccountRepository;
 import com.anvicorp.api.mail.repository.MailDomainRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -19,6 +16,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Provisions the acting-staff mail_accounts the BridgingEmailProvider
@@ -28,35 +26,45 @@ import java.util.Optional;
  * fifth guard resolves the sender by
  * {@code mailAccountRepository.findByLocalPartAndDomain_Id(senderLocalPart,
  * defaultDomain.id)}. The sender local-part comes from
- * {@link NotificationSenderRoles} — one of {@code noreply / erm / trainer
- * / evaluator / manager}. If the corresponding {@code mail_accounts}
- * row doesn't exist, the guard returns false and the entire notification
- * silently falls through to raw SMTP → the intern's personal Gmail.</p>
+ * {@link com.anvicorp.api.notification.NotificationSenderRoles} — one of
+ * {@code noreply / erm / trainer / evaluator / manager}. If the
+ * corresponding {@code mail_accounts} row doesn't exist, the guard
+ * returns false and the notification silently falls through to raw SMTP.</p>
+ *
+ * <h2>Why raw JDBC (not the JPA repository)</h2>
+ * An earlier iteration used {@code accountRepository.findByLocalPartAndDomain_Id}
+ * for the existence check, and the boot log claimed
+ * {@code created=0 skipped_existing=6} even though {@code SELECT ... FROM
+ * mail_accounts JOIN mail_domains WHERE name='anvicorp.com'} did NOT
+ * show the six role local-parts. The Spring Data derivation was
+ * matching something the operator's SQL didn't. To eliminate that whole
+ * class of ambiguity, this seeder now uses {@link JdbcTemplate} with
+ * literal {@code WHERE local_part = ? AND domain_id = ?} predicates —
+ * byte-identical to the operator's diagnostic SQL — for both the
+ * existence check AND the insert. If the seeder logs "skipped" now, it
+ * literally means the exact row is in the exact table under the exact
+ * domain the bridge's G5 lookup would use.
+ *
+ * <h2>Domain resolution alignment</h2>
+ * The bridge resolves the default domain via {@code mailDomainRepository
+ * .findByName("anvicorp.com")}. This seeder does the same first, then
+ * uses that domain's UUID for both existence checks and inserts. So
+ * seeder and bridge always agree on which {@code mail_domains} row they
+ * mean — no risk of the seeder creating rows under a duplicate/orphan
+ * domain that the bridge never checks.
  *
  * <h2>Boot-safety</h2>
  * <ol>
- *   <li>Opt-out kill-switch: {@code app.bootstrap.seed-role-mailboxes-enabled}
- *       (default {@code true}). If a future change makes this seeder
- *       hazardous, set env {@code SEED_ROLE_MAILBOXES_ENABLED=false} to
- *       skip it and unblock deploys without a code roll-back.</li>
+ *   <li>Kill-switch: {@code app.bootstrap.seed-role-mailboxes-enabled}
+ *       (default {@code true}).</li>
  *   <li>Per-mailbox {@link TransactionTemplate} with
- *       {@code PROPAGATION_REQUIRES_NEW} — every insert runs in its own
- *       short tx so a schema mismatch on one row (e.g. a new NOT NULL
- *       column the entity hasn't caught up to yet) rolls back only that
- *       row and never poisons the boot's outer tx.</li>
- *   <li>Every DB call wrapped in per-row try/catch AND an outer
- *       try/catch, both logging at warn — a run failure is never fatal.</li>
- *   <li>Mirrors {@link MailAdminSeeder}'s field-set exactly (the working
- *       sibling that provisions the SUPER_ADMIN mailbox), plus explicit
- *       {@code quotaBytes} so the row is safe even if the DDL default
- *       drifts.</li>
+ *       {@code PROPAGATION_REQUIRES_NEW} — one bad row rolls back
+ *       only itself.</li>
+ *   <li>Every DB call wrapped in per-row try/catch AND outer
+ *       try/catch — never fatal.</li>
+ *   <li>{@code run()} catches {@code Throwable} so a stray Error
+ *       can't fail the deploy.</li>
  * </ol>
- *
- * <p><b>Ordering</b>: {@code @Order(8)} — after {@link MailAdminSeeder}
- * ({@code @Order(7)}) so the default domain is already present when
- * MailAdminSeeder is enabled; but this seeder ALSO resolve-or-seeds the
- * domain on its own so it works even when MailAdminSeeder is disabled
- * (its default state).</p>
  */
 @Component
 @Order(8)
@@ -66,7 +74,7 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
 
     private static final String LOG_TAG = "[MailRoleAccountSeeder]";
     private static final String DEFAULT_DOMAIN = "anvicorp.com";
-    /** 1 GiB — matches {@link MailAccount}'s @Builder.Default. Set
+    /** 1 GiB — matches {@code MailAccount}'s @Builder.Default. Set
      *  explicitly here so the row is safe even if a DDL migration ever
      *  drops the column default. */
     private static final long DEFAULT_QUOTA_BYTES = 1_073_741_824L;
@@ -75,9 +83,7 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
     // com.anvicorp.api.notification.NotificationSenderRoles constants
     // ("noreply" / "erm" / "trainer" / "evaluator" / "manager"). Not
     // imported from that class because those constants are package-
-    // private in the notification package and would fail to compile
-    // from this bootstrap package. If NotificationSenderRoles ever
-    // makes them public, swap this list back to the constants.
+    // private in the notification package.
     private static final List<RoleMailbox> ROLE_MAILBOXES = List.of(
             new RoleMailbox("noreply",           "Anvi (No Reply)"),
             new RoleMailbox("erm",               "Anvi ERM"),
@@ -89,19 +95,15 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
     private record RoleMailbox(String localPart, String displayName) {}
 
     private final MailDomainRepository domainRepository;
-    private final MailAccountRepository accountRepository;
     private final PasswordEncoder passwordEncoder;
     private final PlatformTransactionManager transactionManager;
+    private final JdbcTemplate jdbcTemplate;
 
     @Value("${app.bootstrap.seed-role-mailboxes-enabled:true}")
     private boolean enabled;
 
     @Override
     public void run(String... args) {
-        // Outer belt for anything the inner catches miss (e.g. an
-        // unexpected Error thrown from static-init on lazy classes).
-        // A boot-time NPE / LinkageError here would otherwise fail the
-        // entire deploy — never worth it for a seeder.
         try {
             runInner();
         } catch (Throwable outer) {
@@ -132,57 +134,74 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
             log.warn("{} no default domain — skipping role mailbox seed", LOG_TAG);
             return;
         }
+        // The exact domain UUID both this seeder and BridgingEmailProvider's
+        // G5 will use. Logged so a future "created=0 skipped_existing=N"
+        // contradiction can be diagnosed at a glance.
+        UUID domainId = domain.getId();
+        log.info("{} using domain id={} name='{}' for existence check + insert",
+                LOG_TAG, domainId, domain.getName());
 
         int created = 0;
         int skipped = 0;
         int failed = 0;
         for (RoleMailbox rm : ROLE_MAILBOXES) {
             try {
-                boolean alreadyExists = tx.execute(status ->
-                        accountRepository
-                                .findByLocalPartAndDomain_Id(rm.localPart(), domain.getId())
-                                .isPresent());
-                if (Boolean.TRUE.equals(alreadyExists)) {
+                // Raw SQL — byte-identical to the operator's diagnostic
+                // query. If this returns >0, the row REALLY exists under
+                // this exact domain and the bridge's G5 will find it too.
+                Integer existing = tx.execute(status -> jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM mail_accounts "
+                                + "WHERE local_part = ? AND domain_id = ?",
+                        Integer.class, rm.localPart(), domainId));
+                int existingCount = existing == null ? 0 : existing;
+                if (existingCount > 0) {
                     skipped++;
                     continue;
                 }
+
+                // Insert via raw JDBC too — same reason: what you see in
+                // the seeder is what lands in the table. Column list
+                // mirrors MailAccount's @Column names exactly; the schema's
+                // defaults handle status/must_change columns even where
+                // the entity's @Builder.Default doesn't apply.
                 tx.executeWithoutResult(status -> {
-                    // Random discarded password — these mailboxes are
-                    // server-side FROM identities, not human logins. Must-
-                    // change + require-change flags force rotation if a
-                    // human ever tries to log in with a leaked secret.
-                    String randomPassword = java.util.UUID.randomUUID().toString();
-                    accountRepository.save(MailAccount.builder()
-                            .domain(domain)
-                            .localPart(rm.localPart())
-                            .displayName(rm.displayName())
-                            .passwordHash(passwordEncoder.encode(randomPassword))
-                            .role(MailRole.USER)
-                            .status(MailAccountStatus.ACTIVE)
-                            .mustChangePassword(true)
-                            .requireChangeOnFirstLogin(true)
-                            .quotaBytes(DEFAULT_QUOTA_BYTES)
-                            .build());
+                    UUID newId = UUID.randomUUID();
+                    String randomPassword = UUID.randomUUID().toString();
+                    jdbcTemplate.update(
+                            "INSERT INTO mail_accounts "
+                                    + "(id, domain_id, local_part, display_name, password_hash, "
+                                    + " role, status, must_change_password, "
+                                    + " require_change_on_first_login, quota_bytes, created_at) "
+                                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
+                            newId,
+                            domainId,
+                            rm.localPart(),
+                            rm.displayName(),
+                            passwordEncoder.encode(randomPassword),
+                            "USER",
+                            "ACTIVE",
+                            true,
+                            true,
+                            DEFAULT_QUOTA_BYTES);
                 });
                 created++;
-                log.info("{} provisioned role mailbox {}@{}",
-                        LOG_TAG, rm.localPart(), domain.getName());
+                log.info("{} provisioned role mailbox {}@{} (domain id={})",
+                        LOG_TAG, rm.localPart(), domain.getName(), domainId);
             } catch (Throwable perAccount) {
                 failed++;
-                log.warn("{} failed to seed {}@{}: {} — continuing (row rolled back, boot ok)",
-                        LOG_TAG, rm.localPart(), domain.getName(),
+                log.warn("{} failed to seed {}@{} (domain id={}): {} — continuing",
+                        LOG_TAG, rm.localPart(), domain.getName(), domainId,
                         perAccount.getMessage(), perAccount);
             }
         }
-        log.info("{} done — created={} skipped_existing={} failed={} domain={}",
-                LOG_TAG, created, skipped, failed, domain.getName());
+        log.info("{} done — created={} skipped_existing={} failed={} domain={} (id={})",
+                LOG_TAG, created, skipped, failed, domain.getName(), domainId);
     }
 
     /**
-     * Resolve the default domain, seeding a new row when missing. Both
-     * the read and the write run in their OWN {@code REQUIRES_NEW}
-     * transactions so a schema mismatch on {@code mail_domains} rolls
-     * back only itself.
+     * Resolve the default domain, seeding a new row when missing. Uses
+     * the SAME entrypoint the bridge uses ({@code findByName}) so both
+     * always resolve to the exact same UUID row.
      */
     private MailDomain resolveOrSeedDefaultDomain(TransactionTemplate tx) {
         Optional<MailDomain> byName = tx.execute(status ->
@@ -200,11 +219,7 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
             }
             return seeded;
         } catch (Throwable e) {
-            // Race with another instance seeding the same domain, or a
-            // unique-constraint violation on rerun — re-read once so a
-            // concurrent success is honored.
-            log.info("{} default domain seed threw ({}) — re-reading",
-                    LOG_TAG, e.getMessage());
+            log.info("{} default domain seed threw ({}) — re-reading", LOG_TAG, e.getMessage());
             Optional<MailDomain> retry = tx.execute(status ->
                     domainRepository.findByName(DEFAULT_DOMAIN));
             return retry != null ? retry.orElse(null) : null;
