@@ -30,6 +30,7 @@ import com.anvicorp.api.mail.rules.MailRuleEngine;
 import com.anvicorp.api.mail.rules.MailRuleEnvelope;
 import com.anvicorp.api.mail.sse.MailDeliveredEvent;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -40,6 +41,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -73,6 +75,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MailMessageService {
 
     private final MailMessageRepository messageRepository;
@@ -159,12 +162,54 @@ public class MailMessageService {
             throw new IllegalArgumentException("sender and recipient MailAccounts are required");
         }
         validateContent(subject, bodyText, bodyHtml);
+
+        // Diagnostic — prior "ghost delivery" evidence (bridge logs
+        // "delivered internally (committed)" but neither mail_messages nor
+        // mail_mailbox_entries rows land) meant the write path returned
+        // normally while Spring/Hibernate silently dropped the flush. The
+        // three defenses below make that impossible to happen without a
+        // visible symptom:
+        //   1) Log tx name + isActualTransactionActive so Railway logs
+        //      prove REQUIRES_NEW is honored (name should look like this
+        //      method's FQN; isActualTransactionActive() must be true).
+        //   2) Explicit messageRepository.flush() + entryRepository.flush()
+        //      after each phase forces Hibernate to hit the DB inside this
+        //      method — any constraint / NOT NULL / connection failure
+        //      throws from inside the try block and reaches the caller's
+        //      catch (bridge logs "internal delivery failed"). Prior code
+        //      let the flush happen at commit-time — after the bridge's
+        //      log line had already fired.
+        //   3) saveAndFlush on the sender's SENT entry (the very last
+        //      write) does the same on the terminal step, plus we
+        //      log-back the saved entity's id so we can verify in
+        //      Railway logs whether the row was persisted with a non-null
+        //      id (proves the row was inserted, not just merged into a
+        //      dead session).
+        String txName = TransactionSynchronizationManager.getCurrentTransactionName();
+        boolean actualTx = TransactionSynchronizationManager.isActualTransactionActive();
+        log.info("[MailBridge/deliver] entering tx={} isActualTx={} sender_id={}@{} recipient_id={}@{} subject='{}'",
+                txName, actualTx,
+                sender.getLocalPart(), sender.getDomain().getName(),
+                recipient.getLocalPart(), recipient.getDomain().getName(),
+                subject);
+
         MailMessage msg = newMessage(sender, subject, bodyText, bodyHtml, null);
+        messageRepository.flush();
+        log.info("[MailBridge/deliver] message row flushed id={} thread_id={} sender_account_id={}",
+                msg.getId(), msg.getThreadId(), msg.getSenderAccountId());
+
         Resolved r = new Resolved(List.of(recipient), List.of(), List.of());
         deliver(sender, msg, r);
-        entryRepository.save(MailMailboxEntry.builder()
+        entryRepository.flush();
+        log.info("[MailBridge/deliver] recipient entries flushed for msg={} recipient_account_id={}",
+                msg.getId(), recipient.getId());
+
+        MailMailboxEntry sent = entryRepository.saveAndFlush(MailMailboxEntry.builder()
                 .accountId(sender.getId()).messageId(msg.getId()).folder(MailFolder.SENT)
                 .isRead(true).build());
+        log.info("[MailBridge/deliver] sender SENT entry saveAndFlush ok entry_id={} account_id={} message_id={}",
+                sent.getId(), sent.getAccountId(), sent.getMessageId());
+
         return msg.getId();
     }
 
