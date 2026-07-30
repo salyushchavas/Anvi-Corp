@@ -391,16 +391,11 @@ function TaskCard({ task, packet, onChanged }: {
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          {task.templatePublicUrl && (
-            <a
-              href={task.templatePublicUrl}
-              target="_blank"
-              rel="noreferrer"
-              download
-              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-            >
-              <Download className="h-3.5 w-3.5" /> Template
-            </a>
+          {task.templatePublicUrl && task.documentKey && (
+            <TemplateDownloadButton
+              templateKey={task.documentKey}
+              fallbackUrl={task.templatePublicUrl}
+            />
           )}
           {canUpload && (
             <>
@@ -432,6 +427,49 @@ function TaskCard({ task, packet, onChanged }: {
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Fetch a FRESH presigned template URL on every click, rather than
+ * baking the presigned URL into an anchor at page-load time. Without
+ * this, after admin replaces a template file the intern's already-
+ * loaded page still holds a presigned URL for the OLD storage key —
+ * S3 happily serves the old bytes since soft-delete only marks the DB
+ * row, not the object. Re-fetching per click means the intern always
+ * gets whatever OnboardingDocumentTemplate.currentDocumentId resolves
+ * to RIGHT NOW.
+ */
+function TemplateDownloadButton({ templateKey, fallbackUrl }: {
+  templateKey: string;
+  fallbackUrl: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  async function download() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await api.get<{ downloadUrl: string | null }>(
+        `/api/v1/onboarding-templates/${encodeURIComponent(templateKey)}/download-url`);
+      const url = res.data?.downloadUrl ?? fallbackUrl;
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    } catch {
+      // Backend resolver failed — fall back to whatever the packet-view
+      // handed us at page-load time. Still better than a broken click.
+      if (fallbackUrl) window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={download}
+      disabled={busy}
+      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+    >
+      <Download className="h-3.5 w-3.5" /> {busy ? 'Opening…' : 'Template'}
+    </button>
   );
 }
 
