@@ -154,10 +154,17 @@ public class BridgingEmailProvider implements EmailProvider {
                 return false;
             }
 
+            // deliverInternalNotification runs in its own REQUIRES_NEW tx,
+            // so by the time this call returns the mail_messages +
+            // mail_mailbox_entries rows are COMMITTED — the log below can
+            // truthfully claim persistence. Under the previous default
+            // REQUIRED propagation, this log fired mid-caller-tx and lied
+            // whenever the caller (or its afterCommit host) later rolled
+            // back — the "delivered" log stayed but the rows vanished.
             mailMessageService.deliverInternalNotification(
                     senderOpt.get(), recipientOpt.get(),
                     subject, plainBody, htmlBody);
-            log.info("[MailBridge] delivered internally from={}@{} to={} subject='{}'",
+            log.info("[MailBridge] delivered internally (committed) from={}@{} to={} subject='{}'",
                     senderLocalPart, domain.getName(),
                     recipientOpt.get().getLocalPart() + "@" + domain.getName(),
                     subject);

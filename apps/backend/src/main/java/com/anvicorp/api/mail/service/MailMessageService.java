@@ -38,6 +38,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -127,8 +128,31 @@ public class MailMessageService {
      * message id (currently informational — callers just care that the send
      * committed). Cross-domain is impossible here: the bridge only resolves
      * staff and intern mailboxes from the same {@code anvicorp.com} domain.
+     *
+     * <p><b>Propagation.REQUIRES_NEW</b> — the mail write MUST commit
+     * independently of any caller transaction. Two callsites matter:</p>
+     * <ol>
+     *   <li>Synchronous fan-outs called mid-business-tx (e.g. a trainer
+     *       assign path that also does other work after the notify) — a
+     *       later failure in the business tx would roll back the mail
+     *       write under default REQUIRED propagation. Delivered-log +
+     *       durable state would disagree.</li>
+     *   <li>{@code TransactionSynchronization.afterCommit} callbacks —
+     *       Spring's default {@code REQUIRED} joins whatever tx state is
+     *       still bound to the thread (the just-committed parent tx is
+     *       being torn down), so writes vanish silently even though the
+     *       parent already committed. Trainer project assignment hits
+     *       this path via {@code TrainerProjectAssignmentService} →
+     *       {@code afterCommit} → {@code ProjectNotificationDispatcher}
+     *       → {@code InternNotificationService} → bridge → here.</li>
+     * </ol>
+     * REQUIRES_NEW forces a genuinely fresh Hibernate Session + tx so the
+     * write commits regardless of caller context — mirrors {@code
+     * UserNotificationDispatcher.dispatch} which uses the same propagation
+     * for the same reason (in-app notifications persist; internal mail
+     * needs the same durability guarantee).
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public UUID deliverInternalNotification(MailAccount sender, MailAccount recipient,
                                              String subject, String bodyText, String bodyHtml) {
         if (sender == null || recipient == null) {
