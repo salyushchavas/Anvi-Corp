@@ -9,10 +9,14 @@ import com.anvicorp.api.mail.repository.MailDomainRepository;
 import com.anvicorp.api.notification.NotificationSenderRoles;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Optional;
@@ -28,28 +32,32 @@ import java.util.Optional;
  * {@link NotificationSenderRoles} — one of {@code noreply / erm / trainer
  * / evaluator / manager}. If the corresponding {@code mail_accounts}
  * row doesn't exist, the guard returns false and the entire notification
- * silently falls through to raw SMTP → the intern's personal Gmail.
- * Every List-2A internal-mail event was hitting this because no seeder
- * was previously provisioning these role mailboxes — {@code RoleAccountSeeder}
- * only creates {@code users} rows (careers login), and
- * {@code MailAdminSeeder} only seeds one SUPER_ADMIN mailbox.</p>
+ * silently falls through to raw SMTP → the intern's personal Gmail.</p>
  *
- * <p><b>Idempotent</b>: on each boot, for each role local-part, checks
- * {@code mail_accounts} on the default domain and inserts only if
- * missing. A password hash is required by the schema (NOT NULL), so we
- * store a BCrypt of a random long token that's discarded — these
- * mailboxes are server-side sender identities, not human logins.
- * {@code mustChangePassword=true} plus {@code requireChangeOnFirstLogin=true}
- * so if a human ever does try to log in with a leaked password they're
- * force-rotated immediately.</p>
+ * <h2>Boot-safety</h2>
+ * <ol>
+ *   <li>Opt-out kill-switch: {@code app.bootstrap.seed-role-mailboxes-enabled}
+ *       (default {@code true}). If a future change makes this seeder
+ *       hazardous, set env {@code SEED_ROLE_MAILBOXES_ENABLED=false} to
+ *       skip it and unblock deploys without a code roll-back.</li>
+ *   <li>Per-mailbox {@link TransactionTemplate} with
+ *       {@code PROPAGATION_REQUIRES_NEW} — every insert runs in its own
+ *       short tx so a schema mismatch on one row (e.g. a new NOT NULL
+ *       column the entity hasn't caught up to yet) rolls back only that
+ *       row and never poisons the boot's outer tx.</li>
+ *   <li>Every DB call wrapped in per-row try/catch AND an outer
+ *       try/catch, both logging at warn — a run failure is never fatal.</li>
+ *   <li>Mirrors {@link MailAdminSeeder}'s field-set exactly (the working
+ *       sibling that provisions the SUPER_ADMIN mailbox), plus explicit
+ *       {@code quotaBytes} so the row is safe even if the DDL default
+ *       drifts.</li>
+ * </ol>
  *
- * <p><b>Domain</b>: uses whichever domain {@link MailAdminSeeder} /
- * {@code SchemaFixupRunner} left as the default — first ACTIVE domain
- * by name lookup, or seeds {@code anvicorp.com} as a last resort.</p>
- *
- * <p><b>Ordering</b>: runs at {@code @Order(8)} — after
- * {@link MailAdminSeeder} ({@code @Order(7)}) so the domain row is
- * definitely present.</p>
+ * <p><b>Ordering</b>: {@code @Order(8)} — after {@link MailAdminSeeder}
+ * ({@code @Order(7)}) so the default domain is already present when
+ * MailAdminSeeder is enabled; but this seeder ALSO resolve-or-seeds the
+ * domain on its own so it works even when MailAdminSeeder is disabled
+ * (its default state).</p>
  */
 @Component
 @Order(8)
@@ -59,10 +67,11 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
 
     private static final String LOG_TAG = "[MailRoleAccountSeeder]";
     private static final String DEFAULT_DOMAIN = "anvicorp.com";
+    /** 1 GiB — matches {@link MailAccount}'s @Builder.Default. Set
+     *  explicitly here so the row is safe even if a DDL migration ever
+     *  drops the column default. */
+    private static final long DEFAULT_QUOTA_BYTES = 1_073_741_824L;
 
-    /** One mailbox per bridge sender role, plus reporting-manager for
-     *  future viva-scheduling flows. Kept aligned with
-     *  {@link NotificationSenderRoles}. */
     private static final List<RoleMailbox> ROLE_MAILBOXES = List.of(
             new RoleMailbox(NotificationSenderRoles.NOREPLY,   "Anvi (No Reply)"),
             new RoleMailbox(NotificationSenderRoles.ERM,       "Anvi ERM"),
@@ -76,27 +85,66 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
     private final MailDomainRepository domainRepository;
     private final MailAccountRepository accountRepository;
     private final PasswordEncoder passwordEncoder;
+    private final PlatformTransactionManager transactionManager;
+
+    @Value("${app.bootstrap.seed-role-mailboxes-enabled:true}")
+    private boolean enabled;
 
     @Override
     public void run(String... args) {
+        // Outer belt for anything the inner catches miss (e.g. an
+        // unexpected Error thrown from static-init on lazy classes).
+        // A boot-time NPE / LinkageError here would otherwise fail the
+        // entire deploy — never worth it for a seeder.
         try {
-            MailDomain domain = resolveOrSeedDefaultDomain();
-            if (domain == null) {
-                log.warn("{} no default domain resolvable — cannot seed role mailboxes", LOG_TAG);
-                return;
-            }
-            int created = 0;
-            int skipped = 0;
-            for (RoleMailbox rm : ROLE_MAILBOXES) {
-                try {
-                    Optional<MailAccount> existing = accountRepository
-                            .findByLocalPartAndDomain_Id(rm.localPart(), domain.getId());
-                    if (existing.isPresent()) {
-                        skipped++;
-                        continue;
-                    }
+            runInner();
+        } catch (Throwable outer) {
+            log.warn("{} outer failure (non-fatal, boot continues): {}",
+                    LOG_TAG, outer.getMessage(), outer);
+        }
+    }
+
+    private void runInner() {
+        if (!enabled) {
+            log.info("{} skipped — disabled via app.bootstrap.seed-role-mailboxes-enabled=false",
+                    LOG_TAG);
+            return;
+        }
+
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        MailDomain domain;
+        try {
+            domain = resolveOrSeedDefaultDomain(tx);
+        } catch (Throwable e) {
+            log.warn("{} could not resolve/seed default domain '{}' — skipping (non-fatal): {}",
+                    LOG_TAG, DEFAULT_DOMAIN, e.getMessage(), e);
+            return;
+        }
+        if (domain == null) {
+            log.warn("{} no default domain — skipping role mailbox seed", LOG_TAG);
+            return;
+        }
+
+        int created = 0;
+        int skipped = 0;
+        int failed = 0;
+        for (RoleMailbox rm : ROLE_MAILBOXES) {
+            try {
+                boolean alreadyExists = tx.execute(status ->
+                        accountRepository
+                                .findByLocalPartAndDomain_Id(rm.localPart(), domain.getId())
+                                .isPresent());
+                if (Boolean.TRUE.equals(alreadyExists)) {
+                    skipped++;
+                    continue;
+                }
+                tx.executeWithoutResult(status -> {
                     // Random discarded password — these mailboxes are
-                    // server-side FROM identities, not human logins.
+                    // server-side FROM identities, not human logins. Must-
+                    // change + require-change flags force rotation if a
+                    // human ever tries to log in with a leaked secret.
                     String randomPassword = java.util.UUID.randomUUID().toString();
                     accountRepository.save(MailAccount.builder()
                             .domain(domain)
@@ -107,37 +155,53 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
                             .status(MailAccountStatus.ACTIVE)
                             .mustChangePassword(true)
                             .requireChangeOnFirstLogin(true)
+                            .quotaBytes(DEFAULT_QUOTA_BYTES)
                             .build());
-                    created++;
-                    log.info("{} provisioned role mailbox {}@{}",
-                            LOG_TAG, rm.localPart(), domain.getName());
-                } catch (Exception perAccount) {
-                    log.warn("{} failed to seed {}@{}: {} — continuing",
-                            LOG_TAG, rm.localPart(), domain.getName(),
-                            perAccount.getMessage(), perAccount);
-                }
+                });
+                created++;
+                log.info("{} provisioned role mailbox {}@{}",
+                        LOG_TAG, rm.localPart(), domain.getName());
+            } catch (Throwable perAccount) {
+                failed++;
+                log.warn("{} failed to seed {}@{}: {} — continuing (row rolled back, boot ok)",
+                        LOG_TAG, rm.localPart(), domain.getName(),
+                        perAccount.getMessage(), perAccount);
             }
-            log.info("{} done — created={} skipped_existing={} domain={}",
-                    LOG_TAG, created, skipped, domain.getName());
-        } catch (Exception outer) {
-            log.warn("{} failed (non-fatal): {}", LOG_TAG, outer.getMessage(), outer);
         }
+        log.info("{} done — created={} skipped_existing={} failed={} domain={}",
+                LOG_TAG, created, skipped, failed, domain.getName());
     }
 
-    private MailDomain resolveOrSeedDefaultDomain() {
-        Optional<MailDomain> byName = domainRepository.findByName(DEFAULT_DOMAIN);
-        if (byName.isPresent()) return byName.get();
+    /**
+     * Resolve the default domain, seeding a new row when missing. Both
+     * the read and the write run in their OWN {@code REQUIRES_NEW}
+     * transactions so a schema mismatch on {@code mail_domains} rolls
+     * back only itself.
+     */
+    private MailDomain resolveOrSeedDefaultDomain(TransactionTemplate tx) {
+        Optional<MailDomain> byName = tx.execute(status ->
+                domainRepository.findByName(DEFAULT_DOMAIN));
+        if (byName != null && byName.isPresent()) return byName.get();
         try {
-            MailDomain seeded = domainRepository.save(MailDomain.builder()
-                    .name(DEFAULT_DOMAIN)
-                    .displayName(DEFAULT_DOMAIN)
-                    .active(true)
-                    .build());
-            log.warn("{} seeded default mail domain '{}'", LOG_TAG, DEFAULT_DOMAIN);
+            MailDomain seeded = tx.execute(status ->
+                    domainRepository.save(MailDomain.builder()
+                            .name(DEFAULT_DOMAIN)
+                            .displayName(DEFAULT_DOMAIN)
+                            .active(true)
+                            .build()));
+            if (seeded != null) {
+                log.warn("{} seeded default mail domain '{}'", LOG_TAG, DEFAULT_DOMAIN);
+            }
             return seeded;
-        } catch (Exception e) {
-            log.warn("{} could not seed default domain: {}", LOG_TAG, e.getMessage(), e);
-            return null;
+        } catch (Throwable e) {
+            // Race with another instance seeding the same domain, or a
+            // unique-constraint violation on rerun — re-read once so a
+            // concurrent success is honored.
+            log.info("{} default domain seed threw ({}) — re-reading",
+                    LOG_TAG, e.getMessage());
+            Optional<MailDomain> retry = tx.execute(status ->
+                    domainRepository.findByName(DEFAULT_DOMAIN));
+            return retry != null ? retry.orElse(null) : null;
         }
     }
 }
