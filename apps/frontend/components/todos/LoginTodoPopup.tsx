@@ -38,7 +38,7 @@ const SESSION_FLAG = 'todoPopupShown';
  * emitting that item, so the pop-up's "new" flag naturally clears.
  *
  * <p>Roles without a dedicated {@code /api/v1/{role}/todos} endpoint
- * (Trainer, ERM, Intern) return null — they either use their existing
+ * (Trainer, Intern) return null — they either use their existing
  * right-side panels or don't need the pop-up yet. Once those roles get
  * a todos endpoint, drop them into {@link #resolveRoleForCaller}.</p>
  */
@@ -183,10 +183,13 @@ function PopupRow({
 }
 
 function resolveRoleForCaller(roles: readonly string[]): TodoRole | null {
-  // Order matters: MANAGER before EVALUATOR if a user holds both.
+  // Order matters: MANAGER before EVALUATOR before ERM if a user holds
+  // multiple. SUPER_ADMIN falls through to MANAGER (org-wide is the same
+  // view). ERM is included so the login pop-up + to-do panel fires for
+  // ERM callers using GET /api/v1/erm/todos.
   if (roles.includes('MANAGER')) return 'MANAGER';
   if (roles.includes('EVALUATOR')) return 'EVALUATOR';
-  // SUPER_ADMIN gets the MANAGER view by default (org-wide is the same).
+  if (roles.includes('ERM')) return 'ERM';
   if (roles.includes('SUPER_ADMIN')) return 'MANAGER';
   return null;
 }
