@@ -367,7 +367,11 @@ public class ErmNewHireService {
                     + " left off — feel free to reach out with anything in-flight."
                     + "\n\nOpen your dashboard: /careers/intern"
                     + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(internUserId, subject, plain, null);
+            // Reassignment is an ERM action (they're rewriting the staff
+            // slot), so the intern-facing "from" mailbox is erm@.
+            internNotifications.notifyInternFromRole(internUserId,
+                    com.anvicorp.api.notification.NotificationSenderRoles.ERM,
+                    subject, plain, null);
         } catch (Exception e) {
             log.warn("[ErmNewHire] reassignment intern-mail failed (non-fatal) intern={} role={}: {}",
                     internUserId, roleWord, e.getMessage());

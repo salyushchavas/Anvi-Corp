@@ -119,7 +119,8 @@ public class TimesheetChainListener {
             // company mailbox. Helper short-circuits when intern isn't
             // ACTIVE / mailbox isn't ACTIVATED, so this is safe to call
             // unconditionally.
-            internNotifications.notifyIntern(e.getInternUserId(),
+            internNotifications.notifyInternFromRole(e.getInternUserId(),
+                    com.anvicorp.api.notification.NotificationSenderRoles.MANAGER,
                     "Your Manager approved your timesheet",
                     body
                     + "\n\nOpen your timesheets: /careers/intern/timesheets\n\n" + brand.signoff(),
@@ -151,7 +152,14 @@ public class TimesheetChainListener {
                     "/careers/intern/timesheets");
             // Phase: Employee internal-mail — same body, also delivered
             // to the company mailbox. Helper gates on active+ACTIVATED.
-            internNotifications.notifyIntern(e.getInternUserId(),
+            // Sender role tracks who returned it (ERM at first stage,
+            // Manager at the second) so the intern's mailbox shows the
+            // right "from" address.
+            String senderRole = "VERIFIED".equalsIgnoreCase(e.getPreviousStatus())
+                    ? com.anvicorp.api.notification.NotificationSenderRoles.MANAGER
+                    : com.anvicorp.api.notification.NotificationSenderRoles.ERM;
+            internNotifications.notifyInternFromRole(e.getInternUserId(),
+                    senderRole,
                     subject,
                     body + "\n\nOpen your timesheets: /careers/intern/timesheets\n\n" + brand.signoff(),
                     null);

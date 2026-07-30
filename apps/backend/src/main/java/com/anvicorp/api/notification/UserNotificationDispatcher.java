@@ -178,7 +178,20 @@ public class UserNotificationDispatcher {
                     ? row.getTitle()
                     : "Anvi Corp — notification";
             String body = composeBody(row);
-            emailProvider.sendRendered(email, subject, body);
+            // Stamp the sender-role context so BridgingEmailProvider can
+            // route the send FROM the acting staff mailbox (erm@/trainer@/
+            // evaluator@/manager@) when the recipient is a fully-activated
+            // intern. Falls back to the raw SMTP send for everyone else —
+            // the bridge's guards handle it. Strict set/clear so a
+            // Tomcat-pooled thread never leaks the role into the next
+            // request.
+            String senderLocalPart = resolveSenderLocalPart(eventType);
+            NotificationSenderContext.set(senderLocalPart);
+            try {
+                emailProvider.sendRendered(email, subject, body);
+            } finally {
+                NotificationSenderContext.clear();
+            }
             row.setEmailSent(true);
             row.setEmailSentAt(Instant.now());
             try {
@@ -220,6 +233,27 @@ public class UserNotificationDispatcher {
         if (path.startsWith("http://") || path.startsWith("https://")) return path;
         String base = frontendBaseUrl == null ? "" : frontendBaseUrl.replaceAll("/+$", "");
         return base + path;
+    }
+
+    /**
+     * Map the string event-type back to a {@link NotificationEventType} value
+     * so {@link NotificationSenderRoles#forEvent} can resolve the sender
+     * local-part. Returns {@link NotificationSenderRoles#DEFAULT_LOCAL_PART}
+     * (noreply) when the event isn't in the enum — in-app string events
+     * outside the enum (e.g. TIMESHEET_APPROVED, FEEDBACK_PUBLISHED) fall
+     * back to noreply here; those flows already stamp the correct sender
+     * role themselves via {@code InternNotificationService.notifyInternFromRole}
+     * upstream, so the bridge routing still fires for the internal-mail leg.
+     */
+    private String resolveSenderLocalPart(String eventType) {
+        if (eventType == null || eventType.isBlank()) {
+            return NotificationSenderRoles.DEFAULT_LOCAL_PART;
+        }
+        try {
+            return NotificationSenderRoles.forEvent(NotificationEventType.valueOf(eventType));
+        } catch (IllegalArgumentException notInEnum) {
+            return NotificationSenderRoles.DEFAULT_LOCAL_PART;
+        }
     }
 
     private boolean isMutedByConfig(String eventType) {

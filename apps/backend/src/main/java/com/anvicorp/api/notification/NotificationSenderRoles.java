@@ -35,11 +35,11 @@ public final class NotificationSenderRoles {
     /** Default fallback when no mapping is found OR no event context is set. */
     public static final String DEFAULT_LOCAL_PART = "noreply";
 
-    static final String NOREPLY   = "noreply";
-    static final String ERM       = "erm";
-    static final String TRAINER   = "trainer";
-    static final String EVALUATOR = "evaluator";
-    static final String MANAGER   = "manager";
+    public static final String NOREPLY   = "noreply";
+    public static final String ERM       = "erm";
+    public static final String TRAINER   = "trainer";
+    public static final String EVALUATOR = "evaluator";
+    public static final String MANAGER   = "manager";
 
     private static final Map<NotificationEventType, String> MAPPING =
             new EnumMap<>(NotificationEventType.class);

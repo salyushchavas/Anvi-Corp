@@ -320,7 +320,9 @@ public class GroupSessionService {
                 + joinLine
                 + "\n\nOpen your group sessions: /careers/intern/group-sessions"
                 + "\n\n" + brand.signoff();
-        internNotifications.notifyIntern(internUserId, subject, body, null);
+        internNotifications.notifyInternFromRole(internUserId,
+                com.anvicorp.api.notification.NotificationSenderRoles.TRAINER,
+                subject, body, null);
     }
 
     private void notifyParticipantOfCancel(UUID internUserId, GroupSession session, User host) {
@@ -334,7 +336,9 @@ public class GroupSessionService {
                 + session.getScheduledAt()
                 + " (" + session.getMeetingTimezone() + ")."
                 + "\n\n" + brand.signoff();
-        internNotifications.notifyIntern(internUserId, subject, body, null);
+        internNotifications.notifyInternFromRole(internUserId,
+                com.anvicorp.api.notification.NotificationSenderRoles.TRAINER,
+                subject, body, null);
     }
 
     // ── Projections ────────────────────────────────────────────────────────

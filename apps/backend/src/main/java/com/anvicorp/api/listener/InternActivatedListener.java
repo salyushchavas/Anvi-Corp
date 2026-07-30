@@ -80,7 +80,9 @@ public class InternActivatedListener {
                 + "and evaluations.</p>"
                 + "<p><a href=\"/careers/intern\">Open your " + escape(bn) + " dashboard</a></p>"
                 + "<p>Welcome aboard.<br>" + escape(brand.signoff()) + "</p>";
-        internNotifications.notifyIntern(intern.getId(), subject, plain, html);
+        internNotifications.notifyInternFromRole(intern.getId(),
+                com.anvicorp.api.notification.NotificationSenderRoles.ERM,
+                subject, plain, html);
     }
 
     private void sendTeamIntroduction(User intern) {
@@ -119,7 +121,9 @@ public class InternActivatedListener {
                 + "Your Manager owns timesheet approvals and any operational escalations. "
                 + "Feel free to reach out to either directly via the " + escape(bn) + " mailbox.</p>"
                 + "<p>" + escape(brand.signoff()) + "</p>";
-        internNotifications.notifyIntern(intern.getId(), subject, plain, html);
+        internNotifications.notifyInternFromRole(intern.getId(),
+                com.anvicorp.api.notification.NotificationSenderRoles.ERM,
+                subject, plain, html);
     }
 
     private static String firstName(User u) {

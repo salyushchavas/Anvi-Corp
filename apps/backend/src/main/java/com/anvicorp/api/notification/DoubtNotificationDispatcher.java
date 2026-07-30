@@ -83,7 +83,8 @@ public class DoubtNotificationDispatcher {
             log.debug("[DoubtNotify] replied in-app failed: {}", e.getMessage());
         }
         try {
-            internNotifications.notifyIntern(d.getInternUserId(), subject, plain, null);
+            internNotifications.notifyInternFromRole(d.getInternUserId(),
+                    NotificationSenderRoles.TRAINER, subject, plain, null);
         } catch (Exception e) {
             log.warn("[DoubtNotify] replied intern-mail failed (non-fatal): {}",
                     e.getMessage());
@@ -120,7 +121,8 @@ public class DoubtNotificationDispatcher {
             log.debug("[DoubtNotify] session in-app failed: {}", e.getMessage());
         }
         try {
-            internNotifications.notifyIntern(d.getInternUserId(), subject, plain, null);
+            internNotifications.notifyInternFromRole(d.getInternUserId(),
+                    NotificationSenderRoles.TRAINER, subject, plain, null);
         } catch (Exception e) {
             log.warn("[DoubtNotify] session intern-mail failed (non-fatal): {}",
                     e.getMessage());
@@ -150,7 +152,8 @@ public class DoubtNotificationDispatcher {
             log.debug("[DoubtNotify] resolved in-app failed: {}", e.getMessage());
         }
         try {
-            internNotifications.notifyIntern(d.getInternUserId(), subject, plain, null);
+            internNotifications.notifyInternFromRole(d.getInternUserId(),
+                    NotificationSenderRoles.TRAINER, subject, plain, null);
         } catch (Exception e) {
             log.warn("[DoubtNotify] resolved intern-mail failed (non-fatal): {}",
                     e.getMessage());

@@ -79,6 +79,7 @@ public class EmailNotifierListener {
             notificationService.sendProjectTechApproved(project);
             notifyInternInternalMail(project, event.getApproverUserId(),
                     "Trainer",
+                    com.anvicorp.api.notification.NotificationSenderRoles.TRAINER,
                     "Your project '" + safeTitle(project) + "' passed technical review",
                     actorPhrase -> actorPhrase + " has approved your project \""
                             + safeTitle(project) + "\". Tech review complete — your "
@@ -101,6 +102,7 @@ public class EmailNotifierListener {
                     ? " Reason: " + event.getReason() : "";
             notifyInternInternalMail(project, event.getReviewerUserId(),
                     "Reviewer",
+                    com.anvicorp.api.notification.NotificationSenderRoles.TRAINER,
                     "Project '" + safeTitle(project) + "' returned for revisions",
                     actorPhrase -> actorPhrase + " returned \"" + safeTitle(project)
                             + "\" for changes." + reasonLine
@@ -121,6 +123,7 @@ public class EmailNotifierListener {
             notificationService.sendProjectPendingViva(project);
             notifyInternInternalMail(project, event.getReportingManagerUserId(),
                     "Reporting Manager",
+                    com.anvicorp.api.notification.NotificationSenderRoles.MANAGER,
                     "Your project '" + safeTitle(project) + "' is ready for viva",
                     actorPhrase -> actorPhrase + " marked \"" + safeTitle(project)
                             + "\" ready for the viva. Watch your inbox for the "
@@ -143,8 +146,13 @@ public class EmailNotifierListener {
             // publish ProjectCompletedEvent. Resolve the actor's primary
             // role dynamically so wording matches the flow that fired.
             String roleWord = resolveRoleWord(event.getClosedByUserId(), "Reporting Manager");
+            // Legacy TE actor → Trainer mailbox; RM actor → Manager mailbox.
+            String senderRole = "Trainer".equals(roleWord)
+                    ? com.anvicorp.api.notification.NotificationSenderRoles.TRAINER
+                    : com.anvicorp.api.notification.NotificationSenderRoles.MANAGER;
             notifyInternInternalMail(project, event.getClosedByUserId(),
                     roleWord,
+                    senderRole,
                     "Project '" + safeTitle(project) + "' completed",
                     actorPhrase -> actorPhrase + " has marked \"" + safeTitle(project)
                             + "\" complete. Nice work — your post-project "
@@ -164,7 +172,8 @@ public class EmailNotifierListener {
      * pending-viva + completed).
      */
     private void notifyInternInternalMail(Project project, UUID actorUserId,
-                                           String roleWord, String subject,
+                                           String roleWord, String senderLocalPart,
+                                           String subject,
                                            java.util.function.Function<String, String> bodyBuilder) {
         UUID internUserId = internUserId(project);
         if (internUserId == null) return;
@@ -172,7 +181,8 @@ public class EmailNotifierListener {
         String body = "Hi,\n\n" + bodyBuilder.apply(actorPhrase)
                 + "\n\nOpen your projects: /careers/intern/projects"
                 + "\n\n" + brand.signoff();
-        internNotifications.notifyIntern(internUserId, subject, body, null);
+        internNotifications.notifyInternFromRole(internUserId, senderLocalPart,
+                subject, body, null);
     }
 
     private UUID internUserId(Project project) {

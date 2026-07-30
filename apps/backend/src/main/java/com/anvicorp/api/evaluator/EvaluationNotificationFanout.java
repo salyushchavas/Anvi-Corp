@@ -72,7 +72,9 @@ public class EvaluationNotificationFanout {
                         ? "\n\nJoin: " + ev.getZoomJoinUrl() : "")
                     + "\n\nOpen your evaluations: " + deepLink
                     + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(), subject, plain, null);
+            internNotifications.notifyInternFromRole(intern.getId(),
+                    com.anvicorp.api.notification.NotificationSenderRoles.EVALUATOR,
+                    subject, plain, null);
         } catch (Exception e) {
             log.warn("[EvaluatorFanout] intern scheduled mail failed: {}", e.getMessage());
         }
@@ -131,7 +133,9 @@ public class EvaluationNotificationFanout {
                     + "\n\n" + summary
                     + "\n\nOpen it to acknowledge: " + deepLink
                     + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(), subject, plain, null);
+            internNotifications.notifyIntern(intern.getId(),
+                    com.anvicorp.api.notification.NotificationEventType.EVALUATION_FINALIZED,
+                    subject, plain, null);
         } catch (Exception e) {
             log.warn("[EvaluatorFanout] intern published mail failed: {}", e.getMessage());
         }
@@ -376,7 +380,9 @@ public class EvaluationNotificationFanout {
                     + "\n\nKeep this confirmation for your STEM-OPT records."
                     + "\nOpen your I-983: " + deepLink
                     + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(), subject, plain, null);
+            internNotifications.notifyInternFromRole(intern.getId(),
+                    com.anvicorp.api.notification.NotificationSenderRoles.ERM,
+                    subject, plain, null);
         } catch (Exception e) {
             log.warn("[EvaluatorFanout] I-983 DSO submitted intern-mail failed (non-fatal): {}",
                     e.getMessage());
@@ -416,7 +422,9 @@ public class EvaluationNotificationFanout {
                     + "\n\nWhat changed: " + summary
                     + "\n\nOpen your I-983: " + deepLink
                     + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(), subject, plain, null);
+            internNotifications.notifyInternFromRole(intern.getId(),
+                    com.anvicorp.api.notification.NotificationSenderRoles.EVALUATOR,
+                    subject, plain, null);
         } catch (Exception e) {
             log.warn("[EvaluatorFanout] I-983 amended intern-mail failed (non-fatal): {}",
                     e.getMessage());

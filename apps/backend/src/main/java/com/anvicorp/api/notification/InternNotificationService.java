@@ -55,6 +55,46 @@ public class InternNotificationService {
     private final EmailProvider emailProvider;
 
     /**
+     * Overload that stamps the sender-role context from the supplied
+     * {@code eventType} for the duration of the send. Use this from any
+     * dispatcher that knows the notification's business event — the bridge
+     * (see {@link BridgingEmailProvider}) reads the context to decide the
+     * "from" mailbox on the internal-mail leg. When {@code eventType} is
+     * {@code null} OR maps to {@code noreply} (per
+     * {@link NotificationSenderRoles#forEvent}), the send behaves exactly
+     * like the base {@link #notifyIntern(UUID, String, String, String)}.
+     *
+     * <p>The context is set-and-cleared strictly around the send so a
+     * Tomcat-pooled thread cannot leak the role into an unrelated
+     * request.</p>
+     */
+    public void notifyIntern(UUID internUserId, NotificationEventType eventType,
+                              String subject, String plainBody, String htmlBody) {
+        String role = NotificationSenderRoles.forEvent(eventType);
+        notifyInternFromRole(internUserId, role, subject, plainBody, htmlBody);
+    }
+
+    /**
+     * Same contract as {@link #notifyIntern(UUID, NotificationEventType, String,
+     * String, String)} but takes the sender-role local-part directly. Use for
+     * events that have no {@link NotificationEventType} value (e.g. the
+     * trainer's session scheduling, ERM/manager timesheet review, group
+     * sessions) — the caller supplies the appropriate role constant from
+     * {@link NotificationSenderRoles} (e.g. {@code TRAINER}, {@code ERM},
+     * {@code EVALUATOR}, {@code MANAGER}).
+     */
+    public void notifyInternFromRole(UUID internUserId, String senderLocalPart,
+                                      String subject, String plainBody, String htmlBody) {
+        NotificationSenderContext.set(senderLocalPart != null
+                ? senderLocalPart : NotificationSenderRoles.DEFAULT_LOCAL_PART);
+        try {
+            notifyIntern(internUserId, subject, plainBody, htmlBody);
+        } finally {
+            NotificationSenderContext.clear();
+        }
+    }
+
+    /**
      * Send an internal mail to the intern. Silently skips when either
      * gate fails. Never throws; failures are logged at warn.
      */

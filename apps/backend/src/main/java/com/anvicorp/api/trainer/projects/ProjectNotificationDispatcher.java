@@ -109,7 +109,9 @@ public class ProjectNotificationDispatcher {
                         ? " (tech: " + project.getTechStack() + ")" : "")
                     + ".\n\nOpen the project: " + deepLinkIntern
                     + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(), subject, plain, null);
+            internNotifications.notifyIntern(intern.getId(),
+                    com.anvicorp.api.notification.NotificationEventType.PROJECT_ASSIGNED,
+                    subject, plain, null);
             inApp.dispatch(intern.getId(), "PROJECT_ASSIGNED",
                     intern.getId(),
                     "New project assigned by your Trainer: " + projectTitle,

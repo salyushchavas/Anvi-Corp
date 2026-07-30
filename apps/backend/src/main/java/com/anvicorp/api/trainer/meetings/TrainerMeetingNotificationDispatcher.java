@@ -151,7 +151,9 @@ public class TrainerMeetingNotificationDispatcher {
                         ? "\nAgenda: " + m.getAgenda() : "")
                     + "\n\nOpen your weekly meetings: " + INTERN_PATH
                     + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(), subject, plain, null);
+            internNotifications.notifyInternFromRole(intern.getId(),
+                    com.anvicorp.api.notification.NotificationSenderRoles.TRAINER,
+                    subject, plain, null);
             tryInApp(intern.getId(), eventType, intern.getId(),
                     inAppTitle + " by your Trainer: " + topic,
                     actorPhrase + " " + verb + ".", INTERN_PATH);

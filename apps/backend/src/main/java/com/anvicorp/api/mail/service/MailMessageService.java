@@ -114,6 +114,36 @@ public class MailMessageService {
         return toDetail(sent, msg, sender.getId());
     }
 
+    /**
+     * System-internal send used by {@link com.anvicorp.api.notification.BridgingEmailProvider}
+     * — writes a mail message FROM a specific staff mailbox (evaluator@/erm@/
+     * trainer@/manager@) TO an intern's mailbox, bypassing the {@code MailPrincipal}
+     * check because the caller is a server-side notification hook, not an
+     * authenticated mail user. Both {@code sender} and {@code recipient} MUST
+     * already be resolved {@link MailAccount} rows (walled resolution happens
+     * upstream in the bridge). Reuses {@link #newMessage} + {@link #deliver}
+     * so the persistence path, encryption, rules engine, mailbox entries and
+     * SSE fan-out are byte-identical to a normal user send. Returns the new
+     * message id (currently informational — callers just care that the send
+     * committed). Cross-domain is impossible here: the bridge only resolves
+     * staff and intern mailboxes from the same {@code anvicorp.com} domain.
+     */
+    @Transactional
+    public UUID deliverInternalNotification(MailAccount sender, MailAccount recipient,
+                                             String subject, String bodyText, String bodyHtml) {
+        if (sender == null || recipient == null) {
+            throw new IllegalArgumentException("sender and recipient MailAccounts are required");
+        }
+        validateContent(subject, bodyText, bodyHtml);
+        MailMessage msg = newMessage(sender, subject, bodyText, bodyHtml, null);
+        Resolved r = new Resolved(List.of(recipient), List.of(), List.of());
+        deliver(sender, msg, r);
+        entryRepository.save(MailMailboxEntry.builder()
+                .accountId(sender.getId()).messageId(msg.getId()).folder(MailFolder.SENT)
+                .isRead(true).build());
+        return msg.getId();
+    }
+
     @Transactional
     public MailMessageDetail saveDraft(MailPrincipal principal, MailDraftRequest req) {
         MailAccount sender = loadActor(principal);

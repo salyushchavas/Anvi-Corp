@@ -109,7 +109,9 @@ public class TrainerFeedbackNotificationDispatcher {
                     + (!reviewNotes.isBlank() ? "\n\nNotes: " + reviewNotes : "")
                     + "\n\nOpen the project: " + dl
                     + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(), subject, plain, null);
+            internNotifications.notifyInternFromRole(intern.getId(),
+                    com.anvicorp.api.notification.NotificationSenderRoles.TRAINER,
+                    subject, plain, null);
             inApp.dispatch(intern.getId(), "FEEDBACK_PUBLISHED",
                     intern.getId(),
                     subject,
