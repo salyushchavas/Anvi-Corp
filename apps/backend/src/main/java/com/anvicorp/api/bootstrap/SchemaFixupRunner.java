@@ -2689,6 +2689,13 @@ public class SchemaFixupRunner implements CommandLineRunner {
             }
         }
         log.info("[SchemaFixupRunner] ensured users prefs_evaluator_* columns");
+
+        // ── To-do panel + login pop-up ────────────────────────────────────
+        // One column on users for the "unseen" cursor + a small dismissal
+        // table keyed off the derived todoKey (not a notification id) so a
+        // dismissal survives across re-polls and auto-becomes an orphan
+        // when the underlying pending action resolves.
+        ensureTodoPanelSchema();
     }
 
     /** Trainer Phase 4 — additive trainer-only preference columns on the
@@ -4737,6 +4744,48 @@ public class SchemaFixupRunner implements CommandLineRunner {
         } catch (Exception verifyErr) {
             log.error("[SchemaFixupRunner] post-rebuild verify on {} failed: {}",
                     constraint, verifyErr.getMessage(), verifyErr);
+        }
+    }
+
+    /**
+     * To-do panel + login pop-up (Phase 1) — two additive DDLs:
+     * <ol>
+     *   <li>{@code users.todo_panel_last_seen_at} — nullable timestamp;
+     *       drives {@code TodoPanelResponse.hasNewSinceLastSeen}.</li>
+     *   <li>{@code user_todo_dismissals(user_id, todo_key, dismissed_at)}
+     *       — composite-PK table keyed off the derived todo key so a
+     *       dismissal survives across polls and becomes a harmless orphan
+     *       when the underlying pending action auto-resolves.</li>
+     * </ol>
+     * Both idempotent (IF NOT EXISTS). Skipped-with-WARN if execution
+     * fails so startup is never blocked. ddl-auto would create the
+     * mapped entity on its own on most environments; this belt-and-
+     * suspenders path guarantees the table shape matches the entity on
+     * environments where ddl-auto is disabled.
+     */
+    private void ensureTodoPanelSchema() {
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE users "
+                            + "ADD COLUMN IF NOT EXISTS todo_panel_last_seen_at TIMESTAMP");
+            log.info("[SchemaFixupRunner] ensured users.todo_panel_last_seen_at column");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] users.todo_panel_last_seen_at ALTER skipped "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+
+        try {
+            jdbcTemplate.execute(
+                    "CREATE TABLE IF NOT EXISTS user_todo_dismissals ("
+                            + "  user_id UUID NOT NULL,"
+                            + "  todo_key VARCHAR(200) NOT NULL,"
+                            + "  dismissed_at TIMESTAMP NOT NULL,"
+                            + "  PRIMARY KEY (user_id, todo_key)"
+                            + ")");
+            log.info("[SchemaFixupRunner] ensured user_todo_dismissals table");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] user_todo_dismissals CREATE skipped "
+                    + "(non-fatal): {}", e.getMessage());
         }
     }
 

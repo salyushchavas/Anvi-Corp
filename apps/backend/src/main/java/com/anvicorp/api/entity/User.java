@@ -267,6 +267,18 @@ public class User {
     @Column(name = "personal_email", length = 255)
     private String personalEmail;
 
+    /**
+     * Timestamp of the last time the user opened / dismissed the to-do
+     * pop-up. Drives {@code TodoPanelResponse.hasNewSinceLastSeen} — a
+     * pending action whose {@code firstAppearedAt > todoPanelLastSeenAt}
+     * counts as "new since last check", which is the once-per-session
+     * gate for the login pop-up. Null on legacy rows → treated as "any
+     * pending action is new" until the user opens the pop-up once. See
+     * {@code TodoController.markSeen}.
+     */
+    @Column(name = "todo_panel_last_seen_at")
+    private Instant todoPanelLastSeenAt;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 

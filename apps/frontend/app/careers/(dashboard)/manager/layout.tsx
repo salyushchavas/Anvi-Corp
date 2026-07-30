@@ -3,16 +3,14 @@
 import type { ReactNode } from 'react';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import ManagerSidebar from '@/components/manager/ManagerSidebar';
+import TodoPanel from '@/components/todos/TodoPanel';
 
 /**
- * Manager Phase 0 — 2-column shell on lg+ (sidebar + main). RBAC: MANAGER
- * + SUPER_ADMIN. Mirrors the Trainer / Evaluator shell convention. The
- * shared root layout already wraps the app in AuthProvider +
- * IdleTimeoutProvider (Phase 8.8), so Manager inherits the logout button
- * + idle auto-logout behavior without per-role wiring.
- *
- * <p>Right-side panel + dashboard-polling provider are deferred to Phase 1
- * when the Executive Overview / KPIs land.</p>
+ * Manager — 3-column shell on xl: sidebar + main + right-side to-do panel.
+ * RBAC: MANAGER + SUPER_ADMIN. The to-do panel is derived live from the
+ * existing pending-action queries (hire approvals, VERIFIED timesheets,
+ * VERIFIED weekly reports, pending recording approvals) so items
+ * auto-drop when the underlying work is done.
  */
 export default function ManagerLayout({ children }: { children: ReactNode }) {
   return (
@@ -20,6 +18,7 @@ export default function ManagerLayout({ children }: { children: ReactNode }) {
       <div className="ds flex h-screen overflow-hidden bg-slate-50">
         <ManagerSidebar />
         <main className="flex-1 overflow-y-auto">{children}</main>
+        <TodoPanel role="MANAGER" />
       </div>
     </ProtectedRoute>
   );
