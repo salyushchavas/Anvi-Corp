@@ -203,6 +203,7 @@ public class ProjectService {
                         + "\n\nOpen your projects: /careers/intern/projects"
                         + "\n\n" + brand.signoff();
                 internNotifications.notifyIntern(internUserId,
+                        com.anvicorp.api.notification.NotificationEventType.PROJECT_ASSIGNED,
                         "New project assigned by your " + roleWord + ": " + projectTitle,
                         body, null);
             }
@@ -320,7 +321,9 @@ public class ProjectService {
                             ? "\n\nReview notes: " + reviewNotes : "")
                         + "\n\nOpen the project: /careers/intern/projects/" + saved.getId()
                         + "\n\n" + brand.signoff();
-                internNotifications.notifyIntern(internUserId, subject, body, null);
+                internNotifications.notifyIntern(internUserId,
+                        com.anvicorp.api.notification.NotificationEventType.PROJECT_RETURNED,
+                        subject, body, null);
             }
         } catch (Exception e) {
             log.warn("PROJECT_RETURNED internal-mail failed (non-fatal) for {}: {}",

@@ -278,6 +278,7 @@ public class ProjectCatalogService {
                     + "\n\nOpen your projects: /careers/intern/projects"
                     + "\n\n" + brand.signoff();
             internNotifications.notifyIntern(intern.getId(),
+                    com.anvicorp.api.notification.NotificationEventType.KT_SCHEDULED,
                     "KT session scheduled by your Trainer — " + projectLabel, body, null);
 
             // Trainer: host-link email (mirrors WeeklyMeeting trainer email).
@@ -361,7 +362,9 @@ public class ProjectCatalogService {
                     + (project.getKtMeetingLink() != null && !project.getKtMeetingLink().isBlank()
                         ? " The KT meeting link is available on the project page." : "")
                     + "\n\nOpen your projects: /careers/intern/projects\n\n— Anvi Corp";
-            internNotifications.notifyIntern(internUserId, mailSubject, mailPlain, null);
+            internNotifications.notifyIntern(internUserId,
+                    com.anvicorp.api.notification.NotificationEventType.KT_COMPLETED,
+                    mailSubject, mailPlain, null);
         } catch (Exception e) {
             log.warn("[ProjectCatalogService] KT-done notify failed (non-fatal): {}",
                     e.getMessage());

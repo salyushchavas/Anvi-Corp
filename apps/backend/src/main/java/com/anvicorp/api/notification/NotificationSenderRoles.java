@@ -99,6 +99,23 @@ public final class NotificationSenderRoles {
         MAPPING.put(NotificationEventType.EVALUATION_DUE,        EVALUATOR);
         MAPPING.put(NotificationEventType.EVALUATION_FINALIZED,  EVALUATOR);
         MAPPING.put(NotificationEventType.I983_SELF_EVAL_DUE,    EVALUATOR);
+
+        // Lifecycle-mail-bridge additions — every post-activation staff→intern
+        // touchpoint routes through the bridge so the intern's company mailbox
+        // sees a coherent conversation. See NotificationEventType for the
+        // motivation behind each new value.
+        MAPPING.put(NotificationEventType.KT_SCHEDULED,          TRAINER);
+        MAPPING.put(NotificationEventType.KT_COMPLETED,          TRAINER);
+        MAPPING.put(NotificationEventType.REPO_INVITATION_SENT,  TRAINER);
+        MAPPING.put(NotificationEventType.PROJECT_QA_SCHEDULED,  EVALUATOR);
+        MAPPING.put(NotificationEventType.I983_EVALUATION_DUE,       EVALUATOR);
+        MAPPING.put(NotificationEventType.I983_EVALUATION_PUBLISHED, EVALUATOR);
+        MAPPING.put(NotificationEventType.DOCUMENT_PACKET_ASSIGNED,        ERM);
+        MAPPING.put(NotificationEventType.DOCUMENT_TASK_ACCEPTED,          ERM);
+        MAPPING.put(NotificationEventType.DOCUMENT_TASK_REJECTED,          ERM);
+        MAPPING.put(NotificationEventType.DOCUMENT_TASK_RESEND_REQUESTED,  ERM);
+        MAPPING.put(NotificationEventType.DOCUMENT_PACKET_COMPLETED,       ERM);
+        MAPPING.put(NotificationEventType.TIMESHEET_VERIFIED_BY_ERM,       ERM);
     }
 
     private NotificationSenderRoles() {}

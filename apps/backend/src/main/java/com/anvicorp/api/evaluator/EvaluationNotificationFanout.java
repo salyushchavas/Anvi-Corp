@@ -290,7 +290,26 @@ public class EvaluationNotificationFanout {
         vars.put("internName", safeName(intern));
         vars.put("employeeId", lc.getEmployeeId() != null ? lc.getEmployeeId() : "");
         vars.put("deepLink", deepLink);
-        renderAndEmail("I983_EVALUATION_DUE", intern, vars);
+        // Lifecycle-mail-bridge: route through internNotifications with the
+        // I983_EVALUATION_DUE event stamp so the intern's company mailbox sees
+        // it from evaluator@. The prior renderAndEmail(...) call was a raw
+        // sendBrandedHtml that skipped G1 and only reached personal SMTP.
+        try {
+            String subject = "I-983 " + type + " evaluation scheduled by your Evaluator";
+            String plain = "Hi " + firstName + ",\n\n"
+                    + evaluatorName + ", your Evaluator, has scheduled your "
+                    + type + " I-983 evaluation."
+                    + "\n\nWindow: " + vars.get("windowStartDate")
+                    + "  →  Due: " + vars.get("dueDate")
+                    + "\n\nOpen your I-983 evaluations: " + deepLink
+                    + "\n\n" + brand.signoff();
+            internNotifications.notifyIntern(intern.getId(),
+                    com.anvicorp.api.notification.NotificationEventType.I983_EVALUATION_DUE,
+                    subject, plain, null);
+        } catch (Exception e) {
+            log.warn("[EvaluatorFanout] I-983 scheduled intern-mail failed (non-fatal): {}",
+                    e.getMessage());
+        }
 
         tryInApp(intern.getId(), "I983_EVALUATION_SCHEDULED", intern.getId(),
                 "I-983 evaluation scheduled",
@@ -318,7 +337,25 @@ public class EvaluationNotificationFanout {
         vars.put("evaluatorName", evaluatorName);
         vars.put("evaluationType", type);
         vars.put("deepLink", deepLink);
-        renderAndEmail("I983_EVALUATION_PUBLISHED", intern, vars);
+        // Lifecycle-mail-bridge: route through internNotifications with the
+        // I983_EVALUATION_PUBLISHED event stamp so the intern's company
+        // mailbox sees it from evaluator@. The prior renderAndEmail(...) call
+        // skipped G1 and only reached personal SMTP.
+        try {
+            String subject = "I-983 " + type + " evaluation ready to sign — action required";
+            String plain = "Hi " + firstName + ",\n\n"
+                    + evaluatorName + ", your Evaluator, has published your "
+                    + type + " I-983 evaluation. This is a federal STEM-OPT "
+                    + "requirement — please review and sign within 7 days."
+                    + "\n\nOpen it to sign: " + deepLink
+                    + "\n\n" + brand.signoff();
+            internNotifications.notifyIntern(intern.getId(),
+                    com.anvicorp.api.notification.NotificationEventType.I983_EVALUATION_PUBLISHED,
+                    subject, plain, null);
+        } catch (Exception e) {
+            log.warn("[EvaluatorFanout] I-983 published intern-mail failed (non-fatal): {}",
+                    e.getMessage());
+        }
 
         tryInApp(intern.getId(), "I983_EVALUATION_PUBLISHED", intern.getId(),
                 "I-983 evaluation ready to sign",

@@ -185,7 +185,9 @@ public class ProjectAssignmentService {
                             + projectTitle + "\"" + due + "."
                             + "\n\nOpen your projects: /careers/intern/projects"
                             + "\n\n" + brand.signoff();
-                    internNotifications.notifyIntern(internId, subject, plain, null);
+                    internNotifications.notifyIntern(internId,
+                            com.anvicorp.api.notification.NotificationEventType.PROJECT_ASSIGNED,
+                            subject, plain, null);
                 } catch (Exception ex) {
                     log.warn("[ProjectAssignmentService] catalog-assign intern-mail failed (non-fatal) intern={}: {}",
                             internId, ex.getMessage());
@@ -284,7 +286,9 @@ public class ProjectAssignmentService {
                     + "starts with \"@<your GitHub handle> invited you\") before you "
                     + "start the assignment from /careers/intern/projects."
                     + "\n\n— Anvi Corp";
-            internNotifications.notifyIntern(a.getInternId(), subject, plain, null);
+            internNotifications.notifyIntern(a.getInternId(),
+                    com.anvicorp.api.notification.NotificationEventType.REPO_INVITATION_SENT,
+                    subject, plain, null);
         } catch (Exception ex) {
             log.warn("[ProjectAssignmentService] access-granted intern-mail failed (non-fatal) assignment={}: {}",
                     assignmentId, ex.getMessage());

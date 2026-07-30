@@ -180,7 +180,12 @@ public class QaSessionService {
                 + "\n\nOpen the project: /careers/intern/projects/" + project.getId()
                 + "\n\n" + brand.signoff();
         try {
-            internNotifications.notifyIntern(internUser.getId(), subject, body, null);
+            // Lifecycle-mail-bridge: stamp EVALUATOR sender role so the bridge
+            // routes this into the intern's company mailbox from evaluator@;
+            // the base 4-arg overload skips G1 and falls through to SMTP.
+            internNotifications.notifyIntern(internUser.getId(),
+                    com.anvicorp.api.notification.NotificationEventType.PROJECT_QA_SCHEDULED,
+                    subject, body, null);
         } catch (Exception e) {
             log.debug("[QaSession] intern mail send failed (non-fatal): {}", e.getMessage());
         }

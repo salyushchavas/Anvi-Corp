@@ -86,5 +86,38 @@ public enum NotificationEventType {
     // new completion type is added here).
     PROJECT_TECH_APPROVED,
     PROJECT_RETURNED_FOR_REVISIONS,
-    PROJECT_PENDING_VIVA
+    PROJECT_PENDING_VIVA,
+
+    // Lifecycle-mail-bridge — every post-activation staff→intern touchpoint
+    // has to route through the internal-mail bridge so the intern's company
+    // mailbox sees a coherent conversation. Each of these is stamped to a
+    // sender role in NotificationSenderRoles so the 5-arg notifyIntern
+    // overload flows through the bridge.
+    //
+    // Trainer-owned catalog + KT actions (were 4-arg bypass in
+    // ProjectCatalogService before the wiring pass).
+    KT_SCHEDULED,
+    KT_COMPLETED,
+    REPO_INVITATION_SENT,
+
+    // Evaluator-owned Q&A / viva scheduling (was 4-arg bypass in
+    // QaSessionService before the wiring pass).
+    PROJECT_QA_SCHEDULED,
+
+    // Evaluator-owned I-983 workflow (were renderAndEmail bypass in
+    // EvaluationNotificationFanout before the wiring pass).
+    I983_EVALUATION_DUE,
+    I983_EVALUATION_PUBLISHED,
+
+    // ERM-owned document-packet lifecycle (were renderAndSend bypass in
+    // DocumentEmailListener before the wiring pass).
+    DOCUMENT_PACKET_ASSIGNED,
+    DOCUMENT_TASK_ACCEPTED,
+    DOCUMENT_TASK_REJECTED,
+    DOCUMENT_TASK_RESEND_REQUESTED,
+    DOCUMENT_PACKET_COMPLETED,
+
+    // ERM-owned timesheet verification step (previously in-app only —
+    // now also lands in the intern's mailbox).
+    TIMESHEET_VERIFIED_BY_ERM
 }

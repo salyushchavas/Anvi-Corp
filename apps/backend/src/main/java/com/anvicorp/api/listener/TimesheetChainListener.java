@@ -94,6 +94,25 @@ public class TimesheetChainListener {
             String body  = "Ready for your approval in Manager → Timesheet Approvals.";
             safeDispatch(lc.getManagerId(), "TIMESHEET_VERIFIED", e.getInternUserId(),
                     title, body, "/careers/manager/timesheet-approvals");
+            // Lifecycle-mail-bridge: also confirm ERM verification to the
+            // intern via the company mailbox from erm@. Previously only the
+            // Manager was notified (in-app); the intern had no visibility
+            // into the intermediate verification step.
+            try {
+                String actorPhrase = resolveActorPhrase(e.getActorUserId(), "ERM");
+                String subject = "Your timesheet was verified by your ERM";
+                String mailBody = actorPhrase + " has verified your timesheet. "
+                        + "It's now with your Manager for approval — you don't "
+                        + "need to do anything further at this step."
+                        + "\n\nOpen your timesheets: /careers/intern/timesheets"
+                        + "\n\n" + brand.signoff();
+                internNotifications.notifyIntern(e.getInternUserId(),
+                        com.anvicorp.api.notification.NotificationEventType.TIMESHEET_VERIFIED_BY_ERM,
+                        subject, mailBody, null);
+            } catch (Exception ex2) {
+                log.warn("[TimesheetChain] verified intern-mail failed (non-fatal): {}",
+                        ex2.getMessage());
+            }
         } catch (Exception ex) {
             log.warn("[TimesheetChain] onVerified failed (non-fatal): {}", ex.getMessage());
         }
