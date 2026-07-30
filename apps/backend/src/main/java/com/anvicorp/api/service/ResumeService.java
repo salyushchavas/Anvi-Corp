@@ -108,34 +108,70 @@ public class ResumeService {
         String extension = extractExtension(originalName, contentType);
         String stored = UUID.randomUUID() + extension;
 
-        // Defensive: ensure storage directory exists at write-time. @PostConstruct
-        // creates it at startup, but Railway's filesystem can be ephemeral on
-        // restart — and if the dir is gone, Files.copy throws NoSuchFileException.
-        try {
-            Files.createDirectories(storageDir);
-        } catch (IOException e) {
-            log.error("Failed to ensure resume storage directory exists at {}: {}",
-                    storageDir, e.getMessage(), e);
-            throw new RuntimeException("Could not prepare resume storage directory", e);
-        }
-
-        Path target = storageDir.resolve(stored);
-        try (InputStream in = file.getInputStream()) {
-            Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            log.error("Failed to write resume file to {}: {}",
-                    storageDir, e.getMessage(), e);
-            throw new RuntimeException("Could not save resume file", e);
+        // S3 first (production path). Railway's container filesystem is
+        // EPHEMERAL — anything under /app/uploads/ is wiped on every
+        // restart / redeploy, so a local-disk write means the resume is
+        // guaranteed to disappear. When S3 is configured, we write to a
+        // key like {brand}/resumes/{candidateId}/{uuid}.{ext} and store
+        // the S3 key in filePath — loadFile() already knows how to
+        // resolve S3-shaped filePaths (Phase B dual-resolve).
+        //
+        // Falls back to the volume path only when S3 is not configured
+        // (local dev, CI). That fallback still works on a single-container
+        // dev session but is UNSAFE in prod — which is why the boot log
+        // warns loudly when S3 is not ready.
+        String s3Key = null;
+        Path volumeTarget = null;
+        long fileSize = file.getSize();
+        if (s3StorageService.isReady()) {
+            s3Key = s3StorageService.key("resumes",
+                    candidate.getId().toString(), stored);
+            try (InputStream in = file.getInputStream()) {
+                s3StorageService.putObject(s3Key, in, fileSize, contentType);
+            } catch (IOException e) {
+                log.error("Failed to upload resume to S3 (key={}): {}",
+                        s3Key, e.getMessage(), e);
+                throw new RuntimeException("Could not save resume file to S3", e);
+            }
+            log.info("Uploaded resume to S3 key={} sizeBytes={} contentType={}",
+                    s3Key, fileSize, contentType);
+        } else {
+            log.warn("S3 not configured — writing resume to EPHEMERAL local "
+                    + "disk at {}. In production, set AWS_S3_* env vars so "
+                    + "resumes persist across restarts.", storageDir);
+            try {
+                Files.createDirectories(storageDir);
+            } catch (IOException e) {
+                log.error("Failed to ensure resume storage directory exists at {}: {}",
+                        storageDir, e.getMessage(), e);
+                throw new RuntimeException("Could not prepare resume storage directory", e);
+            }
+            volumeTarget = storageDir.resolve(stored);
+            try (InputStream in = file.getInputStream()) {
+                Files.copy(in, volumeTarget, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                log.error("Failed to write resume file to {}: {}",
+                        storageDir, e.getMessage(), e);
+                throw new RuntimeException("Could not save resume file", e);
+            }
         }
 
         boolean isFirst = resumeRepository.countByCandidateId(candidate.getId()) == 0;
 
+        // filePath discriminator per loadFile()'s Phase-B dual-resolve:
+        //   S3-shaped key ("resumes/…" — no leading "/") → S3 branch
+        //   filesystem path (absolute or ./relative)     → volume branch
+        // Storing the S3 key here means loadFile() picks the S3 read
+        // path automatically; no schema change needed.
+        String filePath = s3Key != null
+                ? s3Key
+                : (volumeTarget != null ? volumeTarget.toString() : null);
         Resume resume = Resume.builder()
                 .candidate(candidate)
                 .fileName(originalName)
                 .storedFileName(stored)
-                .filePath(target.toString())
-                .fileSize(file.getSize())
+                .filePath(filePath)
+                .fileSize(fileSize)
                 .contentType(contentType)
                 .fileUrl(stored)
                 .isDefault(isFirst)
@@ -193,12 +229,23 @@ public class ResumeService {
         if (applicationRepository.existsByResumeId(resume.getId())) {
             throw new ConflictException("Cannot delete a resume that is referenced by an application");
         }
+        // Delete the underlying artifact — S3 object for S3-shaped keys,
+        // volume file otherwise. Best-effort; the DB row is deleted below
+        // regardless because the audit trail is the source of truth for
+        // access after removal.
+        String fp = resume.getFilePath();
         try {
-            if (resume.getFilePath() != null) {
-                Files.deleteIfExists(Paths.get(resume.getFilePath()));
+            if (fp != null && !fp.isBlank()) {
+                boolean looksLikeVolume =
+                        com.anvicorp.api.intern.DocumentVaultService.looksLikeFilesystemPath(fp);
+                if (looksLikeVolume) {
+                    Files.deleteIfExists(Paths.get(fp));
+                } else if (s3StorageService.isReady()) {
+                    s3StorageService.deleteObject(fp);
+                }
             }
-        } catch (IOException e) {
-            log.warn("Failed to delete resume file {}: {}", resume.getFilePath(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("Failed to delete resume artifact {}: {}", fp, e.getMessage());
         }
         // GAP E6 — audit BEFORE the row vanishes; entityId still resolves.
         writeAudit(resume.getId(), "RESUME_DELETED", userId);
