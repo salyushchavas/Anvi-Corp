@@ -55,6 +55,13 @@ public class InternDocumentService {
     private final DocumentVaultService documentVault;
     private final ApplicationEventPublisher eventPublisher;
     private final DocumentPacketService packetService;
+    /** Admin-managed template resolver — returns the admin-uploaded
+     *  S3 URL when present, else the legacy static enum URL, else
+     *  null (upload-only docs). Wiring this in means the intern
+     *  packet view actually surfaces admin-uploaded template files
+     *  instead of always serving the seeded static asset. */
+    private final com.anvicorp.api.admin.onboardingtemplates
+            .OnboardingTemplateAdminService onboardingTemplateAdminService;
 
     // ── Read ─────────────────────────────────────────────────────────────
 
@@ -295,6 +302,17 @@ public class InternDocumentService {
 
     private InternTaskView toInternTaskView(DocumentTask t) {
         SkyzenDocument d = t.getDocumentKey();
+        // Bug fix: prior code called d.publicUrl() which is hardcoded
+        // to the seeded static asset from the SkyzenDocument enum and
+        // NEVER read OnboardingDocumentTemplate.currentDocumentId —
+        // so every admin upload via the Onboarding Documents admin
+        // page was silently ignored on the intern side (they always
+        // got the default). Route through the admin resolver instead:
+        // S3-backed admin-uploaded file wins over the legacy static
+        // enum asset, null returned for upload-only docs.
+        String templateUrl = d != null
+                ? onboardingTemplateAdminService.resolveDownloadUrlOrNull(d.name())
+                : null;
         return new InternTaskView(
                 t.getId(),
                 d,
@@ -302,7 +320,7 @@ public class InternDocumentService {
                 d != null ? d.getDescription() : null,
                 d != null ? d.getCategory() : null,
                 d != null ? d.getSensitivity() : null,
-                d != null ? d.publicUrl() : null,
+                templateUrl,
                 t.getStatus(), t.getVersion(),
                 t.getTaskInstructions(),
                 t.getSubmittedAt(), t.getReviewedAt(),

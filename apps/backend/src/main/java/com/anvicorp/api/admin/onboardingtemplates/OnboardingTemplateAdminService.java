@@ -274,6 +274,28 @@ public class OnboardingTemplateAdminService {
         return toRow(t, doc);
     }
 
+    /**
+     * Best-effort variant of {@link #resolveDownload} for internal
+     * callers (the intern packet view). Returns the S3 presigned URL
+     * when admin has uploaded a replacement file, else the legacy
+     * static enum URL, else {@code null} — never throws. Handles the
+     * upload-only case (passport / license / etc.) that would
+     * otherwise 404 the packet view.
+     */
+    @Transactional(readOnly = true)
+    public String resolveDownloadUrlOrNull(String key) {
+        try {
+            OnboardingTemplateDtos.DownloadResolutionResponse r = resolveDownload(key);
+            return r != null ? r.downloadUrl() : null;
+        } catch (ResourceNotFoundException e) {
+            return null;
+        } catch (Exception e) {
+            log.warn("[OnboardingTemplateAdmin] resolveDownloadUrlOrNull({}) failed "
+                    + "(non-fatal, returning null): {}", key, e.getMessage());
+            return null;
+        }
+    }
+
     // ── Soft-delete ──────────────────────────────────────────────────
 
     @Transactional
