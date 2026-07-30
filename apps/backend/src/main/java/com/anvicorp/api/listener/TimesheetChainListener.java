@@ -71,6 +71,19 @@ public class TimesheetChainListener {
                 safeDispatch(rid, "TIMESHEET_SUBMITTED", e.getInternUserId(),
                         title, body, "/careers/erm/timesheets");
             }
+            // Also drop ONE mail into the shared erm@ inbox (intern-as-sender,
+            // erm@ mailbox as recipient) so the ERM team's canonical inbox
+            // shows the submit alongside every other staff⇄intern message.
+            // Per-ERM safeDispatch above still fires — this is additive so
+            // an ERM whose user is linked to their personal inbox instead
+            // of erm@ is never left without a channel.
+            internNotifications.notifyStaffFromIntern(
+                    com.anvicorp.api.notification.NotificationSenderRoles.ERM,
+                    e.getInternUserId(),
+                    title,
+                    body + "\n\nOpen ERM → Timesheets: /careers/erm/timesheets\n\n"
+                            + brand.signoff(),
+                    null);
         } catch (Exception ex) {
             log.warn("[TimesheetChain] onSubmitted failed (non-fatal): {}", ex.getMessage());
         }

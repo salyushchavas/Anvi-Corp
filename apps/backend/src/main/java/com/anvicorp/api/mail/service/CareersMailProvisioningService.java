@@ -13,12 +13,14 @@ import com.anvicorp.api.mail.entity.MailDomain;
 import com.anvicorp.api.mail.entity.MailRole;
 import com.anvicorp.api.mail.repository.MailAccountRepository;
 import com.anvicorp.api.mail.repository.MailDomainRepository;
+import com.anvicorp.api.event.CompanyEmailAssignedEvent;
 import com.anvicorp.api.notification.EmailDeliveryException;
 import com.anvicorp.api.notification.EmailProvider;
 import com.anvicorp.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -97,6 +99,18 @@ public class CareersMailProvisioningService {
     private final PasswordEncoder passwordEncoder;
     private final EmailProvider emailProvider;
     private final BrandConfig brand;
+    /**
+     * Publisher for the {@link CompanyEmailAssignedEvent} fired at
+     * commit-time — the port dropped the previous
+     * {@code CompanyEmailAssignedListener}; a new listener at
+     * {@code com.anvicorp.api.listener.CompanyEmailAssignedListener} now
+     * consumes this event to drop the "your company mailbox is ready"
+     * internal welcome as the FIRST message in the intern's new inbox.
+     * Registering the event here (inside the {@code @Transactional}
+     * method) means it fires only if the transaction commits — no
+     * welcome ever lands for a rolled-back mailbox.
+     */
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Default company domain — the same seed key {@code MailAdminSeeder}
@@ -250,6 +264,19 @@ public class CareersMailProvisioningService {
                         + "(personal {} archived; state ACTIVATED; credentialsEmailSent={})",
                 caller != null ? caller.getId() : null, companyEmail, intern.getId(),
                 personalEmail, credentialsEmailSent);
+
+        // Fire the domain event so the listener can drop an internal
+        // welcome into the freshly-provisioned inbox at AFTER_COMMIT.
+        // The starting password rides transiently — see the event's
+        // javadoc — the listener does NOT need it (that goes out via
+        // sendCredentialsEmail above to the personal address), but the
+        // event's shape is preserved for downstream compatibility.
+        eventPublisher.publishEvent(new CompanyEmailAssignedEvent(
+                intern.getId(),
+                mailbox.getId(),
+                personalEmail,
+                companyEmail,
+                startingPassword));
 
         return new ProvisionResult(
                 intern.getId(),

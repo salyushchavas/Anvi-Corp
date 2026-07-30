@@ -116,6 +116,8 @@ public final class NotificationSenderRoles {
         MAPPING.put(NotificationEventType.DOCUMENT_TASK_RESEND_REQUESTED,  ERM);
         MAPPING.put(NotificationEventType.DOCUMENT_PACKET_COMPLETED,       ERM);
         MAPPING.put(NotificationEventType.TIMESHEET_VERIFIED_BY_ERM,       ERM);
+        MAPPING.put(NotificationEventType.COMPANY_EMAIL_ASSIGNED,          ERM);
+        MAPPING.put(NotificationEventType.EVALUATION_ACK_REQUESTED,        EVALUATOR);
     }
 
     private NotificationSenderRoles() {}

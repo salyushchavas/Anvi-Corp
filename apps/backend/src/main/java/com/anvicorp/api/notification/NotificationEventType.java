@@ -119,5 +119,23 @@ public enum NotificationEventType {
 
     // ERM-owned timesheet verification step (previously in-app only —
     // now also lands in the intern's mailbox).
-    TIMESHEET_VERIFIED_BY_ERM
+    TIMESHEET_VERIFIED_BY_ERM,
+
+    // ERM-owned mailbox provisioning — a distinct "your company mailbox
+    // is ready" internal welcome, separate from the InternActivated
+    // welcome (which fires later, when the intern's lifecycle flips to
+    // ACTIVE). Recipient is the intern; sender is ERM. Fires from the
+    // CompanyEmailAssignedListener AFTER_COMMIT of provisionForIntern,
+    // by which point the intern's mailbox is provisioned + linked +
+    // handoverState=ACTIVATED, so the bridge's G3 passes and the mail
+    // lands in the new inbox as the FIRST message the intern sees.
+    COMPANY_EMAIL_ASSIGNED,
+
+    // Evaluator-owned distinct "please acknowledge" prompt sent
+    // alongside EVALUATION_FINALIZED when the evaluator publishes. The
+    // finalized mail is informational ("here are your ratings"); this
+    // is the explicit action-required nudge so the intern's mailbox
+    // shows the ack as its own item rather than as a footer on the
+    // ratings mail.
+    EVALUATION_ACK_REQUESTED
 }

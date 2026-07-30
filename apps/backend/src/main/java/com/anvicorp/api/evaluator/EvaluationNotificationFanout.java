@@ -140,6 +140,29 @@ public class EvaluationNotificationFanout {
             log.warn("[EvaluatorFanout] intern published mail failed: {}", e.getMessage());
         }
 
+        // Distinct "please acknowledge" action-required nudge, delivered
+        // as its own item so the intern's mailbox shows the ack as a
+        // to-do rather than a footer on the ratings mail. Same recipient
+        // (intern), same sender (evaluator@); different subject line
+        // + Type so the mailbox renders it as a separate thread and any
+        // future reminder / rules can key off EVALUATION_ACK_REQUESTED.
+        try {
+            String ackSubject = "Action needed: acknowledge your evaluation";
+            String ackPlain = "Hi " + firstName + ",\n\n"
+                    + actorPhrase + " is waiting on your acknowledgment of the "
+                    + "monthly evaluation just published. Two-click flow: open the "
+                    + "evaluation, add an optional note, and click Acknowledge — that "
+                    + "confirms you've reviewed the ratings and lets your Manager and "
+                    + "ERM know you're aware."
+                    + "\n\nOpen it to acknowledge: " + deepLink
+                    + "\n\n" + brand.signoff();
+            internNotifications.notifyIntern(intern.getId(),
+                    com.anvicorp.api.notification.NotificationEventType.EVALUATION_ACK_REQUESTED,
+                    ackSubject, ackPlain, null);
+        } catch (Exception e) {
+            log.warn("[EvaluatorFanout] intern ack-requested mail failed: {}", e.getMessage());
+        }
+
         tryInApp(intern.getId(), "EVALUATION_PUBLISHED", intern.getId(),
                 "Your Evaluator published your evaluation",
                 actorPhrase + " published your monthly evaluation. "

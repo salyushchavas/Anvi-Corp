@@ -5,6 +5,8 @@ import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.event.WeeklyReportSubmittedEvent;
 import com.anvicorp.api.event.WeeklyReportVerifiedEvent;
+import com.anvicorp.api.notification.InternNotificationService;
+import com.anvicorp.api.notification.NotificationSenderRoles;
 import com.anvicorp.api.notification.UserNotificationDispatcher;
 import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.UserRepository;
@@ -45,6 +47,8 @@ public class WeeklyReportChainListener {
     private final InternLifecycleRepository lifecycleRepository;
     private final UserRepository userRepository;
     private final UserNotificationDispatcher dispatcher;
+    private final InternNotificationService internNotifications;
+    private final com.anvicorp.api.config.BrandConfig brand;
 
     // ── Submitted → ERM ─────────────────────────────────────────────────────
 
@@ -67,6 +71,17 @@ public class WeeklyReportChainListener {
                 safeDispatch(rid, "WEEKLY_REPORT_SUBMITTED", e.getInternUserId(),
                         title, body, "/careers/erm/weekly-reports");
             }
+            // Additive shared-inbox drop — one message into erm@ so the
+            // ERM team's canonical mailbox surfaces the submit alongside
+            // every other staff⇄intern conversation. Per-ERM safeDispatch
+            // above still fires; this is a second channel, not a replacement.
+            internNotifications.notifyStaffFromIntern(
+                    NotificationSenderRoles.ERM,
+                    e.getInternUserId(),
+                    title,
+                    body + "\n\nOpen ERM → Weekly Reports: /careers/erm/weekly-reports\n\n"
+                            + brand.signoff(),
+                    null);
         } catch (Exception ex) {
             log.warn("[WeeklyReportChain] onSubmitted failed (non-fatal): {}", ex.getMessage());
         }
