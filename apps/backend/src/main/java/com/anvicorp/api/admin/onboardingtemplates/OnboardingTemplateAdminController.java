@@ -85,4 +85,32 @@ public class OnboardingTemplateAdminController {
             @PathVariable String key) {
         return service.resolveDownload(key);
     }
+
+    /**
+     * ERM-facing pickable-templates list — every ACTIVE row from
+     * {@code onboarding_document_templates}, seeded from the
+     * SkyzenDocument enum AND augmented with admin-added rows.
+     * Feeds the assignment modals (Assign Packet + Assign Additional
+     * Document) so admin-created templates actually appear alongside
+     * the enum-derived set. Delegates straight to
+     * {@link OnboardingTemplateAdminService#list} and derives the
+     * lighter picker shape here so callers don't have to filter or
+     * strip fields client-side.
+     */
+    @GetMapping("/api/v1/erm/onboarding-templates/pickable")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public OnboardingTemplateDtos.PickableTemplateListResponse pickable() {
+        var rows = service.list().items().stream()
+                .filter(OnboardingTemplateDtos.TemplateRow::active)
+                .map(r -> new OnboardingTemplateDtos.PickableTemplate(
+                        r.key(),
+                        r.title(),
+                        r.category(),
+                        r.sensitivity(),
+                        r.description(),
+                        r.documentType(),
+                        r.currentDocumentId() != null))
+                .toList();
+        return new OnboardingTemplateDtos.PickableTemplateListResponse(rows);
+    }
 }

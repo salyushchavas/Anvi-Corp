@@ -1,17 +1,16 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { X, ExternalLink } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { X, ExternalLink, AlertCircle } from 'lucide-react';
 import api from '@/lib/careers/api';
 import {
-  SKYZEN_DOCUMENTS,
-  SKYZEN_DOCUMENT_CATEGORIES,
+  SKYZEN_DOCUMENT_BY_KEY,
   CATEGORY_BADGE,
   SENSITIVITY_BADGE,
   SENSITIVITY_LABEL,
   type SkyzenDocumentKey,
   type SkyzenDocumentCategory,
-  type SkyzenDocumentSpec,
+  type SkyzenDocumentSensitivity,
 } from '@/lib/careers/skyzen-documents';
 
 type Props = {
@@ -25,37 +24,72 @@ type Props = {
 };
 
 /**
- * ERM Phase 8.2 — assignment modal sourced entirely from the static
- * SKYZEN_DOCUMENTS constant (no API fetch). ERM ticks the docs they
- * want to send, optionally adds an instructions note, and submits.
- * Phase 8.6.4 dropped the client-side reporting-structure gate;
- * Manager is no longer required and Trainer/Evaluator auto-link from
- * system config at offer sign. Server still validates T+E and returns
- * REPORTING_STRUCTURE_INCOMPLETE if either is missing.
+ * ERM Phase 8.2 → 8.7 — assignment modal now sources its list from
+ * {@code /api/v1/erm/onboarding-templates/pickable} which returns every
+ * active row from {@code onboarding_document_templates}: the enum-seeded
+ * rows AND any admin-added templates. Previously enumerated the frontend
+ * SKYZEN_DOCUMENTS constant, so admin-added templates never appeared.
+ *
+ * <p>Row shape mirrors the enum spec closely so the render is unchanged.
+ * Admin-added rows whose key isn't in the enum are surfaced with an
+ * "admin-added" badge and shown disabled — the downstream assignPacket
+ * endpoint still deserializes into the SkyzenDocument enum, so custom
+ * keys can't be submitted yet. Full end-to-end assignability of custom
+ * keys is a follow-up (requires changing DocumentTask.documentKey from
+ * enum → String).</p>
  */
+interface PickableTemplate {
+  key: string;
+  title: string;
+  category: string;
+  sensitivity: string;
+  description: string | null;
+  documentType: 'TEMPLATE' | 'NORMAL' | string;
+  hasCustomFile: boolean;
+}
+
 export default function AssignPacketModal({
   open, lifecycleId, internName, employeeId, tentativeStartDate,
   onClose, onAssigned,
 }: Props) {
-  const [selected, setSelected] = useState<Set<SkyzenDocumentKey>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [customInstructions, setCustomInstructions] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [rows, setRows] = useState<PickableTemplate[] | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
-  const grouped = useMemo(() => {
-    const out = new Map<SkyzenDocumentCategory, SkyzenDocumentSpec[]>();
-    for (const c of SKYZEN_DOCUMENT_CATEGORIES) out.set(c, []);
-    // Deprecated docs are kept in SKYZEN_DOCUMENTS so historical packets
-    // still resolve their key → title/category, but they're hidden from
-    // new packet assignment so ERM stops handing them out.
-    for (const d of SKYZEN_DOCUMENTS) {
-      if (d.deprecated) continue;
-      out.get(d.category)!.push(d);
+  const load = useCallback(async () => {
+    setLoadErr(null);
+    try {
+      const res = await api.get<{ items: PickableTemplate[] }>(
+        '/api/v1/erm/onboarding-templates/pickable');
+      setRows(res.data.items ?? []);
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: string } }; message?: string };
+      setLoadErr(ax.response?.data?.error ?? ax.message ?? 'Failed to load templates');
+      setRows([]);
     }
-    return out;
   }, []);
 
-  function toggle(k: SkyzenDocumentKey) {
+  useEffect(() => {
+    if (open && rows === null) void load();
+  }, [open, rows, load]);
+
+  const grouped = useMemo(() => {
+    const out = new Map<string, PickableTemplate[]>();
+    for (const r of rows ?? []) {
+      const list = out.get(r.category) ?? [];
+      list.push(r);
+      out.set(r.category, list);
+    }
+    return out;
+  }, [rows]);
+
+  const categories = useMemo(() => Array.from(grouped.keys()).sort(), [grouped]);
+
+  function toggle(k: string, disabled: boolean) {
+    if (disabled) return;
     setSelected((cur) => {
       const next = new Set(cur);
       if (next.has(k)) next.delete(k); else next.add(k);
@@ -64,9 +98,6 @@ export default function AssignPacketModal({
   }
 
   async function submit() {
-    // Phase 8.6.4 (revised) — document onboarding is ERM↔intern only;
-    // Trainer/Evaluator have no role in this loop, so there is no
-    // reporting-structure gate on assignment.
     if (selected.size === 0) {
       setErr('Pick at least one document.');
       return;
@@ -129,56 +160,78 @@ export default function AssignPacketModal({
               {err}
             </p>
           )}
+          {loadErr && (
+            <p className="mb-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+              {loadErr}
+            </p>
+          )}
+          {rows === null && !loadErr && (
+            <div className="h-32 animate-pulse rounded-md bg-slate-100" />
+          )}
 
-          {SKYZEN_DOCUMENT_CATEGORIES.map((cat) => {
+          {rows !== null && categories.map((cat) => {
             const items = grouped.get(cat) ?? [];
             if (items.length === 0) return null;
+            const badgeCls = CATEGORY_BADGE[cat as SkyzenDocumentCategory]
+              ?? 'bg-slate-100 text-slate-700';
             return (
               <section key={cat} className="mb-4">
                 <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  <span className={`rounded-full px-2 py-0.5 ${CATEGORY_BADGE[cat]}`}>
+                  <span className={`rounded-full px-2 py-0.5 ${badgeCls}`}>
                     {cat}
                   </span>
                 </h4>
                 <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
                   {items.map((d) => {
+                    // Enum spec — undefined for admin-added rows that
+                    // aren't in the SkyzenDocument enum. Those rows show
+                    // but are non-assignable until the entity refactor.
+                    const enumSpec = SKYZEN_DOCUMENT_BY_KEY[d.key as SkyzenDocumentKey];
+                    const enumAssignable = !!enumSpec;
                     const on = selected.has(d.key);
+                    const sensBadge = SENSITIVITY_BADGE[d.sensitivity as SkyzenDocumentSensitivity]
+                      ?? 'bg-slate-100 text-slate-700';
+                    const sensLabel = SENSITIVITY_LABEL[d.sensitivity as SkyzenDocumentSensitivity]
+                      ?? d.sensitivity;
                     return (
                       <li key={d.key} className="flex items-start gap-3 px-3 py-2">
                         <input
                           id={`doc-${d.key}`}
                           type="checkbox"
                           checked={on}
-                          onChange={() => toggle(d.key)}
-                          className="mt-1"
+                          onChange={() => toggle(d.key, !enumAssignable)}
+                          disabled={!enumAssignable}
+                          className="mt-1 disabled:opacity-40"
                         />
-                        <label htmlFor={`doc-${d.key}`} className="flex-1 cursor-pointer">
-                          <div className="flex items-center gap-2">
+                        <label htmlFor={`doc-${d.key}`}
+                          className={
+                            'flex-1 '
+                            + (enumAssignable ? 'cursor-pointer' : 'cursor-not-allowed opacity-70')
+                          }>
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="text-sm font-medium text-slate-900">
                               {d.title}
                             </span>
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${SENSITIVITY_BADGE[d.sensitivity]}`}>
-                              {SENSITIVITY_LABEL[d.sensitivity]}
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${sensBadge}`}>
+                              {sensLabel}
                             </span>
+                            {d.hasCustomFile && (
+                              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                                admin file
+                              </span>
+                            )}
+                            {!enumAssignable && (
+                              <span className="inline-flex items-center gap-0.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900"
+                                title="Admin-added templates aren't assignable yet — entity refactor pending. Enum-seeded templates work as before.">
+                                <AlertCircle className="h-2.5 w-2.5" /> admin-added — assignment pending
+                              </span>
+                            )}
                           </div>
-                          <p className="text-[11px] text-slate-500">{d.description}</p>
+                          {d.description && (
+                            <p className="text-[11px] text-slate-500">{d.description}</p>
+                          )}
                         </label>
-                        {d.publicUrl ? (
-                          <a
-                            href={d.publicUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-0.5 text-[11px] font-medium text-brand-700 hover:underline"
-                            title="Open the blank PDF in a new tab"
-                          >
-                            Preview <ExternalLink className="h-3 w-3" />
-                          </a>
-                        ) : (
-                          // Upload-only doc — no fill-in template to preview.
-                          <span className="text-[11px] text-slate-400">
-                            Upload only
-                          </span>
-                        )}
+                        <PreviewLink templateKey={d.key} enumSpec={enumSpec} />
                       </li>
                     );
                   })}
@@ -218,13 +271,51 @@ export default function AssignPacketModal({
               type="button"
               onClick={submit}
               disabled={submitting || selected.size === 0}
-              className="rounded-md bg-brand-700 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-800 disabled:bg-slate-300"
+              className="rounded-md bg-brand-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
             >
-              {submitting ? 'Sending…' : `Send to intern`}
+              {submitting ? 'Assigning…' : 'Assign'}
             </button>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function PreviewLink({ templateKey, enumSpec }: {
+  templateKey: string;
+  enumSpec: { publicUrl: string | null } | undefined;
+}) {
+  const [busy, setBusy] = useState(false);
+  const staticFallback = enumSpec?.publicUrl ?? null;
+
+  async function open() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await api.get<{ downloadUrl: string | null }>(
+        `/api/v1/onboarding-templates/${encodeURIComponent(templateKey)}/download-url`);
+      const url = res.data?.downloadUrl ?? staticFallback;
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    } catch {
+      if (staticFallback) window.open(staticFallback, '_blank', 'noopener,noreferrer');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!enumSpec && !staticFallback) {
+    return <span className="text-[11px] text-slate-400">Upload only</span>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={open}
+      disabled={busy}
+      className="inline-flex items-center gap-0.5 text-[11px] font-medium text-brand-700 hover:underline disabled:opacity-60"
+      title="Open the current blank PDF in a new tab (admin file if uploaded, else the seeded default)"
+    >
+      {busy ? 'Opening…' : 'Preview'} <ExternalLink className="h-3 w-3" />
+    </button>
   );
 }

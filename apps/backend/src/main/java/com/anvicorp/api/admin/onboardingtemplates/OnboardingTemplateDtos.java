@@ -96,4 +96,28 @@ public final class OnboardingTemplateDtos {
             /** Expiry (S3 source only; null for static). */
             Instant expiresAt
     ) {}
+
+    // ── ERM pickable list ────────────────────────────────────────────
+
+    /**
+     * Lightweight row for the ERM assignment picker. Every active
+     * onboarding_document_templates row (seeded-from-enum plus
+     * admin-added) surfaces here so ERM can see them all.
+     */
+    public record PickableTemplate(
+            String key,
+            String title,
+            String category,
+            String sensitivity,
+            String description,
+            /** TEMPLATE | NORMAL. */
+            String documentType,
+            /** True when the admin has uploaded a file (S3-backed);
+             *  helps the picker show a "custom file" chip. */
+            boolean hasCustomFile
+    ) {}
+
+    public record PickableTemplateListResponse(
+            List<PickableTemplate> items
+    ) {}
 }
