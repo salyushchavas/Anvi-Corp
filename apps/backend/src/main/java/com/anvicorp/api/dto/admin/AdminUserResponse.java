@@ -26,4 +26,12 @@ public class AdminUserResponse {
      * who never went through the applicant funnel.
      */
     private String applicantId;
+    /**
+     * Whether the user completed the /auth/verify-email 6-digit code
+     * flow. INTERN registrations start with {@code false} until the
+     * candidate enters the code. Bot-signup mitigation: the admin
+     * users list defaults to hiding unverified INTERN rows so
+     * abandoned / bot submissions don't clutter the roster.
+     */
+    private Boolean emailVerified;
 }

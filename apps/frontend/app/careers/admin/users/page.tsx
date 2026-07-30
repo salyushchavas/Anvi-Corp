@@ -18,6 +18,10 @@ interface AdminUserResponse {
   active: boolean;
   createdAt: string;
   applicantId?: string | null;
+  /** Whether the user completed the /auth/verify-email 6-digit code.
+   *  Unverified INTERN rows are hidden from the default list (bot-signup
+   *  mitigation) — flip the "Show unverified" toggle to see them. */
+  emailVerified?: boolean;
 }
 
 /** Matches the backend's LAST_SUPER_ADMIN_MSG so we can render this as the
@@ -141,17 +145,22 @@ function UsersTable() {
   // Surfaces the last-active-SUPER_ADMIN refusal as a persistent banner the
   // operator has to dismiss — not a passing toast.
   const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
+  // Bot-signup mitigation: unverified INTERN rows (created but never
+  // completed the email code) are hidden by default so the list stays
+  // clean. Flip this to review + purge suspected bot signups.
+  const [showUnverified, setShowUnverified] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const res = await api.get<AdminUserResponse[]>('/api/v1/admin/users');
+      const res = await api.get<AdminUserResponse[]>(
+        `/api/v1/admin/users?includeUnverified=${showUnverified}`);
       setUsers(res.data ?? []);
     } catch (err: any) {
       setError(err?.response?.data?.error ?? "Couldn't load users.");
       setUsers([]);
     }
-  }, []);
+  }, [showUnverified]);
 
   useEffect(() => {
     void load();
@@ -286,6 +295,18 @@ function UsersTable() {
                 </option>
               ))}
             </select>
+          </label>
+          <label
+            className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+            title="Unverified intern accounts are hidden from the default list to keep bot signups out of the roster."
+          >
+            <input
+              type="checkbox"
+              checked={showUnverified}
+              onChange={(e) => setShowUnverified(e.target.checked)}
+              className="h-4 w-4"
+            />
+            Show unverified interns
           </label>
         </div>
         <button

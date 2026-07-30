@@ -40,8 +40,10 @@ public class AdminUserController {
     @PreAuthorize("hasRole('SUPER_ADMIN')")
     public List<AdminUserResponse> list(
             @RequestParam(required = false) UserRole role,
-            @RequestParam(required = false) String search) {
-        return adminUserService.list(role, search);
+            @RequestParam(required = false) String search,
+            @RequestParam(name = "includeUnverified", defaultValue = "false")
+            boolean includeUnverified) {
+        return adminUserService.list(role, search, includeUnverified);
     }
 
     @PostMapping

@@ -106,14 +106,39 @@ public class AdminUserService {
 
     @Transactional(readOnly = true)
     public List<AdminUserResponse> list(UserRole roleFilter, String search) {
+        return list(roleFilter, search, false);
+    }
+
+    /**
+     * List admin users, optionally including unverified INTERN
+     * registrations. The default excludes them: registration creates
+     * a User row before the 6-digit email code is verified, so
+     * abandoned + bot submissions all pile up as unverified INTERN
+     * rows. Hiding them keeps the roster clean; admins can flip the
+     * flag to review + purge them.
+     *
+     * <p>Verified INTERNs + all staff accounts (regardless of verified
+     * state — the staff-invite flow marks them verified up-front) are
+     * always included.</p>
+     */
+    @Transactional(readOnly = true)
+    public List<AdminUserResponse> list(UserRole roleFilter, String search, boolean includeUnverified) {
         String q = (search != null && !search.isBlank()) ? search.trim().toLowerCase() : null;
         return userRepository.findAll().stream()
                 .filter(u -> roleFilter == null || u.getRoles().contains(roleFilter))
+                .filter(u -> includeUnverified || !isUnverifiedIntern(u))
                 .filter(u -> q == null
                         || (u.getFullName() != null && u.getFullName().toLowerCase().contains(q))
                         || (u.getEmail() != null && u.getEmail().toLowerCase().contains(q)))
                 .map(this::toResponse)
                 .toList();
+    }
+
+    /** True when the user is an INTERN candidate who hasn't cleared
+     *  the email-verification code yet — the pattern bots create. */
+    private static boolean isUnverifiedIntern(User u) {
+        if (u.getRoles() == null || !u.getRoles().contains(UserRole.INTERN)) return false;
+        return u.getEmailVerified() == null || !Boolean.TRUE.equals(u.getEmailVerified());
     }
 
     /**
@@ -1272,6 +1297,7 @@ public class AdminUserService {
                 .active(u.getActive() == null ? Boolean.TRUE : u.getActive())
                 .createdAt(u.getCreatedAt())
                 .applicantId(u.getApplicantId())
+                .emailVerified(u.getEmailVerified() == null ? Boolean.FALSE : u.getEmailVerified())
                 .build();
     }
 }

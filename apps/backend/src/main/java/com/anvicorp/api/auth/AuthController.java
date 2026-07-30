@@ -14,6 +14,8 @@ import com.anvicorp.api.entity.User;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -31,10 +33,14 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
+    private final RegistrationRateLimiter rateLimiter;
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest req,
                                                  HttpServletRequest httpRequest) {
+        // Per-IP rate limit on the public register endpoint — bot mitigation.
+        // Rejected requests never reach the service so no User row is created.
+        rateLimiter.enforceRegister(httpRequest);
         return ResponseEntity.ok(authService.register(req, httpRequest));
     }
 
@@ -75,7 +81,12 @@ public class AuthController {
 
     @PostMapping("/resend-verification")
     public ResponseEntity<Map<String, String>> resendVerification(
-            @Valid @RequestBody ResendVerificationRequest req) {
+            @Valid @RequestBody ResendVerificationRequest req,
+            HttpServletRequest httpRequest) {
+        // Per-email + per-IP throttle on the resend surface. Prevents
+        // bots from hammering the code-issue endpoint to burn through
+        // codes or hunt for one that reveals whether an account exists.
+        rateLimiter.enforceResendVerification(req.email(), httpRequest);
         authService.resendVerification(req);
         // Always 200 — we don't reveal whether an account exists for that email.
         return ResponseEntity.ok(Map.of("message",
@@ -90,5 +101,15 @@ public class AuthController {
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<Map<String, String>> handleAuthException(AuthException ex) {
         return ResponseEntity.status(ex.getStatus()).body(Map.of("error", ex.getMessage()));
+    }
+
+    /** Map rate-limit rejections to 429 with a Retry-After header so
+     *  a well-behaved client (and any browser fetch shim) can back off
+     *  automatically. Response body still carries the human message. */
+    @ExceptionHandler(RateLimitException.class)
+    public ResponseEntity<Map<String, String>> handleRateLimit(RateLimitException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()))
+                .body(Map.of("error", ex.getMessage()));
     }
 }
