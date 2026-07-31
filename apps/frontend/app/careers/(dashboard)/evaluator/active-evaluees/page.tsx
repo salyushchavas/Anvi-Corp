@@ -11,6 +11,7 @@ import {
   Search,
 } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { useEvaluatorDashboard } from '@/components/evaluator/EvaluatorDashboardContext';
 import SchedulePostProjectDialog from '@/components/evaluator/SchedulePostProjectDialog';
 import type {
   ActiveEvalueeProjectRow,
@@ -52,12 +53,15 @@ function ActiveEvalueesInner() {
     { projectId: string; projectTitle: string | null } | null
   >(null);
 
+  const { selectedMonth, isCurrentMonth } = useEvaluatorDashboard();
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (search.trim()) params.set('search', search.trim());
       if (needsAttention) params.set('needsAttention', 'true');
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       params.set('page', String(page));
       params.set('pageSize', '25');
       const res = await api.get<ActiveEvalueesPage>(
@@ -71,7 +75,7 @@ function ActiveEvalueesInner() {
     } finally {
       setLoading(false);
     }
-  }, [search, needsAttention, page]);
+  }, [search, needsAttention, page, selectedMonth, isCurrentMonth]);
 
   useEffect(() => { void load(); }, [load]);
 

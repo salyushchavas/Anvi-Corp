@@ -1,5 +1,6 @@
 package com.anvicorp.api.evaluator;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
@@ -17,7 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -49,6 +49,7 @@ public class EvaluatorEvalueesService {
             String search,
             String workAuthType,
             String needsAttention,
+            MonthRange range,
             int page, int pageSize) {
 
         boolean orgWide = caller.getRoles() != null
@@ -56,9 +57,17 @@ public class EvaluatorEvalueesService {
         Pageable pageable = PageRequest.of(
                 Math.max(0, page), Math.min(Math.max(1, pageSize), 100));
 
+        // Overlap predicate — see EvaluatorDashboardService.kpiActiveEvaluees
+        // for the rationale. Current-month reduces to today's live set
+        // (ended_at IS NULL); past-months surface interns who were
+        // active in that month.
         StringBuilder where = new StringBuilder(
-                " WHERE il.active_status = 'ACTIVE' ");
+                " WHERE il.started_at IS NOT NULL "
+                + "   AND il.started_at < ?::timestamp "
+                + "   AND (il.ended_at IS NULL OR il.ended_at >= ?::timestamp) ");
         List<Object> params = new ArrayList<>();
+        params.add(range.endDateString());
+        params.add(range.startDateString());
         if (!orgWide) {
             // Single-evaluator fallback (matches EvaluatorScopeGuard):
             // include null-evaluator interns so the list never disagrees
@@ -242,7 +251,7 @@ public class EvaluatorEvalueesService {
     // ── Evaluee detail ───────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public EvaluatorDtos.EvalueeDetail getDetail(UUID lifecycleId, User caller) {
+    public EvaluatorDtos.EvalueeDetail getDetail(UUID lifecycleId, User caller, MonthRange range) {
         EvaluatorDtos.EvalueeProfile profile = loadProfile(lifecycleId);
         if (profile == null) {
             throw new ResourceNotFoundException(
@@ -255,7 +264,7 @@ public class EvaluatorEvalueesService {
         InternLifecycle lc = lifecycleRepository.findById(lifecycleId).orElse(null);
         evaluatorScopeGuard.requireEvaluatorOwnership(lc, caller);
 
-        EvaluatorDtos.CurrentMonthCard currentMonth = loadCurrentMonth(lifecycleId);
+        EvaluatorDtos.CurrentMonthCard currentMonth = loadCurrentMonth(lifecycleId, range);
         EvaluatorDtos.HistorySummaryCard historySummary = loadHistorySummary(lifecycleId);
         EvaluatorDtos.I983StatusCard i983 =
                 "F1_STEM_OPT".equalsIgnoreCase(profile.workAuthType())
@@ -321,10 +330,10 @@ public class EvaluatorEvalueesService {
         }
     }
 
-    private EvaluatorDtos.CurrentMonthCard loadCurrentMonth(UUID lifecycleId) {
-        YearMonth month = YearMonth.now();
-        LocalDate monthStart = month.atDay(1);
-        LocalDate monthEnd = month.atEndOfMonth().plusDays(1);
+    private EvaluatorDtos.CurrentMonthCard loadCurrentMonth(UUID lifecycleId, MonthRange range) {
+        String monthLabel = range.label();
+        LocalDate monthStart = range.monthStart();
+        LocalDate monthEnd = range.monthEnd();
         try {
             List<EvaluatorDtos.CurrentMonthCard> rows = jdbc.query(
                     "SELECT ev.id, ev.status, ev.published_at, "
@@ -345,7 +354,7 @@ public class EvaluatorEvalueesService {
                                 : null;
                         if (ack) status = "ACKNOWLEDGED";
                         return new EvaluatorDtos.CurrentMonthCard(
-                                status, month.toString(),
+                                status, monthLabel,
                                 UUID.fromString(rs.getString("id")),
                                 pubAt, daysSince,
                                 isActionNeeded(status, daysSince));
@@ -356,7 +365,7 @@ public class EvaluatorEvalueesService {
             log.warn("[Evaluees.currentMonth] query failed: {}", e.getMessage());
         }
         return new EvaluatorDtos.CurrentMonthCard(
-                "NOT_YET_SCHEDULED", month.toString(), null, null, null, true);
+                "NOT_YET_SCHEDULED", monthLabel, null, null, null, true);
     }
 
     private static boolean isActionNeeded(String status, Integer daysSincePublish) {

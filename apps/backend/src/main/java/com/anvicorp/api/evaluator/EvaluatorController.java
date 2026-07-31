@@ -35,8 +35,10 @@ public class EvaluatorController {
     @GetMapping("/dashboard")
     @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
     public EvaluatorDtos.DashboardResponse dashboard(
+            @RequestParam(required = false) String month,
             @AuthenticationPrincipal User caller) {
-        return dashboardService.getDashboard(caller);
+        return dashboardService.getDashboard(
+                caller, com.anvicorp.api.common.MonthRange.parse(month));
     }
 
     @GetMapping("/active-evaluees")
@@ -45,27 +47,36 @@ public class EvaluatorController {
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String workAuthType,
             @RequestParam(required = false) String needsAttention,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
         return evalueesService.list(
-                caller, search, workAuthType, needsAttention, page, pageSize);
+                caller, search, workAuthType, needsAttention,
+                com.anvicorp.api.common.MonthRange.parse(month),
+                page, pageSize);
     }
 
     @GetMapping("/evaluees/{lifecycleId}")
     @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
     public EvaluatorDtos.EvalueeDetail evalueeDetail(
             @PathVariable UUID lifecycleId,
+            @RequestParam(required = false) String month,
             @AuthenticationPrincipal User caller) {
-        return evalueesService.getDetail(lifecycleId, caller);
+        return evalueesService.getDetail(
+                lifecycleId, caller,
+                com.anvicorp.api.common.MonthRange.parse(month));
     }
 
     @GetMapping("/right-panel")
     @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
     public EvaluatorDtos.RightPanelResponse rightPanel(
             @RequestParam(required = false) UUID lifecycleId,
+            @RequestParam(required = false) String month,
             @AuthenticationPrincipal User caller) {
-        return rightPanelService.get(lifecycleId, caller);
+        return rightPanelService.get(
+                lifecycleId, caller,
+                com.anvicorp.api.common.MonthRange.parse(month));
     }
 
     // ── Phase 2 — monthly evaluation workflow ────────────────────────────

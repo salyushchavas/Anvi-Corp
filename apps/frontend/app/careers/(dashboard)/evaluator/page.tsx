@@ -6,15 +6,28 @@ import { useEvaluatorDashboard } from '@/components/evaluator/EvaluatorDashboard
 import type { KpiSnapshot } from '@/components/evaluator/types';
 import AwaitingEvaluationCard from '@/components/evaluator/AwaitingEvaluationCard';
 import DashboardRefreshButton from '@/components/ui/DashboardRefreshButton';
+import MonthPicker from '@/components/common/MonthPicker';
+
+/**
+ * KPIs that are LIVE queues — they don't change with the month
+ * selector and stay pinned to "right now". When a past month is
+ * selected the mix of month-scoped + live KPIs on the same grid can
+ * be confusing, so live ones show a small neutral "Live" tag.
+ */
+const LIVE_KPI_KEYS = new Set([
+  'STEM_OPT_INTERNS',
+  'UPCOMING_I983',
+]);
 
 export default function EvaluatorHomePage() {
-  const { dashboard, dashboardLoading, dashboardError, refreshAll } = useEvaluatorDashboard();
+  const {
+    dashboard, dashboardLoading, dashboardError, refreshAll,
+    selectedMonth, setSelectedMonth, isCurrentMonth,
+  } = useEvaluatorDashboard();
 
   const firstName = dashboard?.caller.fullName?.split(/\s+/)[0] ?? 'Evaluator';
   const activeEvalueesKpi = dashboard?.kpis.find((k) => k.key === 'ACTIVE_EVALUEES');
   const pendingAckKpi = dashboard?.kpis.find((k) => k.key === 'PENDING_ACKNOWLEDGMENTS');
-  const monthLabel = dashboard?.monthYearLabel
-    ?? new Date().toLocaleString(undefined, { month: 'long', year: 'numeric' });
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
@@ -24,17 +37,20 @@ export default function EvaluatorHomePage() {
             Welcome back, {firstName}.
           </h1>
           <p className="text-xs text-slate-500">
-            Per-project evaluations · {monthLabel}
+            Per-project evaluations
             {activeEvalueesKpi && pendingAckKpi && (
               <>
-                {' '}· You have <strong>{activeEvalueesKpi.count}</strong> active
-                evaluees and <strong>{pendingAckKpi.count}</strong> pending
-                acknowledgments.
+                {' '}· <strong>{activeEvalueesKpi.count}</strong> active
+                evaluees, <strong>{pendingAckKpi.count}</strong> pending
+                acknowledgments
               </>
             )}
           </p>
         </div>
-        <DashboardRefreshButton onRefresh={refreshAll} />
+        <div className="flex flex-wrap items-center gap-2">
+          <MonthPicker value={selectedMonth} onChange={setSelectedMonth} />
+          <DashboardRefreshButton onRefresh={refreshAll} />
+        </div>
       </header>
 
       {dashboardError && (
@@ -55,18 +71,22 @@ export default function EvaluatorHomePage() {
         </div>
       ) : (
         <section className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {(dashboard?.kpis ?? []).map((kpi) => <KpiCard key={kpi.key} snapshot={kpi} />)}
+          {(dashboard?.kpis ?? []).map((kpi) => (
+            <KpiCard
+              key={kpi.key}
+              snapshot={kpi}
+              showLiveTag={!isCurrentMonth && LIVE_KPI_KEYS.has(kpi.key)}
+            />
+          ))}
         </section>
       )}
-
-      <footer className="border-t border-slate-200 pt-3 text-[11px] text-slate-500">
-        6 KPIs · Read-only Phase · Composition + scheduling ship in Phase 2
-      </footer>
     </div>
   );
 }
 
-function KpiCard({ snapshot }: { snapshot: KpiSnapshot }) {
+function KpiCard({
+  snapshot, showLiveTag,
+}: { snapshot: KpiSnapshot; showLiveTag: boolean }) {
   const urgent = snapshot.urgentCount > 0;
   return (
     <Link
@@ -77,12 +97,22 @@ function KpiCard({ snapshot }: { snapshot: KpiSnapshot }) {
         <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
           {snapshot.label}
         </p>
-        {urgent && (
-          <span className="inline-flex items-center gap-0.5 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
-            <AlertCircle className="h-3 w-3" />
-            {snapshot.urgentCount}
-          </span>
-        )}
+        <div className="flex items-center gap-1">
+          {showLiveTag && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600"
+              title="This tile always reflects the current moment — it doesn't change with the month you've picked."
+            >
+              Live
+            </span>
+          )}
+          {urgent && (
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
+              <AlertCircle className="h-3 w-3" />
+              {snapshot.urgentCount}
+            </span>
+          )}
+        </div>
       </div>
       <p className="mt-1 text-3xl font-semibold tabular-nums text-slate-900">
         {snapshot.count.toLocaleString()}

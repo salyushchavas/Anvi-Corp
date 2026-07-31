@@ -15,6 +15,7 @@ import {
   Users,
 } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { useEvaluatorDashboard } from '@/components/evaluator/EvaluatorDashboardContext';
 import type {
   EvalueeDetail,
   EvaluationTimelineEntry,
@@ -44,13 +45,16 @@ export default function EvalueeDetailPage() {
   const [finalDialogLoading, setFinalDialogLoading] = useState(false);
   const [finalDialogErr, setFinalDialogErr] = useState<string | null>(null);
 
+  const { selectedMonth, isCurrentMonth } = useEvaluatorDashboard();
+
   const load = useCallback(async () => {
     if (!lifecycleId) return;
     setLoading(true);
     try {
-      const res = await api.get<EvalueeDetail>(
-        `/api/v1/evaluator/evaluees/${lifecycleId}`,
-      );
+      const url = isCurrentMonth
+        ? `/api/v1/evaluator/evaluees/${lifecycleId}`
+        : `/api/v1/evaluator/evaluees/${lifecycleId}?month=${encodeURIComponent(selectedMonth)}`;
+      const res = await api.get<EvalueeDetail>(url);
       setData(res.data);
       setErr(null);
     } catch (e) {
@@ -63,7 +67,7 @@ export default function EvalueeDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [lifecycleId, router]);
+  }, [lifecycleId, router, selectedMonth, isCurrentMonth]);
 
   useEffect(() => { void load(); }, [load]);
 

@@ -1,5 +1,6 @@
 package com.anvicorp.api.evaluator;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import lombok.RequiredArgsConstructor;
@@ -10,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -33,29 +33,39 @@ public class EvaluatorRightPanelService {
     private final JdbcTemplate jdbc;
 
     @Transactional(readOnly = true)
-    public EvaluatorDtos.RightPanelResponse get(UUID lifecycleId, User caller) {
-        String monthLabel = YearMonth.now().toString();
+    public EvaluatorDtos.RightPanelResponse get(UUID lifecycleId, User caller, MonthRange range) {
+        String monthLabel = range.label();
         if (lifecycleId == null) {
             return new EvaluatorDtos.RightPanelResponse(
-                    monthLabel, loadHomeAggregate(caller), null);
+                    monthLabel, loadHomeAggregate(caller, range), null);
         }
         return new EvaluatorDtos.RightPanelResponse(
                 monthLabel, null, loadEvalueeContext(lifecycleId));
     }
 
-    private EvaluatorDtos.HomeAggregate loadHomeAggregate(User caller) {
+    private EvaluatorDtos.HomeAggregate loadHomeAggregate(User caller, MonthRange range) {
         boolean orgWide = caller.getRoles() != null
                 && caller.getRoles().contains(UserRole.SUPER_ADMIN);
         UUID evaluatorId = caller.getId();
-        YearMonth month = YearMonth.now();
-        LocalDate monthStart = month.atDay(1);
-        LocalDate monthEnd = month.atEndOfMonth().plusDays(1);
+        LocalDate monthStart = range.monthStart();
+        LocalDate monthEnd = range.monthEnd();
 
+        // Active-evaluees — overlap predicate, same shape as the
+        // dashboard's ACTIVE_EVALUEES tile. Current-month reduces to
+        // the live set (ended_at IS NULL); past-months surface interns
+        // who were active back then.
         long active = orgWide
-                ? safe("SELECT COUNT(*) FROM intern_lifecycles WHERE active_status = 'ACTIVE'")
+                ? safe("SELECT COUNT(*) FROM intern_lifecycles "
+                        + "WHERE started_at IS NOT NULL "
+                        + "AND started_at < ?::timestamp "
+                        + "AND (ended_at IS NULL OR ended_at >= ?::timestamp)",
+                        monthEnd.toString(), monthStart.toString())
                 : safe("SELECT COUNT(*) FROM intern_lifecycles "
-                        + "WHERE active_status = 'ACTIVE' AND evaluator_id = ?",
-                        evaluatorId);
+                        + "WHERE started_at IS NOT NULL "
+                        + "AND started_at < ?::timestamp "
+                        + "AND (ended_at IS NULL OR ended_at >= ?::timestamp) "
+                        + "AND evaluator_id = ?",
+                        monthEnd.toString(), monthStart.toString(), evaluatorId);
         long published = orgWide
                 ? safe("SELECT COUNT(*) FROM intern_evaluations "
                         + "WHERE status = 'PUBLISHED' "
@@ -68,17 +78,22 @@ public class EvaluatorRightPanelService {
                         + "AND published_at < ?::timestamp "
                         + "AND evaluator_id = ?",
                         monthStart.toString(), monthEnd.toString(), evaluatorId);
+        // Pending-acks — bounded by the selected month's publish window
+        // (replaces the 14-day rolling window when a month is selected).
         long pendingAcks = orgWide
                 ? safe("SELECT COUNT(*) FROM intern_evaluations "
                         + "WHERE status = 'PUBLISHED' "
                         + "AND intern_acknowledged_at IS NULL "
-                        + "AND published_at > NOW() - INTERVAL '14 days'")
+                        + "AND published_at >= ?::timestamp "
+                        + "AND published_at < ?::timestamp",
+                        monthStart.toString(), monthEnd.toString())
                 : safe("SELECT COUNT(*) FROM intern_evaluations "
                         + "WHERE status = 'PUBLISHED' "
                         + "AND intern_acknowledged_at IS NULL "
-                        + "AND published_at > NOW() - INTERVAL '14 days' "
+                        + "AND published_at >= ?::timestamp "
+                        + "AND published_at < ?::timestamp "
                         + "AND evaluator_id = ?",
-                        evaluatorId);
+                        monthStart.toString(), monthEnd.toString(), evaluatorId);
         return new EvaluatorDtos.HomeAggregate(active, published, pendingAcks);
     }
 
