@@ -371,8 +371,8 @@ function SubmissionCard({
   // What they last sent — surfaced read-only when not currently submitable.
   const lastSent = a.latestSubmission;
 
-  // ASSIGNED gets the dedicated Get-Started card (GitHub username capture +
-  // access-granted wait + Start button) instead of the static placeholder.
+  // ASSIGNED gets the dedicated Get-Started card (Start button + optional
+  // GitHub username field) instead of the static placeholder.
   if (status === 'ASSIGNED') {
     return <GetStartedCard a={a} onChanged={onChanged} />;
   }
@@ -404,16 +404,11 @@ function SubmissionCard({
 }
 
 /**
- * Two-stage gate on the ASSIGNED state, matching the backend's
- * {@code ProjectAssignmentService.startAssignment} preconditions:
- *   1. intern has a GitHub username on file
- *   2. intern clicks Start
- *
- * <p>The repo-access wait step was removed — the trainer still invites
- * the intern on GitHub (out-of-band credential path unchanged), but the
- * platform no longer blocks Start on the {@code accessGranted} flag.
- * The flag stays visible below as an informational signal ("Trainer has
- * granted you repo access") but doesn't gate anything.</p>
+ * Get-Started card for ASSIGNED assignments. Start is always available —
+ * the only backend precondition is owning-intern + status ASSIGNED. The
+ * GitHub-username field is an optional profile affordance rendered
+ * alongside so the intern can save (or edit) it from this page, but it
+ * is never a gate on Start.
  */
 function GetStartedCard({
   a, onChanged,
@@ -427,12 +422,7 @@ function GetStartedCard({
   const [starting, setStarting] = useState(false);
   const [startErr, setStartErr] = useState<string | null>(null);
 
-  const accessGranted = a.accessGranted === true;
   const hasUsername = savedUsername.trim() !== '';
-  // Repo-access wait removed — Start is enabled as soon as the intern
-  // has a GitHub username on file. Trainer still invites on GitHub
-  // out-of-band; the accessGranted flag below is now advisory.
-  const canStart = hasUsername;
   const usernameDraftValid = isValidGitHubUsername(usernameDraft);
 
   async function saveUsername() {
@@ -460,7 +450,6 @@ function GetStartedCard({
   }
 
   async function startProject() {
-    if (!canStart) return;
     setStarting(true);
     setStartErr(null);
     try {
@@ -483,17 +472,16 @@ function GetStartedCard({
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <h3 className="text-sm font-semibold text-slate-900">Get started</h3>
       <p className="mt-1 text-sm text-slate-600">
-        Add your GitHub username so your trainer can grant you repo access.
-        Once they do, you can start the project.
+        Ready when you are — start the project to unlock submissions.
       </p>
 
-      {/* Stage 1 — GitHub username */}
+      {/* Optional profile affordance — GitHub username (not required). */}
       <div className="mt-4">
         <label
           htmlFor="ghu"
           className="text-xs font-semibold uppercase tracking-wide text-slate-500"
         >
-          1. Your GitHub username
+          GitHub username <span className="text-slate-400 normal-case tracking-normal">(optional)</span>
         </label>
         {editingUsername ? (
           <div className="mt-1 flex flex-wrap items-start gap-2">
@@ -568,39 +556,12 @@ function GetStartedCard({
         )}
       </div>
 
-      {/* Stage 2 — repo access (advisory only; not gating Start) */}
-      <div className="mt-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Repo access <span className="normal-case tracking-normal text-[10px] font-normal text-slate-400">(informational — not required to start)</span>
-        </p>
-        {accessGranted ? (
-          <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-green-700">
-            <CheckCircle2 className="h-4 w-4" /> Trainer has invited you on GitHub.
-          </p>
-        ) : (
-          <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-slate-600">
-            <Clock className="h-4 w-4" />
-            The trainer will send a GitHub invite separately. You can start
-            the project right now — pushing code requires accepting that
-            invite once it arrives.
-          </p>
-        )}
-      </div>
-
-      {/* Stage 2 — start */}
-      <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
-        <p className="text-xs text-slate-500">
-          {canStart
-            ? 'Everything ready — start the project to enable submissions.'
-            : 'Save your GitHub username above to enable Start.'}
-        </p>
+      {/* Start */}
+      <div className="mt-5 flex items-center justify-end border-t border-slate-100 pt-4">
         <button
           type="button"
           onClick={startProject}
-          disabled={starting || !canStart}
-          title={!canStart
-            ? 'Save your GitHub username first'
-            : undefined}
+          disabled={starting}
           className="inline-flex items-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
         >
           {starting ? 'Starting…' : 'Start project'}
@@ -1067,11 +1028,6 @@ function RepositoryCard({ a }: { a: AssignmentSummary }) {
         {repo.repositoryName ?? repo.repositoryUrl}
         <ExternalLink className="h-3 w-3" />
       </a>
-      {a.accessGranted === false && (
-        <p className="mt-1.5 text-[11px] text-amber-700">
-          Access not granted yet — ask your trainer.
-        </p>
-      )}
     </section>
   );
 }

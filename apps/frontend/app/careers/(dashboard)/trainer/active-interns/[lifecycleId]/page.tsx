@@ -508,7 +508,6 @@ function RecentProjectItem({
 interface AssignmentBrief {
   id: string;
   status: string;
-  accessGranted: boolean | null;
   intern: { id: string; githubUsername: string | null } | null;
   project: {
     id: string;
@@ -517,18 +516,14 @@ interface AssignmentBrief {
 }
 
 /**
- * Composite "Link repository → Grant repo access → Granted" affordance.
- * The trainer's recent-projects feed gives us project ids but not
- * assignment ids — we look the (assignment + repo) up on mount and drive
- * a single button that advances to the next outstanding step:
+ * Repository link affordance for a project. Two states:
  *
- *  no repo link        → "Link repository" (opens {@link LinkRepoModal})
- *  link but no grant   → "Grant repo access" (with "Edit repo" alongside)
- *  granted             → "Repo access ✓" pill (title shows the linked URL,
- *                        + an Edit affordance for updating the URL later)
+ *  no repo link  → "Link repository" (opens {@link LinkRepoModal})
+ *  linked        → "Edit repo" (opens the same modal in edit mode)
  *
- * The Grant call rejects without a repo link (backend gates it), so
- * sequencing here matches that gate and avoids the 400.
+ * Trainers publish the project repository publicly on GitHub; interns
+ * clone it, work locally, and push to their own GitHub at submission
+ * time. Nothing here grants collaborator access.
  */
 function RepoAccessControls({
   projectId, internUserId, onChanged,
@@ -536,15 +531,10 @@ function RepoAccessControls({
   // CRITICAL: every hook must be called UNCONDITIONALLY in the same order
   // every render — React error #438 ("Should have a queue. You are likely
   // calling Hooks conditionally") fires when the hook sequence differs
-  // between renders. Inline useEffect (matching the old working
-  // GrantRepoAccessButton) instead of a useCallback+useEffect duo so the
-  // dep-array surface is as small as possible. Refresh on demand via
-  // bumping `refreshKey`.
+  // between renders. Refresh on demand via bumping `refreshKey`.
   const [assignment, setAssignment] = useState<AssignmentBrief | null>(null);
   const [resolving, setResolving] = useState(true);
-  const [granting, setGranting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [justGranted, setJustGranted] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -576,22 +566,6 @@ function RepoAccessControls({
     return () => { cancelled = true; };
   }, [projectId, internUserId, refreshKey]);
 
-  async function grant() {
-    if (!assignment) return;
-    setGranting(true);
-    setErr(null);
-    try {
-      await api.post(`/api/v1/project-assignments/${assignment.id}/access-granted`);
-      setJustGranted(true);
-      onChanged();
-    } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } } };
-      setErr(ax.response?.data?.error ?? 'Grant failed');
-    } finally {
-      setGranting(false);
-    }
-  }
-
   function refresh() {
     setRefreshKey((k) => k + 1);
   }
@@ -603,7 +577,6 @@ function RepoAccessControls({
 
   const repo = assignment.project?.repository ?? null;
   const hasRepo = !!repo?.repositoryUrl;
-  const accessGranted = assignment.accessGranted === true || justGranted;
 
   // Modal wrapper used for both create + update.
   const modal = linkOpen && (
@@ -625,7 +598,7 @@ function RepoAccessControls({
         <button
           type="button"
           onClick={() => setLinkOpen(true)}
-          title="Link the GitHub repository for this project so access can be granted."
+          title="Link the GitHub repository for this project."
           className="rounded-md border border-brand-300 bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-800 hover:bg-brand-100"
         >
           Link repository
@@ -636,55 +609,24 @@ function RepoAccessControls({
     );
   }
 
-  // Past this point `hasRepo === true` so the runtime guarantees repo +
-  // repo.repositoryUrl are non-null. Belt-and-suspenders optional chaining
-  // (?? '') protects against any future change to that invariant.
   const repoUrl = repo?.repositoryUrl ?? '';
 
-  if (accessGranted) {
-    return (
-      <span className="inline-flex items-center gap-1">
-        <span
-          className="inline-flex items-center gap-1 rounded-md border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-800"
-          title={repoUrl || 'Repo access already granted'}
-        >
-          Repo access ✓
-        </span>
-        <button
-          type="button"
-          onClick={() => setLinkOpen(true)}
-          title="Update the linked repository URL"
-          className="rounded-md border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50"
-        >
-          Edit repo
-        </button>
-        {modal}
-      </span>
-    );
-  }
-
   return (
-    <span className="inline-flex flex-col items-end gap-0.5">
-      <span className="inline-flex items-center gap-1">
-        <button
-          type="button"
-          onClick={grant}
-          disabled={granting}
-          title={repoUrl ? `Grant the intern access to ${repoUrl}` : 'Grant repo access'}
-          className="rounded-md border border-brand-300 bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-800 hover:bg-brand-100 disabled:opacity-60"
-        >
-          {granting ? 'Granting…' : 'Grant repo access'}
-        </button>
-        <button
-          type="button"
-          onClick={() => setLinkOpen(true)}
-          title="Update the linked repository URL"
-          className="rounded-md border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50"
-        >
-          Edit repo
-        </button>
+    <span className="inline-flex items-center gap-1">
+      <span
+        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-700"
+        title={repoUrl || 'Repository linked'}
+      >
+        Repository linked
       </span>
-      {err && <span className="text-[10px] text-red-700">{err}</span>}
+      <button
+        type="button"
+        onClick={() => setLinkOpen(true)}
+        title="Update the linked repository URL"
+        className="rounded-md border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50"
+      >
+        Edit repo
+      </button>
       {modal}
     </span>
   );
@@ -783,8 +725,8 @@ function LinkRepoModal({
         </h3>
         <p className="mt-1 text-xs text-slate-500">
           {isEdit
-            ? 'Update the GitHub repository linked to this project. Existing intern access stays granted.'
-            : 'Attach the GitHub repository for this project. Required before the "Grant repo access" button enables.'}
+            ? 'Update the GitHub repository linked to this project.'
+            : 'Attach the GitHub repository for this project. Interns will see the URL on their project page.'}
         </p>
         <div className="mt-4 space-y-3">
           <div>

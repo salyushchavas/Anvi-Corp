@@ -40,20 +40,6 @@ public class ProjectAssignmentController {
         return service.assignToInterns(req, caller);
     }
 
-    @PostMapping("/{id}/access-granted")
-    @PreAuthorize("hasAnyRole('TRAINER', 'SUPER_ADMIN')")
-    public ProjectAssignmentResponse markAccessGranted(
-            @PathVariable UUID id, @AuthenticationPrincipal User caller) {
-        return service.markAccessGranted(id, caller);
-    }
-
-    @DeleteMapping("/{id}/access-granted")
-    @PreAuthorize("hasAnyRole('TRAINER', 'SUPER_ADMIN')")
-    public ProjectAssignmentResponse revokeAccessGranted(
-            @PathVariable UUID id, @AuthenticationPrincipal User caller) {
-        return service.revokeAccessGranted(id, caller);
-    }
-
     @PostMapping("/{id}/start")
     @PreAuthorize("hasRole('INTERN')")
     public ProjectAssignmentResponse start(

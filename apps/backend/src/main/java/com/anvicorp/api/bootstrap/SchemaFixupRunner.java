@@ -4078,45 +4078,46 @@ public class SchemaFixupRunner implements CommandLineRunner {
     }
 
     /**
-     * Re-apply after WITHDRAWN — replace the legacy unconditional UNIQUE
-     * {@code uk_application_candidate_job_posting} on
-     * {@code applications(candidate_id, job_posting_id)} with a partial
-     * unique index that ignores WITHDRAWN rows. Without this an intern who
-     * withdrew from a posting can never apply to it again (the entity-level
-     * "already applied" guard was updated to exclude WITHDRAWN, but the DB
-     * constraint would still 23505 the fresh INSERT). WITHDRAWN rows must
-     * stay put because {@code ErmReportsService} + the candidate-side "exit
-     * status" UI read them.
+     * Re-apply rules — partial UNIQUE that lets a candidate re-apply
+     * once a prior application reaches a terminal reopen-eligible state.
+     * WITHDRAWN and REJECTED are both excluded from uniqueness so a new
+     * row can be inserted; the application-layer guard in
+     * {@code ApplicationService.apply} enforces the timing (immediate
+     * after WITHDRAWN, 24 hours after REJECTED). WITHDRAWN + REJECTED
+     * rows are retained for {@code ErmReportsService} and the
+     * candidate-side "history" surface.
      *
      * <p>Postgres-specific — ddl-auto=update can't express partial indexes,
      * so this runner owns the enforcement. Steps:</p>
      * <ol>
-     *   <li>Drop any Hibernate-emitted unconditional variants of the
-     *       constraint/index (both {@code ALTER TABLE ... DROP CONSTRAINT}
-     *       and {@code DROP INDEX}, since Hibernate creates one or the
-     *       other depending on ordering).</li>
-     *   <li>Create the partial unique index
-     *       {@code uk_application_candidate_job_posting_active} on
-     *       {@code (candidate_id, job_posting_id) WHERE status <> 'WITHDRAWN'}.</li>
+     *   <li>Drop any Hibernate-emitted unconditional variant of the
+     *       constraint AND both partial-index name variants — the earlier
+     *       {@code uk_application_candidate_job_posting_active} (WHERE
+     *       status &lt;&gt; 'WITHDRAWN') and the current
+     *       {@code uk_application_candidate_job_posting_open} (WHERE
+     *       status NOT IN ('WITHDRAWN', 'REJECTED')). Idempotent
+     *       IF-EXISTS across boot windows.</li>
+     *   <li>Create the current partial unique index
+     *       {@code uk_application_candidate_job_posting_open} on
+     *       {@code (candidate_id, job_posting_id) WHERE status NOT IN
+     *       ('WITHDRAWN', 'REJECTED')}.</li>
      *   <li>Verify via {@code pg_indexes}. ERROR-log if it didn't take —
-     *       re-apply after withdrawal will keep 409'ing until resolved.</li>
+     *       re-apply will keep 409'ing until resolved.</li>
      * </ol>
      */
     private void ensureApplicationsReapplyAfterWithdrawSchema() {
         // 0) Pre-state snapshot — list every UNIQUE / partial index on the
         //    applications table so Railway logs show exactly what was there
-        //    BEFORE we touched anything. Prior boots that crashed elsewhere
-        //    in run() before reaching this method left the legacy
-        //    uk_application_candidate_job_posting in place with no diagnostic
-        //    trail; the snapshot below makes it obvious what state we found
-        //    the DB in, then what we changed.
+        //    BEFORE we touched anything. Includes the previous partial-index
+        //    name so a mid-migration boot (post-rename) also shows up.
         try {
             List<Map<String, Object>> before = jdbcTemplate.queryForList(
                     "SELECT indexname, indexdef FROM pg_indexes "
                             + "WHERE tablename = 'applications' "
-                            + "  AND indexname IN (?, ?)",
+                            + "  AND indexname IN (?, ?, ?)",
                     "uk_application_candidate_job_posting",
-                    "uk_application_candidate_job_posting_active");
+                    "uk_application_candidate_job_posting_active",
+                    "uk_application_candidate_job_posting_open");
             log.info("[SchemaFixupRunner] applications-uk pre-state: {} matching indexes present: {}",
                     before.size(),
                     before.stream()
@@ -4150,54 +4151,75 @@ public class SchemaFixupRunner implements CommandLineRunner {
                     + "index drop skipped (non-fatal): {}", e.getMessage());
         }
 
-        // 2) Create the partial UNIQUE that excludes WITHDRAWN.
+        // 1b) Drop the earlier partial-index name unconditionally so the new
+        //     WHERE clause takes effect. Postgres won't recreate an index if
+        //     the name exists, even if the WHERE differs — a rename is the
+        //     safest way to force the new definition on boot.
+        try {
+            jdbcTemplate.execute(
+                    "DROP INDEX IF EXISTS uk_application_candidate_job_posting_active");
+            log.info("[SchemaFixupRunner] DROP INDEX uk_application_candidate_job_posting_active "
+                    + "(IF EXISTS) — done (superseded by _open with the REJECTED-excluding WHERE)");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] legacy _active partial-index drop skipped "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+
+        // 2) Create the current partial UNIQUE that excludes WITHDRAWN AND
+        //    REJECTED. Application-layer guard enforces the 24h wait for
+        //    REJECTED re-apply and immediate re-apply for WITHDRAWN.
         try {
             jdbcTemplate.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS "
-                            + "uk_application_candidate_job_posting_active "
+                            + "uk_application_candidate_job_posting_open "
                             + "ON applications (candidate_id, job_posting_id) "
-                            + "WHERE status <> 'WITHDRAWN'");
+                            + "WHERE status NOT IN ('WITHDRAWN', 'REJECTED')");
             log.info("[SchemaFixupRunner] ensured applications partial UNIQUE "
-                    + "uk_application_candidate_job_posting_active "
-                    + "(candidate_id, job_posting_id) WHERE status <> 'WITHDRAWN'");
+                    + "uk_application_candidate_job_posting_open "
+                    + "(candidate_id, job_posting_id) WHERE status NOT IN ('WITHDRAWN', 'REJECTED')");
         } catch (Exception e) {
             log.warn("[SchemaFixupRunner] applications partial UNIQUE ensure failed "
                     + "(non-fatal): {}", e.getMessage(), e);
         }
 
-        // 3) Verify via pg_indexes. If it didn't take, re-apply after
-        //    withdrawal will keep 23505'ing on the fresh INSERT.
+        // 3) Verify via pg_indexes. If it didn't take, re-apply will
+        //    continue to 23505 on the fresh INSERT.
         try {
             List<Map<String, Object>> after = jdbcTemplate.queryForList(
                     "SELECT indexname, indexdef FROM pg_indexes "
                             + "WHERE tablename = 'applications' "
-                            + "  AND indexname IN (?, ?)",
+                            + "  AND indexname IN (?, ?, ?)",
                     "uk_application_candidate_job_posting",
-                    "uk_application_candidate_job_posting_active");
+                    "uk_application_candidate_job_posting_active",
+                    "uk_application_candidate_job_posting_open");
             boolean legacyGone = after.stream()
                     .noneMatch(r -> "uk_application_candidate_job_posting"
                             .equals(String.valueOf(r.get("indexname"))));
-            boolean partialPresent = after.stream()
-                    .anyMatch(r -> "uk_application_candidate_job_posting_active"
+            boolean prevPartialGone = after.stream()
+                    .noneMatch(r -> "uk_application_candidate_job_posting_active"
                             .equals(String.valueOf(r.get("indexname"))));
-            log.info("[SchemaFixupRunner] applications-uk post-state: legacyGone={} partialPresent={} rows={}",
-                    legacyGone, partialPresent,
+            boolean openPresent = after.stream()
+                    .anyMatch(r -> "uk_application_candidate_job_posting_open"
+                            .equals(String.valueOf(r.get("indexname"))));
+            log.info("[SchemaFixupRunner] applications-uk post-state: legacyGone={} prevPartialGone={} openPresent={} rows={}",
+                    legacyGone, prevPartialGone, openPresent,
                     after.stream()
                             .map(r -> r.get("indexname") + " => " + r.get("indexdef"))
                             .toList());
-            if (partialPresent && legacyGone) {
-                log.info("[SchemaFixupRunner] re-apply-after-withdraw schema is HEALTHY "
-                        + "— withdrawn interns can submit a fresh application.");
+            if (openPresent && legacyGone && prevPartialGone) {
+                log.info("[SchemaFixupRunner] re-apply schema is HEALTHY — "
+                        + "withdrawn candidates can re-apply immediately; rejected "
+                        + "candidates can re-apply after 24h (enforced in application layer).");
             } else {
-                log.error("[SchemaFixupRunner] re-apply-after-withdraw schema is BROKEN "
-                        + "— legacyGone={} partialPresent={}. Re-apply will 23505 until "
+                log.error("[SchemaFixupRunner] re-apply schema is BROKEN — "
+                        + "legacyGone={} prevPartialGone={} openPresent={}. Re-apply will 23505 until "
                         + "resolved. Check DB user privileges (needs CREATE INDEX + ALTER "
                         + "TABLE on `applications`).",
-                        legacyGone, partialPresent);
+                        legacyGone, prevPartialGone, openPresent);
             }
         } catch (Exception verifyErr) {
             log.warn("[SchemaFixupRunner] post-ensure verify on "
-                    + "uk_application_candidate_job_posting_active failed (non-fatal): {}",
+                    + "uk_application_candidate_job_posting_open failed (non-fatal): {}",
                     verifyErr.getMessage());
         }
     }

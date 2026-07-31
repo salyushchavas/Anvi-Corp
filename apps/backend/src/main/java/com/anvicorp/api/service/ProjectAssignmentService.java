@@ -202,112 +202,7 @@ public class ProjectAssignmentService {
         return new AssignProjectResultResponse(created, failures);
     }
 
-    // ── Out-of-band access tracking + lifecycle transitions ────────────────
-
-    @Transactional
-    public ProjectAssignmentResponse markAccessGranted(UUID assignmentId, User actor) {
-        ensureStaff(actor);
-        ProjectAssignment a = loadAssignment(assignmentId);
-        if (Boolean.TRUE.equals(a.getAccessGranted())) {
-            return mapWithGraph(List.of(a)).get(0);
-        }
-
-        // When the GitHub App is configured we actually invite the user as a
-        // repo collaborator. When it isn't, the flag flip remains a purely
-        // platform-internal acknowledgement (the TE invited them on GitHub
-        // manually) — same semantics as before. Both paths share the
-        // precondition that we know which repo + which GitHub user.
-        Long invitationId = null;
-        if (gitHubService.isConfigured()) {
-            // Resolve intern GitHub username from the user row.
-            User internUser = userRepository.findById(a.getInternId())
-                    .orElseThrow(() -> new BadRequestException(
-                            "Intern user not found for this assignment."));
-            String ghUsername = internUser.getGithubUsername();
-            if (ghUsername == null || ghUsername.isBlank()) {
-                throw new BadRequestException(
-                        "Intern has not set a GitHub username yet. They must add it on "
-                                + "their assignment page before access can be granted.");
-            }
-
-            // Resolve owner / repo from the project's linked repository.
-            com.anvicorp.api.entity.ProjectRepositoryLink link = repositoryLinkRepository
-                    .findByProjectId(a.getProjectId())
-                    .orElseThrow(() -> new BadRequestException(
-                            "No repository is linked to this project. Link one before granting access."));
-            java.util.regex.Matcher m = GITHUB_REPO_URL.matcher(
-                    link.getRepositoryUrl() == null ? "" : link.getRepositoryUrl().trim());
-            if (!m.matches()) {
-                throw new BadRequestException(
-                        "Linked repository URL is not a GitHub repo URL — can't grant access automatically.");
-            }
-            String owner = m.group(1);
-            String repo = m.group(2);
-
-            GitHubService.AddCollaboratorResult result =
-                    gitHubService.addCollaborator(owner, repo, ghUsername);
-            invitationId = result.invitationId();
-            log.info("[ProjectAssignmentService] GitHub collaborator-add op={} invitationId={} for assignment={}",
-                    result.op(), invitationId, assignmentId);
-        } else {
-            log.info("[ProjectAssignmentService] GitHub App not configured — recording out-of-band grant "
-                    + "for assignment={}", assignmentId);
-        }
-
-        a.setAccessGranted(Boolean.TRUE);
-        a.setAccessGrantedAt(java.time.Instant.now());
-        a.setAccessGrantedById(actor.getId());
-        if (invitationId != null) {
-            a.setGithubInvitationId(invitationId);
-        }
-        projectAssignmentRepository.save(a);
-        log.info("[ProjectAssignmentService] access granted assignment={} by={} invitationId={}",
-                assignmentId, actor.getId(), invitationId);
-
-        // Tier A — interns frequently miss GitHub's own invitation email and
-        // then hit a 400 on startAssignment. Send a Skyzen-side internal-mail
-        // confirmation pointing them at the GitHub invitation. notifyIntern
-        // gates on ACTIVE + mailbox ACTIVATED, so it skips when the intern
-        // isn't yet at that point.
-        try {
-            Project p = projectRepository.findById(a.getProjectId()).orElse(null);
-            String projectTitle = p != null
-                    ? (p.getName() != null ? p.getName()
-                        : (p.getTitle() != null ? p.getTitle() : "your project"))
-                    : "your project";
-            String actorPhrase = actor != null && actor.getFullName() != null
-                    && !actor.getFullName().isBlank()
-                    ? actor.getFullName() + ", your Trainer,"
-                    : "Your Trainer";
-            String subject = "Repo access granted by your Trainer — '" + projectTitle + "'";
-            String plain = "Hi,\n\n" + actorPhrase + " has granted you GitHub repository "
-                    + "access for the project: \"" + projectTitle + "\"."
-                    + "\n\nAccept the GitHub invitation in your inbox (subject usually "
-                    + "starts with \"@<your GitHub handle> invited you\") before you "
-                    + "start the assignment from /careers/intern/projects."
-                    + "\n\n— Anvi Corp";
-            internNotifications.notifyIntern(a.getInternId(),
-                    com.anvicorp.api.notification.NotificationEventType.REPO_INVITATION_SENT,
-                    subject, plain, null);
-        } catch (Exception ex) {
-            log.warn("[ProjectAssignmentService] access-granted intern-mail failed (non-fatal) assignment={}: {}",
-                    assignmentId, ex.getMessage());
-        }
-        return mapWithGraph(List.of(a)).get(0);
-    }
-
-    @Transactional
-    public ProjectAssignmentResponse revokeAccessGranted(UUID assignmentId, User actor) {
-        ensureStaff(actor);
-        ProjectAssignment a = loadAssignment(assignmentId);
-        a.setAccessGranted(Boolean.FALSE);
-        a.setAccessGrantedAt(null);
-        a.setAccessGrantedById(null);
-        projectAssignmentRepository.save(a);
-        log.info("[ProjectAssignmentService] access revoked assignment={} by={}",
-                assignmentId, actor.getId());
-        return mapWithGraph(List.of(a)).get(0);
-    }
+    // ── Lifecycle transitions ─────────────────────────────────────────────
 
     @Transactional
     public ProjectAssignmentResponse startAssignment(UUID assignmentId, User actor) {
@@ -317,18 +212,14 @@ public class ProjectAssignmentService {
             throw new BadRequestException(
                     "Cannot start assignment in status " + a.getStatus());
         }
-        User self = userRepository.findById(actor.getId()).orElse(actor);
-        if (self.getGithubUsername() == null || self.getGithubUsername().isBlank()) {
-            throw new BadRequestException(
-                    "Please provide your GitHub username first.");
-        }
-        // Repo-access gate removed — intern no longer waits for trainer
-        // to flip {@code accessGranted=true} before starting. Trainer
-        // still invites on GitHub out-of-band (that's the real credential
-        // path); the {@code accessGranted} column stays on the entity as
-        // an advisory signal (trainer UI still displays it, and the
-        // {@code markAccessGranted} endpoint still writes it for
-        // reporting) but does not block progression here.
+        // Starting requires only owning-intern + status ASSIGNED. GitHub
+        // username is captured on the profile as an optional field; the
+        // trainer publishes the project repo publicly and the intern
+        // pushes to their own GitHub at submission time, so there is
+        // nothing here that needs a linked GitHub identity or trainer-
+        // granted repo access to gate on. The {@code accessGranted}
+        // column on the entity is legacy and no longer written; the
+        // whole repo-access-granting affordance was removed alongside.
         a.setStatus(ProjectAssignmentStatus.IN_PROGRESS);
         a.setStartedAt(java.time.Instant.now());
         projectAssignmentRepository.save(a);

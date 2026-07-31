@@ -67,14 +67,19 @@ public interface ApplicationRepository
     boolean existsByCandidateIdAndJobPostingId(UUID candidateId, UUID jobPostingId);
 
     /**
-     * "Already applied" guard that ignores WITHDRAWN rows so an intern who
-     * withdrew a prior application can submit a fresh one for the same
-     * posting. Paired with the partial UNIQUE
-     * {@code uk_application_candidate_job_posting_active} maintained by
-     * {@code SchemaFixupRunner.ensureApplicationsReapplyAfterWithdrawSchema}.
+     * Re-apply guard input — returns the newest prior application for a
+     * given (candidate, posting) so the service can classify the outcome:
+     * WITHDRAWN → re-apply immediately; REJECTED → re-apply once 24 hours
+     * have elapsed since the row was moved to REJECTED (checked against
+     * {@code statusUpdatedAt}); any other status → block. Paired with the
+     * partial UNIQUE {@code uk_application_candidate_job_posting_open}
+     * maintained by {@code SchemaFixupRunner
+     * .ensureApplicationsReapplyAfterWithdrawSchema}, which excludes both
+     * WITHDRAWN and REJECTED from uniqueness so the fresh INSERT can
+     * actually land after the guard passes.
      */
-    boolean existsByCandidateIdAndJobPostingIdAndStatusNot(
-            UUID candidateId, UUID jobPostingId, ApplicationStatus status);
+    java.util.Optional<Application> findTopByCandidateIdAndJobPostingIdOrderByStatusUpdatedAtDesc(
+            UUID candidateId, UUID jobPostingId);
 
     boolean existsByResumeId(UUID resumeId);
     boolean existsByStatus(ApplicationStatus status);

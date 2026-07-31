@@ -44,6 +44,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.Collections;
@@ -117,15 +118,45 @@ public class ApplicationService {
             throw new ForbiddenException("Resume does not belong to this user");
         }
 
-        // Re-apply after withdrawal is allowed — only a NON-WITHDRAWN prior
-        // application blocks. The WITHDRAWN row is kept for ERM reporting +
-        // candidate-side "exit status" UI. Partial UNIQUE
-        // uk_application_candidate_job_posting_active (SchemaFixupRunner)
-        // enforces the same shape at the DB level.
-        if (applicationRepository.existsByCandidateIdAndJobPostingIdAndStatusNot(
-                candidate.getId(), posting.getId(), ApplicationStatus.WITHDRAWN)) {
-            throw new ConflictException("Already applied to this job posting");
-        }
+        // Re-apply rules:
+        //  · WITHDRAWN prior application  → re-apply immediately.
+        //  · REJECTED prior application   → re-apply after 24 hours (measured
+        //                                    from statusUpdatedAt on that row).
+        //  · Any other prior status       → block ("already applied").
+        // WITHDRAWN + REJECTED rows are retained for ERM reporting and the
+        // candidate-side history surface. Partial UNIQUE
+        // uk_application_candidate_job_posting_open (SchemaFixupRunner)
+        // excludes both statuses from uniqueness so the fresh INSERT below
+        // can land once the guard here passes.
+        applicationRepository
+                .findTopByCandidateIdAndJobPostingIdOrderByStatusUpdatedAtDesc(
+                        candidate.getId(), posting.getId())
+                .ifPresent(prior -> {
+                    if (prior.getStatus() == ApplicationStatus.WITHDRAWN) {
+                        return; // immediate re-apply allowed
+                    }
+                    if (prior.getStatus() == ApplicationStatus.REJECTED) {
+                        Instant rejectedAt = prior.getStatusUpdatedAt();
+                        if (rejectedAt == null) {
+                            // Defensive: pre-@PreUpdate rows or a bad backfill —
+                            // treat as "just now" and require the full 24h.
+                            rejectedAt = Instant.now();
+                        }
+                        Instant reapplyAllowedAt = rejectedAt.plus(Duration.ofHours(24));
+                        Instant now = Instant.now();
+                        if (now.isBefore(reapplyAllowedAt)) {
+                            long hoursLeft = Math.max(1,
+                                    Duration.between(now, reapplyAllowedAt).toHours());
+                            throw new ConflictException(
+                                    "You can re-apply to this position after "
+                                            + hoursLeft + " hour"
+                                            + (hoursLeft == 1 ? "" : "s") + ".");
+                        }
+                        return; // 24h elapsed — re-apply allowed
+                    }
+                    throw new ConflictException(
+                            "You have already applied to this position.");
+                });
 
         Application application = Application.builder()
                 .candidate(candidate)
