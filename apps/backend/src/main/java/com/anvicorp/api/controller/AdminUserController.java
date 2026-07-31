@@ -86,16 +86,30 @@ public class AdminUserController {
     }
 
     /**
-     * Hard-delete a candidate-side user (roles == {INTERN}) AND every
-     * row scoped to them. Refuses on self-delete and on any account
-     * carrying a non-INTERN role — those keep going through Deactivate.
-     * Returns the per-table row-count map so the operator can see the
-     * blast radius.
+     * Purge a user. Two-tier by history:
+     *
+     * <ul>
+     *   <li>Never actually started an internship → hard-delete of every
+     *       row scoped to them (minus the {@code *_event_log} /
+     *       {@code *_review_logs} retention spine).</li>
+     *   <li>Ever actually started → soft delete. Retention-protected
+     *       rows are tombstoned ({@code deleted_at = now()}) so past-
+     *       month dashboards can still render the history; the account
+     *       is deactivated so it can no longer sign in.</li>
+     * </ul>
+     *
+     * <p>Response is a {@code Map<String, Object>} with an
+     * {@code _outcome} key ({@code "hard"} or {@code "soft"}), a
+     * user-facing {@code _message} explaining what was done, and the
+     * per-table row-count breakdown so the operator can see the blast
+     * radius (or the retention footprint) of the action.</p>
+     *
+     * <p>Refuses on self-delete and on the last active SUPER_ADMIN.</p>
      */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('SUPER_ADMIN')")
-    public Map<String, Long> delete(@PathVariable UUID id,
-                                     @AuthenticationPrincipal User caller) {
+    public Map<String, Object> delete(@PathVariable UUID id,
+                                       @AuthenticationPrincipal User caller) {
         return adminUserService.deleteUser(id, caller);
     }
 }

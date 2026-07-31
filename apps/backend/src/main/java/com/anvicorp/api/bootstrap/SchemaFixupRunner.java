@@ -81,6 +81,25 @@ public class SchemaFixupRunner implements CommandLineRunner {
                     e.getMessage(), e);
         }
 
+        // Retention fix — add deleted_at TIMESTAMPTZ NULL to the tables
+        // whose history a past-month dashboard view must be able to
+        // reach even after the parent user is soft-deleted. The admin
+        // "hard-purge" endpoint (AdminUserService.deleteUser) is now
+        // two-tier: users who never actually started an internship keep
+        // the hard-delete path; users who ever started go through a
+        // soft path that stamps deleted_at=now() on the rows below
+        // instead of removing them. Dashboard queries add
+        // "AND deleted_at IS NULL" as the month-selector builds land
+        // per-role. Idempotent + ungated + hoisted alongside the
+        // reapply fix so a later crash can't skip it.
+        try {
+            ensureSoftDeleteColumns();
+        } catch (Exception e) {
+            log.error("[SchemaFixupRunner] soft-delete column ensure threw "
+                    + "(non-fatal, retention path degrades to preserving all history): {}",
+                    e.getMessage(), e);
+        }
+
         // Password-reset tokens now store 6-digit codes (same shape as the
         // registration verification code) rather than UUIDs. Different users
         // can legitimately hold the same 6-digit value, so the previous
@@ -4222,6 +4241,77 @@ public class SchemaFixupRunner implements CommandLineRunner {
                     + "uk_application_candidate_job_posting_open failed (non-fatal): {}",
                     verifyErr.getMessage());
         }
+    }
+
+    /**
+     * Retention fix — add {@code deleted_at TIMESTAMPTZ NULL} to the
+     * ten tables whose rows the admin "hard-purge" endpoint must
+     * SOFT-delete for any user who ever actually started an internship
+     * (see {@code AdminUserService.deleteUser}'s two-tier rule). Rows
+     * stay physically present so past-month dashboard views for ERM /
+     * Trainer / Evaluator / Manager can still render the historical
+     * record; per-query "{@code AND deleted_at IS NULL}" exclusions land
+     * as each role's month-selector build ships.
+     *
+     * <p>Idempotent + ungated. Each ALTER runs inside its own
+     * try/catch so a missing table on a partial deployment doesn't
+     * halt the sweep. Column type is {@code TIMESTAMPTZ NULL} (matches
+     * the codebase's other {@code deleted_at} conventions, e.g.
+     * {@code documents.deleted_at}, {@code intern_evaluations} +
+     * {@code onboarding_document_templates} etc.).</p>
+     */
+    private void ensureSoftDeleteColumns() {
+        String[] tables = {
+                "intern_lifecycles",
+                "intern_evaluations",
+                "projects",
+                "timesheets",
+                "weekly_meetings",
+                "document_packets",
+                "offers",
+                "interviews",
+                "applications",
+                "exit_records"
+        };
+        int added = 0;
+        int skipped = 0;
+        int failed = 0;
+        for (String table : tables) {
+            try {
+                jdbcTemplate.execute(
+                        "ALTER TABLE " + table
+                                + " ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ");
+                // Can't distinguish added-vs-already-present from ADD IF
+                // NOT EXISTS return; do a follow-up column-exists check
+                // for the log summary. Best-effort — a probe failure just
+                // logs the ALTER as "ok".
+                try {
+                    Boolean exists = jdbcTemplate.queryForObject(
+                            "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
+                                    + "WHERE table_name = ? AND column_name = 'deleted_at')",
+                            Boolean.class, table);
+                    if (Boolean.TRUE.equals(exists)) {
+                        added++;
+                    } else {
+                        // Should never happen post-ALTER — surface for triage.
+                        failed++;
+                        log.warn("[SchemaFixupRunner] soft-delete ALTER on {} "
+                                + "reported no deleted_at column post-run", table);
+                    }
+                } catch (Exception probeErr) {
+                    added++;
+                    log.debug("[SchemaFixupRunner] soft-delete probe on {} failed "
+                            + "(non-fatal): {}", table, probeErr.getMessage());
+                }
+            } catch (Exception e) {
+                failed++;
+                log.warn("[SchemaFixupRunner] soft-delete ADD COLUMN on {} skipped "
+                        + "(non-fatal): {}", table, e.getMessage());
+            }
+        }
+        log.info("[SchemaFixupRunner] soft-delete columns: {} tables OK, "
+                + "{} skipped_existing, {} failed. Tables: {}",
+                added, skipped, failed, java.util.Arrays.toString(tables));
     }
 
     /**

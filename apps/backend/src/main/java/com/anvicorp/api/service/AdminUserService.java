@@ -607,10 +607,24 @@ public class AdminUserService {
     }
 
     /**
-     * Hard-delete a user AND every row scoped to them. Surgical alternative
-     * to the boot-only {@code CleanSlateRunner} full-wipe — lets the
-     * SUPER_ADMIN drop a single account (intern OR staff) from the admin
-     * panel without resetting anyone else.
+     * Purge a user. Two-tier by history:
+     *
+     * <ol>
+     *   <li><b>Never actually started an internship</b> — no
+     *       {@code intern_lifecycles} row, or the row has
+     *       {@code started_at IS NULL}. Runs the full hard-delete
+     *       described below.</li>
+     *   <li><b>Ever actually started</b> — SOFT delete. Stamps
+     *       {@code deleted_at = now()} on the user's rows in the ten
+     *       retention-protected tables (see
+     *       {@code SchemaFixupRunner.ensureSoftDeleteColumns}) so past-
+     *       month dashboards for ERM / Trainer / Evaluator / Manager
+     *       can still render the historical record, then flips
+     *       {@code User.active = false} so the account can no longer
+     *       log in. No rows are removed. {@code *_event_log} tables
+     *       are never touched in either tier — the append-only
+     *       history spine is sacred.</li>
+     * </ol>
      *
      * <p>Refuses on:</p>
      * <ul>
@@ -618,23 +632,26 @@ public class AdminUserService {
      *   <li>the last active SUPER_ADMIN (leaves the org lockable-out)</li>
      * </ul>
      *
-     * <p>Any other role — INTERN, TRAINER, EVALUATOR, MANAGER, ERM,
-     * REPORTING_MANAGER, non-last SUPER_ADMIN — is fair game once the
-     * caller confirms the DELETE-typed handoff on the UI.</p>
+     * <p>For the hard-delete tier the phased delete mirrors the
+     * historical {@code CleanSlateRunner}'s table list, scoped to
+     * this user's {@code candidate_id} / {@code intern_lifecycle_id} /
+     * {@code application_id} chain. For staff-role targets those
+     * subquery-scoped DELETEs simply match zero rows (staff have no
+     * candidates / lifecycles / applications) and the terminal
+     * {@code users} DELETE is what actually removes their row.
+     * {@code audit_logs} rows referencing the deleted user are
+     * PRESERVED so the forensic trail survives. Each per-table DELETE
+     * is wrapped so a missing table on a partial deployment doesn't
+     * halt the operation.</p>
      *
-     * <p>The phased delete mirrors {@code CleanSlateRunner}'s table list
-     * but scopes every DELETE to this user's {@code candidate_id} /
-     * {@code intern_lifecycle_id} / {@code application_id} chain. For
-     * staff-role targets those subquery-scoped DELETEs simply match zero
-     * rows (staff have no candidates / lifecycles / applications) and the
-     * terminal {@code users} DELETE is what actually removes their row.
-     * {@code audit_logs} rows referencing the deleted user are PRESERVED
-     * so the forensic trail survives — consistent with the boot-time
-     * runner's behaviour. Each per-table DELETE is wrapped so a missing
-     * table on a partial deployment doesn't halt the operation.</p>
+     * <p>Return shape: a {@code Map<String, Object>} with an
+     * {@code _outcome} key ({@code "hard"} or {@code "soft"}), a
+     * user-facing {@code _message}, and — for hard-delete —
+     * per-table numeric row counts. Soft-path returns the count of
+     * rows tombstoned per protected table.</p>
      */
     @Transactional
-    public Map<String, Long> deleteUser(UUID id, User caller) {
+    public Map<String, Object> deleteUser(UUID id, User caller) {
         User target = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + id));
 
@@ -651,6 +668,175 @@ public class AdminUserService {
             throw new ConflictException(LAST_SUPER_ADMIN_MSG);
         }
 
+        UUID userId = target.getId();
+
+        // Two-tier decision — does this user have an intern_lifecycles row
+        // with started_at IS NOT NULL? If so they've actually done
+        // real intern work whose history dashboards must retain;
+        // route to the soft path. Otherwise (staff accounts, or
+        // interns who signed up but never crossed the start line)
+        // the full hard-delete is safe.
+        boolean everStarted = false;
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM intern_lifecycles "
+                            + "WHERE user_id = ? AND started_at IS NOT NULL",
+                    Integer.class, userId);
+            everStarted = count != null && count > 0;
+        } catch (Exception e) {
+            // Table missing on a partial deploy → treat as never-started
+            // so we don't get stuck. Log so operators know why.
+            log.warn("[AdminUserService] intern_lifecycles started_at probe failed "
+                    + "for user {} — treating as never-started for purge routing: {}",
+                    userId, e.getMessage());
+        }
+        if (everStarted) {
+            return softPurge(target, caller);
+        }
+        return hardPurge(target, caller);
+    }
+
+    /**
+     * Soft path — the user ever actually started an internship, so the
+     * ten retention-protected tables get their rows tombstoned instead
+     * of removed, and the user row is deactivated (blocks login). No
+     * physical DELETEs. {@code *_event_log} tables are untouched.
+     */
+    private Map<String, Object> softPurge(User target, User caller) {
+        UUID userId = target.getId();
+        String candidateIds = "(SELECT id FROM candidates WHERE user_id = ?)";
+        String lifecycleIds = "(SELECT id FROM intern_lifecycles WHERE user_id = ?)";
+        String applicationIds = "(SELECT id FROM applications WHERE candidate_id IN "
+                + candidateIds + ")";
+
+        Map<String, Long> tombstoned = new LinkedHashMap<>();
+
+        // The 10 retention-protected tables — same list as
+        // SchemaFixupRunner.ensureSoftDeleteColumns. Each UPDATE sets
+        // deleted_at=now() only for rows that aren't already tombstoned
+        // (idempotent — a repeat call is a no-op for already-soft rows).
+        //
+        // Sender/recipient scoping mirrors the hard-path SQL fragments
+        // above so the same rows the hard path would DELETE are the
+        // ones we soft-flip.
+        softStamp(tombstoned, "intern_lifecycles",
+                "UPDATE intern_lifecycles SET deleted_at = NOW() "
+                        + "WHERE user_id = ? AND deleted_at IS NULL", userId);
+        softStamp(tombstoned, "intern_evaluations",
+                "UPDATE intern_evaluations SET deleted_at = NOW() "
+                        + "WHERE intern_lifecycle_id IN " + lifecycleIds
+                        + " AND deleted_at IS NULL", userId);
+        // projects — same three-path chase (lifecycle, engagement,
+        // candidate) as the hard-path Phase 3 so no legacy row escapes.
+        String engagementIds = "(SELECT id FROM engagements WHERE application_id IN "
+                + applicationIds + " OR candidate_id IN " + candidateIds + ")";
+        softStamp(tombstoned, "projects",
+                "UPDATE projects SET deleted_at = NOW() "
+                        + "WHERE (intern_lifecycle_id IN " + lifecycleIds
+                        + " OR engagement_id IN " + engagementIds
+                        + " OR intern_id IN " + candidateIds + ") "
+                        + "AND deleted_at IS NULL", userId);
+        softStamp(tombstoned, "timesheets",
+                "UPDATE timesheets SET deleted_at = NOW() "
+                        + "WHERE intern_id IN " + candidateIds
+                        + " AND deleted_at IS NULL", userId);
+        softStamp(tombstoned, "weekly_meetings",
+                "UPDATE weekly_meetings SET deleted_at = NOW() "
+                        + "WHERE intern_lifecycle_id IN " + lifecycleIds
+                        + " AND deleted_at IS NULL", userId);
+        softStamp(tombstoned, "document_packets",
+                "UPDATE document_packets SET deleted_at = NOW() "
+                        + "WHERE intern_lifecycle_id IN " + lifecycleIds
+                        + " AND deleted_at IS NULL", userId);
+        softStamp(tombstoned, "offers",
+                "UPDATE offers SET deleted_at = NOW() "
+                        + "WHERE application_id IN " + applicationIds
+                        + " AND deleted_at IS NULL", userId);
+        softStamp(tombstoned, "interviews",
+                "UPDATE interviews SET deleted_at = NOW() "
+                        + "WHERE application_id IN " + applicationIds
+                        + " AND deleted_at IS NULL", userId);
+        softStamp(tombstoned, "applications",
+                "UPDATE applications SET deleted_at = NOW() "
+                        + "WHERE candidate_id IN " + candidateIds
+                        + " AND deleted_at IS NULL", userId);
+        softStamp(tombstoned, "exit_records",
+                "UPDATE exit_records SET deleted_at = NOW() "
+                        + "WHERE intern_lifecycle_id IN " + lifecycleIds
+                        + " AND deleted_at IS NULL", userId);
+
+        // Deactivate the account so login is blocked. Uses the same
+        // mechanism updateStatus uses (User.setActive(false)) so the
+        // login-side check is unchanged.
+        target.setActive(false);
+        userRepository.save(target);
+
+        long totalRows = tombstoned.values().stream()
+                .filter(n -> n != null && n > 0)
+                .mapToLong(Long::longValue).sum();
+
+        Map<String, Object> snap = new LinkedHashMap<>();
+        snap.put("targetEmail", target.getEmail());
+        snap.put("targetUserId", userId.toString());
+        snap.put("outcome", "soft");
+        snap.put("totalRowsTombstoned", totalRows);
+        snap.put("perTable", tombstoned);
+        writeAudit("USER_SOFT_PURGE", target, caller, snap);
+
+        log.warn("[AdminUserService] soft-purged user {} ({}) — totalRows={}, perTable={}",
+                userId, target.getEmail(), totalRows, tombstoned);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("_outcome", "soft");
+        response.put("_message",
+                "This account started an internship, so its history "
+                        + "(applications, projects, evaluations, timesheets, "
+                        + "meetings, documents, offers, interviews, exit records, "
+                        + "lifecycle) is preserved for reporting. The account has "
+                        + "been deactivated and can no longer sign in.");
+        response.put("totalRowsTombstoned", totalRows);
+        response.putAll(new LinkedHashMap<String, Object>(tombstoned));
+        return response;
+    }
+
+    /**
+     * Per-table soft-stamp wrapper — same shape as {@link #del} but
+     * runs an UPDATE. Each statement is wrapped in its own SAVEPOINT
+     * so a missing column / missing table on a partial deployment
+     * rolls back only that one statement.
+     */
+    private void softStamp(Map<String, Long> out, String tableName,
+                            String sql, Object... args) {
+        try {
+            // Count placeholders so callers can hand in userId once
+            // and we pad it per-placeholder — mirrors delByUser.
+            int placeholders = 0;
+            for (int i = 0; i < sql.length(); i++) if (sql.charAt(i) == '?') placeholders++;
+            Object[] padded;
+            if (args.length == 1 && placeholders > 1) {
+                padded = new Object[placeholders];
+                java.util.Arrays.fill(padded, args[0]);
+            } else {
+                padded = args;
+            }
+            long n = jdbcTemplate.update(sql, padded);
+            out.put(tableName, n);
+        } catch (Exception e) {
+            log.warn("[AdminUserService] soft-stamp on {} skipped (non-fatal): {}",
+                    tableName, e.getMessage());
+            out.put(tableName, -1L);
+        }
+    }
+
+    /**
+     * Hard path — user never actually started. Full physical DELETE
+     * of the user's rows in the intern chain plus the terminal
+     * {@code users} DELETE. {@code *_event_log} + {@code
+     * *_review_logs} tables are NEVER touched — the append-only
+     * history spine is sacred regardless of whether the user ever
+     * started.
+     */
+    private Map<String, Object> hardPurge(User target, User caller) {
         UUID userId = target.getId();
         // SQL fragments resolved against the live tables — every DELETE is
         // self-contained against the user_id, so we never depend on a
@@ -680,10 +866,6 @@ public class AdminUserService {
                 + " OR intern_id IN " + candidateIds + ")";
         String internEvalIds = "(SELECT id FROM intern_evaluations "
                 + "WHERE intern_lifecycle_id IN " + lifecycleIds + ")";
-        String offerIds = "(SELECT id FROM offers WHERE application_id IN "
-                + applicationIds + ")";
-        String interviewIds = "(SELECT id FROM interviews WHERE application_id IN "
-                + applicationIds + ")";
         String screeningIds = "(SELECT id FROM screenings WHERE application_id IN "
                 + applicationIds + ")";
         // Timesheet.intern_id → candidates.id (NOT intern_lifecycle_id).
@@ -694,8 +876,6 @@ public class AdminUserService {
                 + "WHERE intern_id IN " + candidateIds + ")";
         String documentPacketIds = "(SELECT id FROM document_packets "
                 + "WHERE intern_lifecycle_id IN " + lifecycleIds + ")";
-        String documentTaskIds = "(SELECT id FROM document_tasks "
-                + "WHERE packet_id IN " + documentPacketIds + ")";
         String exitRecordIds = "(SELECT id FROM exit_records "
                 + "WHERE intern_lifecycle_id IN " + lifecycleIds + ")";
 
@@ -732,9 +912,10 @@ public class AdminUserService {
         // engagementIds=2 + candidateIds=1), so delByUser counts and
         // pads userId per-placeholder — fixes the "No value specified
         // for parameter 2" trap from the prior widening.
-        delByUser(deleted, "project_assignment_event_logs",
-                "DELETE FROM project_assignment_event_logs "
-                        + "WHERE project_id IN " + projectIds, userId);
+        //
+        // project_assignment_event_logs is NEVER deleted here or in
+        // the orphan sweep — the *_event_log tables are the retention
+        // spine dashboards read for past-month views.
         delByUser(deleted, "project_submissions",
                 "DELETE FROM project_submissions "
                         + "WHERE project_id IN " + projectIds, userId);
@@ -780,10 +961,9 @@ public class AdminUserService {
                 "DELETE FROM weekly_meetings "
                         + "WHERE intern_lifecycle_id IN " + lifecycleIds, userId);
 
-        // Phase 5 — document packets (Phase 8.2)
-        del(deleted, "document_task_review_logs",
-                "DELETE FROM document_task_review_logs "
-                        + "WHERE task_id IN " + documentTaskIds, userId);
+        // Phase 5 — document packets (Phase 8.2). document_task_review_logs
+        // is NEVER deleted — audit-style row per review action, retained
+        // as part of the append-only history spine.
         del(deleted, "document_tasks",
                 "DELETE FROM document_tasks "
                         + "WHERE packet_id IN " + documentPacketIds, userId);
@@ -823,19 +1003,18 @@ public class AdminUserService {
         // data is INLINE on Interview — technical_score /
         // communication_score / cultural_fit_score columns — no
         // separate table). Neither table exists on the current schema.
-        del(deleted, "offer_event_logs",
-                "DELETE FROM offer_event_logs WHERE offer_id IN " + offerIds, userId);
-        del(deleted, "interview_event_logs",
-                "DELETE FROM interview_event_logs WHERE interview_id IN " + interviewIds, userId);
+        //
+        // offer_event_logs, interview_event_logs, and
+        // application_decision_logs are NEVER deleted — the append-only
+        // history spine dashboards read for past-month views. They are
+        // preserved even for never-started users so the audit trail is
+        // consistent across the two purge tiers.
         del(deleted, "interviews",
                 "DELETE FROM interviews WHERE application_id IN " + applicationIds, userId);
         del(deleted, "screening_answers",
                 "DELETE FROM screening_answers WHERE screening_id IN " + screeningIds, userId);
         del(deleted, "screenings",
                 "DELETE FROM screenings WHERE application_id IN " + applicationIds, userId);
-        del(deleted, "application_decision_logs",
-                "DELETE FROM application_decision_logs WHERE application_id IN "
-                        + applicationIds, userId);
 
         // Phase 9 — compliance. Order: everify_cases (via i9_form_id)
         // → i9_forms (which has engagement_id + candidate_id FKs to
@@ -924,9 +1103,11 @@ public class AdminUserService {
         // Project graph orphans (leaves → projects). Critical to chase
         // because a surviving project pins its engagement, cascading
         // FK violations through offers/applications/resumes/candidates.
-        del(deleted, "orphan project_assignment_event_logs",
-                "DELETE FROM project_assignment_event_logs WHERE project_id NOT IN "
-                        + "(SELECT id FROM projects)");
+        // NOTE: project_assignment_event_logs is NOT swept — the
+        // *_event_log tables are the retention spine dashboards read for
+        // past-month views. Orphaned rows (pointing at a project that
+        // no longer exists) are accepted as harmless historical
+        // artifacts rather than swept.
         del(deleted, "orphan project_submissions",
                 "DELETE FROM project_submissions WHERE project_id NOT IN "
                         + "(SELECT id FROM projects)");
@@ -957,12 +1138,10 @@ public class AdminUserService {
 
         // Application graph orphans, again in FK-safe order. engagements
         // last among these so any project still pinning it has died.
-        del(deleted, "orphan offer_event_logs",
-                "DELETE FROM offer_event_logs WHERE offer_id NOT IN "
-                        + "(SELECT id FROM offers)");
-        del(deleted, "orphan interview_event_logs",
-                "DELETE FROM interview_event_logs WHERE interview_id NOT IN "
-                        + "(SELECT id FROM interviews)");
+        // offer_event_logs / interview_event_logs / application_decision_logs
+        // are NOT swept — same rationale as project_assignment_event_logs
+        // above; the *_event_log spine is retained even when the parent
+        // row is gone.
         del(deleted, "orphan interviews",
                 "DELETE FROM interviews WHERE application_id NOT IN "
                         + "(SELECT id FROM applications)");
@@ -971,9 +1150,6 @@ public class AdminUserService {
                         + "(SELECT id FROM screenings)");
         del(deleted, "orphan screenings",
                 "DELETE FROM screenings WHERE application_id NOT IN "
-                        + "(SELECT id FROM applications)");
-        del(deleted, "orphan application_decision_logs",
-                "DELETE FROM application_decision_logs WHERE application_id NOT IN "
                         + "(SELECT id FROM applications)");
         del(deleted, "orphan everify_cases",
                 "DELETE FROM everify_cases WHERE i9_form_id NOT IN "
@@ -1010,16 +1186,16 @@ public class AdminUserService {
         // {@code interviews.interviewer_id} is a NOT-NULL FK back to
         // {@code users.id} — it blocks the terminal users DELETE.
         //
-        // Cascade-drop those interviews (and their event logs). Rows
-        // like {@code interviews.created_by} / {@code feedback_submitted_by}
+        // Cascade-drop those interviews. Rows like
+        // {@code interviews.created_by} / {@code feedback_submitted_by}
         // / {@code cancelled_by_id} / etc. are plain UUID columns with
         // no FK, so they become dangling references — harmless at the
         // DB level, and the interview row itself dies with the delete
         // below anyway.
-        del(deleted, "staff interview_event_logs",
-                "DELETE FROM interview_event_logs WHERE interview_id IN "
-                        + "(SELECT id FROM interviews WHERE interviewer_id = ?)",
-                userId);
+        //
+        // interview_event_logs is NEVER deleted here (or anywhere) — the
+        // retention spine is preserved even when the parent interview
+        // row goes; historical dashboards keep reading it.
         del(deleted, "staff interviews (as interviewer)",
                 "DELETE FROM interviews WHERE interviewer_id = ?", userId);
 
@@ -1079,7 +1255,14 @@ public class AdminUserService {
 
         log.warn("[AdminUserService] hard-deleted user {} ({}) — totalRows={}, perTable={}",
                 userId, target.getEmail(), totalRows, deleted);
-        return deleted;
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("_outcome", "hard");
+        response.put("_message",
+                "This account never started an internship, so all its "
+                        + "data has been permanently removed.");
+        response.put("totalRowsDeleted", totalRows);
+        response.putAll(new LinkedHashMap<String, Object>(deleted));
+        return response;
     }
 
     /**
