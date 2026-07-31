@@ -123,7 +123,7 @@ export default function UpdateWorkAuthModal({
               onChange={(v) => setForm({ ...form, i20Expiration: v })}
             />
           </Field>
-          <Field label="EAD card # (plaintext on wire)">
+          <Field label="EAD card number">
             <input
               value={eadPlain}
               onChange={(e) => setEadPlain(e.target.value)}
@@ -150,7 +150,7 @@ export default function UpdateWorkAuthModal({
             />
           </Field>
           <div className="sm:col-span-2">
-            <Field label="ERM notes (internal only)">
+            <Field label="ERM notes">
               <textarea
                 rows={2}
                 value={form.ermNotes ?? ''}

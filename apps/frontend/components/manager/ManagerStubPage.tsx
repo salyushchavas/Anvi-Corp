@@ -12,11 +12,10 @@ import { ChevronLeft } from 'lucide-react';
 export default function ManagerStubPage({
   title,
   description,
-  phase,
 }: {
   title: string;
   description: string;
-  phase: number;
+  phase?: number;
 }) {
   return (
     <div className="mx-auto max-w-3xl p-6">
@@ -33,13 +32,12 @@ export default function ManagerStubPage({
         <div className="mb-3 flex items-baseline justify-between">
           <h1 className="text-xl font-semibold text-slate-900">{title}</h1>
           <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
-            Coming in Manager Phase {phase}
+            Coming soon
           </span>
         </div>
         <p className="text-sm text-slate-600">{description}</p>
         <p className="mt-4 text-[11px] text-slate-400">
-          Manager Phase 0 ships the 10-item navigation + role gating only.
-          Aggregations, KPIs, approvals, and exports land in Phases 1–5.
+          This feature is coming soon.
         </p>
       </div>
     </div>

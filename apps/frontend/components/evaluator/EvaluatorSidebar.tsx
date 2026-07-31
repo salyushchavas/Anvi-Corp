@@ -51,14 +51,13 @@ export default function EvaluatorSidebar() {
                 <Link
                   href={it.href}
                   className={
-                    'flex items-center justify-between rounded-md px-3 py-2 text-sm ' +
+                    'flex items-center rounded-md px-3 py-2 text-sm ' +
                     (active
                       ? 'bg-brand-50 font-semibold text-brand-800'
                       : 'text-slate-700 hover:bg-slate-50')
                   }
                 >
                   <span>{it.label}</span>
-                  <span className="text-[10px] text-slate-400">P{it.phase}</span>
                 </Link>
               </li>
             );

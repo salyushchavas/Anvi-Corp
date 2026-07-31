@@ -143,7 +143,7 @@ export default function EvaluatorRightSidePanel() {
                   <button
                     type="button"
                     disabled
-                    title={`Coming in Evaluator Phase ${a.phase}`}
+                    title="Coming soon"
                     className="flex w-full cursor-not-allowed items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-500 opacity-70 hover:opacity-90"
                   >
                     {content}
@@ -174,7 +174,7 @@ export default function EvaluatorRightSidePanel() {
       </div>
 
       <div className="border-t border-slate-200 bg-white px-4 py-3 text-[11px] text-slate-500">
-        Evaluator dashboard · Phase 1
+        Evaluator dashboard
       </div>
     </aside>
   );

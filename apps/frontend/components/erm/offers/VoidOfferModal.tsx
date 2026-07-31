@@ -71,9 +71,7 @@ export default function VoidOfferModal({ offer, open, onClose, onApplied }: Prop
       <div className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl">
         <h2 className="text-lg font-semibold text-slate-900">Void offer</h2>
         <p className="mt-2 text-xs text-slate-500">
-          This will void the IDMS offer, reverse applicant lifecycle
-          OFFER_SENT → INTERVIEW_COMPLETED, and send the OFFER_VOIDED email
-          if the notify toggle is on.
+          This will cancel the offer and notify the applicant if the toggle is on.
         </p>
         <div className="mt-4 space-y-4">
           <div>

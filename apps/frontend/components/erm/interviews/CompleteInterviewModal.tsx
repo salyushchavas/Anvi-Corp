@@ -201,8 +201,7 @@ export default function CompleteInterviewModal({
           </h2>
           <p className="mt-1 text-xs text-slate-600">
             Submit your scores, recommendation, and applicant-visible notes.
-            A Manager will review and decide Hire / No-Hire from the Hire
-            Approvals queue.
+            A Manager will review and make the final hiring decision.
           </p>
 
           <div className="mt-4 space-y-4">
@@ -231,7 +230,7 @@ export default function CompleteInterviewModal({
 
             <div>
               <label className="text-sm font-medium text-slate-800">
-                Overall recommendation (advisory)
+                Overall recommendation
               </label>
               <select
                 value={recommendation}
@@ -270,7 +269,7 @@ export default function CompleteInterviewModal({
 
             <div>
               <label className="text-sm font-medium text-slate-800">
-                Internal notes <span className="text-xs text-slate-500">(ERM + Manager only)</span>
+                Internal notes
               </label>
               <textarea
                 value={internalNotes}

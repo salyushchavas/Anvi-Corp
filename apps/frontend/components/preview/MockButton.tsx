@@ -11,7 +11,7 @@ interface Props {
   variant?: Variant;
   size?: Size;
   className?: string;
-  /** Custom toast message; defaults to "Coming soon — this feature is being built". */
+  /** Custom toast message; defaults to "This feature is not yet available." */
   message?: string;
   /** Optional preceding icon node. */
   icon?: ReactNode;
@@ -37,7 +37,7 @@ export default function MockButton({
   variant = 'primary',
   size = 'sm',
   className,
-  message = 'Coming soon — this feature is being built',
+  message = 'This feature is not yet available.',
   icon,
   title,
   ariaLabel,

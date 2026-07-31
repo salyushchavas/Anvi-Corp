@@ -53,7 +53,7 @@ export default function AssignExceptionModal({
             <input
               value={assigneeUserId}
               onChange={(e) => setAssigneeUserId(e.target.value)}
-              placeholder="ERM / MANAGER / SUPER_ADMIN user UUID"
+              placeholder="User ID"
               className="mt-1 block w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
             />
             <span className="mt-0.5 block text-[11px] text-slate-500">

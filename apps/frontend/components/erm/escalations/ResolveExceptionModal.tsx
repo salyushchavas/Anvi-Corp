@@ -119,7 +119,7 @@ export default function ResolveExceptionModal({
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={3}
-              placeholder="At least 10 characters — ERM-only"
+              placeholder="At least 10 characters"
               className="mt-1 block w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
             />
             <span className="mt-0.5 block text-[11px] text-slate-500">

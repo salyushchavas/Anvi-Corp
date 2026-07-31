@@ -267,7 +267,7 @@ export default function ReviewTaskModal({ taskId, onClose, onReviewed }: Props) 
 
               <label className="block">
                 <span className="text-xs font-semibold uppercase text-slate-500">
-                  Internal note (ERM-only, never shown to intern)
+                  Internal note
                 </span>
                 <textarea
                   value={internalNote}
@@ -281,7 +281,7 @@ export default function ReviewTaskModal({ taskId, onClose, onReviewed }: Props) 
               {detail.internalNote && (
                 <section className="rounded-md border border-slate-200 bg-slate-50 p-3">
                   <h4 className="text-xs font-semibold uppercase text-slate-500">
-                    Latest internal note (ERM-only)
+                    Latest internal note
                   </h4>
                   <p className="mt-2 whitespace-pre-wrap rounded bg-white px-2 py-1 text-xs text-slate-700">
                     {detail.internalNote}

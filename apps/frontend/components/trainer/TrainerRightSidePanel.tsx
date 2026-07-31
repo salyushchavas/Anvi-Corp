@@ -80,9 +80,7 @@ export default function TrainerRightSidePanel() {
 }
 
 function QuickActionRow({ action }: { action: QuickAction }) {
-  const tip = action.comingSoon
-    ? 'Wired in Trainer Phase 2 or 3'
-    : undefined;
+  const tip = action.comingSoon ? 'Coming soon' : undefined;
   return (
     <li>
       <Link

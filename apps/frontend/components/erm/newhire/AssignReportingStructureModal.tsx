@@ -88,8 +88,7 @@ export default function AssignReportingStructureModal({
           Assign reporting structure
         </h2>
         <p className="mt-2 text-xs text-slate-500">
-          All three roles are required. Onboarding packet assignment is blocked
-          until this is complete.
+          All three roles are required before you can assign the onboarding packet.
         </p>
         <div className="mt-4 space-y-4">
           <RolePicker

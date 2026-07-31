@@ -232,8 +232,7 @@ export default function DecisionModal({
           {requiresText && (
             <div className="mt-4">
               <label className="text-sm font-medium text-slate-800">
-                Free-text reason <span className="text-red-600">*</span>{' '}
-                <span className="text-xs text-slate-500">(ERM-only)</span>
+                Reason <span className="text-red-600">*</span>
               </label>
               <textarea
                 value={reasonText}

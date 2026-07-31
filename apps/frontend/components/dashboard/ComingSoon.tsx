@@ -13,7 +13,7 @@ export default function ComingSoon({
   icon: Icon,
   heading,
   backHref,
-  message = "Coming soon. We're actively building this feature.",
+  message = 'This feature will be available soon.',
 }: Props) {
   return (
     <div className="mx-auto max-w-md py-16 text-center">
