@@ -100,6 +100,20 @@ public class SchemaFixupRunner implements CommandLineRunner {
                     e.getMessage(), e);
         }
 
+        // Recording gallery month-folder fix — backfill period_start on
+        // intern_evaluations rows where it never got stamped (POST_PROJECT
+        // auto-drafts, legacy rows). Without a period_start the gallery
+        // grouped these under a literal "unknown" folder. Idempotent —
+        // only touches rows where period_start IS NULL; converges after
+        // one boot and is a cheap no-op thereafter.
+        try {
+            backfillEvaluationPeriodStart();
+        } catch (Exception e) {
+            log.error("[SchemaFixupRunner] evaluation period_start backfill threw "
+                    + "(non-fatal, gallery falls back to scheduled_for / upload date): {}",
+                    e.getMessage(), e);
+        }
+
         // Password-reset tokens now store 6-digit codes (same shape as the
         // registration verification code) rather than UUIDs. Different users
         // can legitimately hold the same 6-digit value, so the previous
@@ -4312,6 +4326,48 @@ public class SchemaFixupRunner implements CommandLineRunner {
         log.info("[SchemaFixupRunner] soft-delete columns: {} tables OK, "
                 + "{} skipped_existing, {} failed. Tables: {}",
                 added, skipped, failed, java.util.Arrays.toString(tables));
+    }
+
+    /**
+     * Backfill {@code intern_evaluations.period_start} for rows that
+     * never got stamped. POST_PROJECT rows were auto-drafted (see
+     * {@code PerProjectService.autoDraftForCompletedProject}) and then
+     * scheduled through a path that historically didn't set the
+     * period — the Recording Gallery grouped those recordings under a
+     * literal "unknown" month folder as a result.
+     *
+     * <p>Backfill rule: {@code period_start = COALESCE(scheduled_for::date,
+     * created_at::date)}. Both {@code scheduled_for} and {@code created_at}
+     * are non-null on every row (created_at is @PrePersist-stamped), so
+     * COALESCE always resolves. {@code period_end} gets the same value
+     * on POST_PROJECT rows (single-day period).</p>
+     *
+     * <p>Idempotent — WHERE period_start IS NULL means a second boot
+     * touches zero rows. Cheap: expected to run once, then stay a
+     * no-op forever. Fails-open — a missing table on a partial deploy
+     * logs at WARN and returns without breaking any other fixup.</p>
+     */
+    private void backfillEvaluationPeriodStart() {
+        try {
+            int updated = jdbcTemplate.update(
+                    "UPDATE intern_evaluations "
+                            + "   SET period_start = COALESCE( "
+                            + "         CAST(scheduled_for AT TIME ZONE 'UTC' AS DATE), "
+                            + "         CAST(created_at    AT TIME ZONE 'UTC' AS DATE) "
+                            + "       ), "
+                            + "       period_end = COALESCE( "
+                            + "         period_end, "
+                            + "         CAST(scheduled_for AT TIME ZONE 'UTC' AS DATE), "
+                            + "         CAST(created_at    AT TIME ZONE 'UTC' AS DATE) "
+                            + "       ) "
+                            + " WHERE period_start IS NULL");
+            log.info("[SchemaFixupRunner] intern_evaluations.period_start "
+                    + "backfill touched {} rows (idempotent — a repeat run "
+                    + "is a no-op)", updated);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] intern_evaluations.period_start "
+                    + "backfill skipped (non-fatal): {}", e.getMessage());
+        }
     }
 
     /**

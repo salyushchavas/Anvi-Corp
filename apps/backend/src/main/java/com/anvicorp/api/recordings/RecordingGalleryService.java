@@ -166,16 +166,18 @@ public class RecordingGalleryService {
             Document doc = docs.get(e.getRecordingDocumentId());
             if (doc == null) continue;
             InternBuilder b = perIntern.computeIfAbsent(e.getInternId(), InternBuilder::new);
-            String monthYear = monthYearOf(e);
+            String monthYear = monthYearOf(e, doc);
             Project project = e.getLinkedProjectId() != null
                     ? projectsById.get(e.getLinkedProjectId()) : null;
             String scope = e.getRecordingScope() != null ? e.getRecordingScope() : "P1";
             String projectTitle = project != null
                     ? (project.getName() != null ? project.getName() : project.getTitle())
-                    : (scope.equals("P1_P2") ? "Combined P1 + P2" : "(unknown project)");
+                    : null;
+            String folderLabel = composeFolderLabel(scope, projectTitle);
             String uploadedByName = evaluatorsById.get(e.getEvaluatorId()) != null
                     ? evaluatorsById.get(e.getEvaluatorId()).getFullName() : null;
-            b.putEvaluation(monthYear, scope, e.getLinkedProjectId(), projectTitle,
+            b.putEvaluation(monthYear, scope, e.getLinkedProjectId(),
+                    projectTitle, folderLabel,
                     new RecordingGalleryDtos.RecordingFile(
                             e.getId(),
                             doc.getId(),
@@ -203,12 +205,90 @@ public class RecordingGalleryService {
         return new RecordingGalleryDtos.GalleryResponse(out);
     }
 
-    private String monthYearOf(InternEvaluation e) {
+    /**
+     * Month grouping key for a recording. Waterfall so the gallery
+     * NEVER shows the literal string "unknown":
+     * <ol>
+     *   <li>{@code period_start} if stamped (MONTHLY / FINAL rows set
+     *       it at creation; POST_PROJECT + backfill set it via
+     *       {@code SchemaFixupRunner.backfillEvaluationPeriodStart} +
+     *       {@code PerProjectService.schedulePostProject}).</li>
+     *   <li>{@code scheduled_for} converted to a UTC LocalDate — the
+     *       month the session actually happened in.</li>
+     *   <li>The recording document's {@code created_at} — the month
+     *       the file was uploaded.</li>
+     *   <li>Current month — the last-resort default, guaranteed to
+     *       yield a real "YYYY-MM" string.</li>
+     * </ol>
+     * Returns {@code YYYY-MM}. The frontend formats it into a
+     * human-friendly label ("July 2026").
+     */
+    private String monthYearOf(InternEvaluation e, Document doc) {
         if (e.getPeriodStart() != null) {
             return String.format("%d-%02d",
                     e.getPeriodStart().getYear(), e.getPeriodStart().getMonthValue());
         }
-        return "unknown";
+        if (e.getScheduledFor() != null) {
+            java.time.LocalDate d = e.getScheduledFor()
+                    .atZone(java.time.ZoneOffset.UTC).toLocalDate();
+            return String.format("%d-%02d", d.getYear(), d.getMonthValue());
+        }
+        if (doc != null && doc.getCreatedAt() != null) {
+            java.time.LocalDate d = doc.getCreatedAt()
+                    .atZone(java.time.ZoneOffset.UTC).toLocalDate();
+            return String.format("%d-%02d", d.getYear(), d.getMonthValue());
+        }
+        java.time.LocalDate now = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+        return String.format("%d-%02d", now.getYear(), now.getMonthValue());
+    }
+
+    /**
+     * "YYYY-MM" → "July 2026". Server-side so ERM / MANAGER / EVALUATOR
+     * clients render an identical string without redoing the parse.
+     */
+    private static String formatMonthLabel(String monthYear) {
+        try {
+            java.time.YearMonth ym = java.time.YearMonth.parse(monthYear);
+            return ym.format(java.time.format.DateTimeFormatter
+                    .ofPattern("MMMM yyyy", java.util.Locale.ENGLISH));
+        } catch (Exception e) {
+            return monthYear;
+        }
+    }
+
+    /**
+     * True when a string looks like a real project title (has a space,
+     * an uppercase letter, or a length &gt; 12 characters). False for
+     * id-shaped short lowercase-alphanumeric placeholders like
+     * "2qwsaz2" — those get hidden from the folder label so the
+     * breadcrumb stops leaking raw ids into user-facing copy.
+     */
+    private static boolean looksLikeRealTitle(String s) {
+        if (s == null) return false;
+        String t = s.trim();
+        if (t.isEmpty()) return false;
+        if (t.length() > 12) return true;
+        if (t.contains(" ")) return true;
+        for (int i = 0; i < t.length(); i++) {
+            if (Character.isUpperCase(t.charAt(i))) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Compose the human-friendly folder label the UI displays in both
+     * the tile and the breadcrumb leaf. Scope prefix always shown
+     * ("P1", "P2", "P1 + P2"). Project title appended only when it
+     * looks like a real title — id-shaped placeholders are dropped so
+     * the leaf never reads as a raw string.
+     */
+    private static String composeFolderLabel(String scope, String projectTitle) {
+        String scopeLabel = "P1_P2".equals(scope) ? "P1 + P2"
+                : (scope != null ? scope : "P1");
+        if (looksLikeRealTitle(projectTitle)) {
+            return scopeLabel + " · " + projectTitle.trim();
+        }
+        return scopeLabel;
     }
 
     private RecordingGalleryDtos.RecordingFile toInterviewFile(
@@ -254,10 +334,12 @@ public class RecordingGalleryService {
         InternBuilder(UUID internUserId) { this.internUserId = internUserId; }
 
         void putEvaluation(String monthYear, String scope, UUID projectId,
-                           String projectTitle, RecordingGalleryDtos.RecordingFile file) {
+                           String projectTitle, String folderLabel,
+                           RecordingGalleryDtos.RecordingFile file) {
             String scopeKey = scope + "|" + (projectId != null ? projectId : "");
             monthMap.computeIfAbsent(monthYear, k -> new HashMap<>())
-                    .computeIfAbsent(scopeKey, k -> new ProjectFolderBuilder(scope, projectId, projectTitle))
+                    .computeIfAbsent(scopeKey, k -> new ProjectFolderBuilder(
+                            scope, projectId, projectTitle, folderLabel))
                     .files.add(file);
         }
 
@@ -277,11 +359,14 @@ public class RecordingGalleryService {
                                             Comparator.nullsLast(Comparator.reverseOrder())));
                                     return new RecordingGalleryDtos.ProjectFolder(
                                             pf.scope, pf.projectId, pf.projectTitle,
+                                            pf.folderLabel,
                                             new ArrayList<>(pf.files));
                                 })
                                 .collect(Collectors.toList());
                         return new RecordingGalleryDtos.MonthFolder(
-                                monthEntry.getKey(), projects);
+                                monthEntry.getKey(),
+                                formatMonthLabel(monthEntry.getKey()),
+                                projects);
                     })
                     .collect(Collectors.toList());
             int total = interviewFiles.size()
@@ -301,11 +386,14 @@ public class RecordingGalleryService {
         final String scope;
         final UUID projectId;
         final String projectTitle;
+        final String folderLabel;
         final List<RecordingGalleryDtos.RecordingFile> files = new ArrayList<>();
-        ProjectFolderBuilder(String scope, UUID projectId, String projectTitle) {
+        ProjectFolderBuilder(String scope, UUID projectId,
+                              String projectTitle, String folderLabel) {
             this.scope = scope;
             this.projectId = projectId;
             this.projectTitle = projectTitle;
+            this.folderLabel = folderLabel;
         }
     }
 }

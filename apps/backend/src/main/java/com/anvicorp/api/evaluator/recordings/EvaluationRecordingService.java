@@ -185,6 +185,23 @@ public class EvaluationRecordingService {
         }
 
         ev.setRecordingDocumentId(doc.getId());
+        // Safety net for the recording gallery month grouping. If the
+        // evaluation row somehow reached upload with a null period_start
+        // (legacy rows, or a POST_PROJECT auto-draft that was never
+        // scheduled through the standard path), stamp one now so the
+        // gallery groups the recording under a real month instead of
+        // "unknown". Rule: scheduled session date if present, else
+        // recording upload date, else today. Only stamp when null so a
+        // re-upload doesn't rewrite an already-set period.
+        if (ev.getPeriodStart() == null) {
+            LocalDate derived = ev.getScheduledFor() != null
+                    ? ev.getScheduledFor().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                    : (doc.getCreatedAt() != null
+                            ? doc.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                            : LocalDate.now(java.time.ZoneOffset.UTC));
+            ev.setPeriodStart(derived);
+            if (ev.getPeriodEnd() == null) ev.setPeriodEnd(derived);
+        }
         // Any (re-)upload resets the gate to PENDING_APPROVAL. Applies
         // both to a fresh upload and to a re-upload after REVISION_REQUESTED:
         // the manager gets the same fresh-eyes queue treatment either way,

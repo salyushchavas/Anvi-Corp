@@ -28,6 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -404,6 +405,20 @@ public class PerProjectService {
         ev.setTimezone(req.timezone() != null && !req.timezone().isBlank()
                 ? req.timezone() : "UTC");
         ev.setStatus("SCHEDULED");
+        // Stamp the period on POST_PROJECT rows so the recording gallery
+        // groups the session under the correct month folder. MONTHLY +
+        // FINAL evaluations set period_start at creation; POST_PROJECT
+        // rows were auto-drafted without it, then reached the gallery
+        // labelled "unknown". scheduledFor is the best signal we have —
+        // it's the month the review session actually happens in. Only
+        // stamp when null so a re-schedule doesn't rewrite an already-
+        // set period.
+        if (ev.getPeriodStart() == null) {
+            LocalDate scheduledDate = req.scheduledFor()
+                    .atZone(java.time.ZoneOffset.UTC).toLocalDate();
+            ev.setPeriodStart(scheduledDate);
+            ev.setPeriodEnd(scheduledDate);
+        }
 
         // Best-effort Zoom — a failure leaves the row SCHEDULED without a
         // join URL; the evaluator can regenerate later.

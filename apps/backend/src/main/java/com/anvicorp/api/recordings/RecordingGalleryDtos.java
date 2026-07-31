@@ -50,12 +50,25 @@ public final class RecordingGalleryDtos {
             String scope,
             UUID projectId,
             String projectTitle,
+            /** Human-friendly folder name the UI should display in both
+             *  the tile and the breadcrumb leaf. Server-computed so the
+             *  client doesn't have to reason about "is this projectTitle
+             *  a real name, an id-shaped placeholder, or missing?".
+             *  Examples: "P1 · Real Project Name", "P1 + P2 · Another
+             *  Project", "P1" (when the project has no real title). */
+            String folderLabel,
             List<RecordingFile> files
     ) {}
 
     public record MonthFolder(
             /** yyyy-MM. */
             String monthYear,
+            /** Human-friendly month label the UI should display in both
+             *  the tile and the breadcrumb — e.g. "July 2026". Never
+             *  the literal string "unknown"; if truly underivable, the
+             *  server falls back to the recording's upload month so the
+             *  gallery always shows a real month. */
+            String monthLabel,
             List<ProjectFolder> projects
     ) {}
 

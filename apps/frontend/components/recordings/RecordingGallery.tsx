@@ -40,11 +40,25 @@ export interface RecordingFile {
 interface ProjectFolder {
   scope: string;
   projectId: string | null;
-  projectTitle: string;
+  projectTitle: string | null;
+  /**
+   * Server-computed human-friendly folder name — used in both the
+   * tile and the breadcrumb leaf. Never a raw id; never blank.
+   * Examples: "P1 · Real Project Name", "P1 + P2", "P1".
+   */
+  folderLabel: string;
   files: RecordingFile[];
 }
 interface MonthFolder {
+  /** "YYYY-MM" grouping key (also used as the React list key). */
   monthYear: string;
+  /**
+   * Server-computed human-friendly month label — used in both the
+   * tile and the breadcrumb. Never the literal "unknown"; if
+   * period_start is missing, the server falls back to the session
+   * date or the recording's upload month.
+   */
+  monthLabel: string;
   projects: ProjectFolder[];
 }
 interface InternFolder {
@@ -204,12 +218,12 @@ function Breadcrumb({ level, intern, month, project, onNavigate }: {
   }
   if (month) {
     crumbs.push({
-      label: month.monthYear,
+      label: month.monthLabel,
       go: { kind: 'month', internUserId: intern!.internUserId, monthYear: month.monthYear },
     });
   }
   if (project) {
-    crumbs.push({ label: project.projectTitle, go: level });
+    crumbs.push({ label: project.folderLabel, go: level });
   }
   return (
     <nav className="flex flex-wrap items-center gap-1 text-xs text-slate-600">
@@ -319,7 +333,7 @@ function MonthGrid({ months, onOpen }: {
           className="flex flex-col items-start gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-left hover:border-brand-300 hover:bg-brand-50"
         >
           <Folder className="h-6 w-6 text-brand-700" />
-          <p className="text-sm font-semibold text-slate-900">{m.monthYear}</p>
+          <p className="text-sm font-semibold text-slate-900">{m.monthLabel}</p>
           <p className="text-[10px] text-slate-500">
             {m.projects.length} project{m.projects.length === 1 ? '' : 's'}
           </p>
@@ -347,10 +361,7 @@ function ProjectGrid({ projects, onOpen }: {
           >
             <Folder className="h-6 w-6 text-brand-700" />
             <p className="text-sm font-semibold text-slate-900">
-              {p.scope === 'P1_P2' ? 'P1 + P2' : p.scope}
-              {p.projectTitle && p.projectTitle !== '(unknown project)' && (
-                <span className="text-slate-500"> · {p.projectTitle}</span>
-              )}
+              {p.folderLabel}
             </p>
             <p className="text-[10px] text-slate-500">
               {p.files.length} file{p.files.length === 1 ? '' : 's'}
