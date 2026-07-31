@@ -84,7 +84,7 @@ public class EvaluatorTodoService {
 
     private TodoBucket pendingVivas(UUID evaluatorId, boolean orgWide,
                                     Set<String> dismissed) {
-        String actionUrl = "/careers/evaluator/pending-vivas";
+        String actionUrl = "/careers/evaluator/active-evaluees";
         String scope = orgWide ? "" : " AND (il.evaluator_id = ? OR il.evaluator_id IS NULL) ";
         Object[] countParams = orgWide ? new Object[0] : new Object[]{evaluatorId};
         long count = countOrZero(

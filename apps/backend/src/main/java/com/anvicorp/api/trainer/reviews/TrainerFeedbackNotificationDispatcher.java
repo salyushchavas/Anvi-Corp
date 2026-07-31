@@ -38,8 +38,8 @@ public class TrainerFeedbackNotificationDispatcher {
 
     private static final String INTERN_PROJECTS = "/careers/intern/projects";
     private static final String TRAINER_REVIEWS = "/careers/trainer/pending-reviews";
-    private static final String EVALUATOR_PENDING = "/careers/evaluator/pending-vivas";
-    private static final String ERM_EXCEPTIONS = "/careers/erm/exception-records";
+    private static final String EVALUATOR_PENDING = "/careers/evaluator/active-evaluees";
+    private static final String ERM_EXCEPTIONS = "/careers/erm/escalations";
 
     private final UserRepository userRepository;
     private final InternLifecycleRepository lifecycleRepository;
