@@ -241,10 +241,13 @@ public class EvaluatorController {
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String type,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
-        return historyService.list(caller, search, type, status, page, pageSize);
+        return historyService.list(caller, search, type, status,
+                com.anvicorp.api.common.MonthRange.parse(month),
+                page, pageSize);
     }
 
     // ── Phase 4 — Monthly Reports ────────────────────────────────────────

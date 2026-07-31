@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { ChevronLeft, Filter, Search } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { useEvaluatorDashboard } from '@/components/evaluator/EvaluatorDashboardContext';
 
 interface HistoryRow {
   evaluationId: string;
@@ -43,6 +44,7 @@ export default function EvaluationHistoryPage() {
 function EvaluationHistoryInner() {
   const sp = useSearchParams();
   const internFilter = sp?.get('intern') ?? '';
+  const { selectedMonth, isCurrentMonth } = useEvaluatorDashboard();
   const [search, setSearch] = useState('');
   const [type, setType] = useState<string>('ALL');
   const [status, setStatus] = useState<string>('ALL');
@@ -59,6 +61,10 @@ function EvaluationHistoryInner() {
       if (search.trim()) params.set('search', search.trim());
       if (type !== 'ALL') params.set('type', type);
       if (status !== 'ALL') params.set('status', status);
+      // Scope listings to the sticky selected month. Current-month
+      // omits the param so the query still returns everything when
+      // the URL is clean.
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       params.set('page', String(page));
       params.set('pageSize', '25');
       const res = await api.get<HistoryPage>(
@@ -78,7 +84,7 @@ function EvaluationHistoryInner() {
     } finally {
       setLoading(false);
     }
-  }, [search, type, status, page, internFilter]);
+  }, [search, type, status, page, internFilter, selectedMonth, isCurrentMonth]);
 
   useEffect(() => { void load(); }, [load]);
 

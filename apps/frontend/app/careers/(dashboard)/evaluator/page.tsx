@@ -6,7 +6,6 @@ import { useEvaluatorDashboard } from '@/components/evaluator/EvaluatorDashboard
 import type { KpiSnapshot } from '@/components/evaluator/types';
 import AwaitingEvaluationCard from '@/components/evaluator/AwaitingEvaluationCard';
 import DashboardRefreshButton from '@/components/ui/DashboardRefreshButton';
-import MonthPicker from '@/components/common/MonthPicker';
 
 /**
  * KPIs that are LIVE queues — they don't change with the month
@@ -22,7 +21,7 @@ const LIVE_KPI_KEYS = new Set([
 export default function EvaluatorHomePage() {
   const {
     dashboard, dashboardLoading, dashboardError, refreshAll,
-    selectedMonth, setSelectedMonth, isCurrentMonth,
+    isCurrentMonth,
   } = useEvaluatorDashboard();
 
   const firstName = dashboard?.caller.fullName?.split(/\s+/)[0] ?? 'Evaluator';
@@ -47,10 +46,7 @@ export default function EvaluatorHomePage() {
             )}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <MonthPicker value={selectedMonth} onChange={setSelectedMonth} />
-          <DashboardRefreshButton onRefresh={refreshAll} />
-        </div>
+        <DashboardRefreshButton onRefresh={refreshAll} />
       </header>
 
       {dashboardError && (

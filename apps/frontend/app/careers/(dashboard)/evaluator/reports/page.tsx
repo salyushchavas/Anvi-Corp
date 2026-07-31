@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, Download } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { useEvaluatorDashboard } from '@/components/evaluator/EvaluatorDashboardContext';
 
 interface ReportKpis {
   totalEvaluations: number;
@@ -48,9 +49,35 @@ interface MonthlyReport {
 }
 
 export default function EvaluatorReportsPage() {
-  const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
+  // Seed year+month from the sticky global picker so opening Reports
+  // shows the same period the rest of the evaluator area is scoped to.
+  // The page still has its own year+month controls for granular
+  // navigation without leaving the report — but changing them ALSO
+  // updates the sticky picker so the whole dashboard follows.
+  const { selectedMonth, setSelectedMonth } = useEvaluatorDashboard();
+  const parsedYear = Number(selectedMonth.slice(0, 4));
+  const parsedMonth = Number(selectedMonth.slice(5, 7));
+  const [year, setYear] = useState(parsedYear);
+  const [month, setMonth] = useState(parsedMonth);
+
+  // Keep local year+month in sync when the picker changes elsewhere
+  // (e.g. the user picks a different month from the layout header
+  // while on this page).
+  useEffect(() => {
+    setYear(parsedYear);
+    setMonth(parsedMonth);
+  }, [parsedYear, parsedMonth]);
+
+  // Propagate local picker changes back to the sticky selection so
+  // the whole area moves together.
+  useEffect(() => {
+    const asString = `${year}-${String(month).padStart(2, '0')}`;
+    if (asString !== selectedMonth) {
+      setSelectedMonth(asString);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month]);
+
   const [data, setData] = useState<MonthlyReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -118,7 +145,10 @@ export default function EvaluatorReportsPage() {
             onChange={(e) => setYear(parseInt(e.target.value, 10))}
             className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm"
           >
-            {[now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2].map((y) => (
+            {(() => {
+              const nowYear = new Date().getFullYear();
+              return [nowYear, nowYear - 1, nowYear - 2];
+            })().map((y) => (
               <option key={y} value={y}>{y}</option>
             ))}
           </select>

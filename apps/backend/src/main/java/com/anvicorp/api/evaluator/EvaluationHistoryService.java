@@ -1,5 +1,6 @@
 package com.anvicorp.api.evaluator;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ public class EvaluationHistoryService {
             String search,
             String type,        // MONTHLY | FINAL | POST_PROJECT | I983 | null = all
             String status,      // PUBLISHED | ACKNOWLEDGED | AMENDED | null = all
+            MonthRange range,   // scopes rows by published_at within the month; null → all
             int page,
             int pageSize) {
 
@@ -100,6 +102,23 @@ public class EvaluationHistoryService {
             monthlyBranch.append(" AND ev.status = ? ");
             i983Branch.append(" AND ev.status = ? ");
             monthlyParams.add(status); i983Params.add(status);
+        }
+        // Month scoping — filter by published_at within the selected
+        // month. Ordering already puts NULL-published rows at the
+        // bottom, but the filter here removes them entirely from a
+        // month-scoped view (unpublished drafts are not part of any
+        // month's "published history" until they publish).
+        if (range != null) {
+            String startStr = range.startDateString();
+            String endStr = range.endDateString();
+            monthlyBranch.append(
+                    " AND ev.published_at >= ?::timestamp "
+                            + " AND ev.published_at <  ?::timestamp ");
+            i983Branch.append(
+                    " AND ev.published_at >= ?::timestamp "
+                            + " AND ev.published_at <  ?::timestamp ");
+            monthlyParams.add(startStr); monthlyParams.add(endStr);
+            i983Params.add(startStr);    i983Params.add(endStr);
         }
 
         boolean includeMonthlyFinal = type == null || type.isBlank()
