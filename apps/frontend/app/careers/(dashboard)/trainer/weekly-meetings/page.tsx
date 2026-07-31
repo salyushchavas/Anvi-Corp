@@ -14,6 +14,7 @@ import {
   zoneLabelFor,
 } from '@/lib/careers/meeting-timezones';
 import { AlertTriangle, Calendar, CheckCircle2, Clock, Plus, RefreshCw, X, XCircle, AlertOctagon } from 'lucide-react';
+import { useTrainerDashboard } from '@/components/trainer/TrainerDashboardContext';
 
 type InternRow = { internLifecycleId: string; fullName: string | null; employeeId: string | null };
 
@@ -50,6 +51,7 @@ function WeeklyMeetingsInner() {
   const sp = useSearchParams();
   const prefillIntern = sp?.get('internId') ?? '';
   const wantNew = sp?.get('action') === 'new';
+  const { selectedMonth, isCurrentMonth } = useTrainerDashboard();
 
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [interns, setInterns] = useState<InternRow[]>([]);
@@ -66,6 +68,21 @@ function WeeklyMeetingsInner() {
       const params = new URLSearchParams();
       if (status) params.set('status', status);
       if (internFilter) params.set('internLifecycleId', internFilter);
+      // Sticky month scope — for a past-month pick, bind the existing
+      // fromDate/toDate params to that month's window so the list shows
+      // meetings SCHEDULED that month. Current-month leaves them absent
+      // (byte-identical to prior behaviour: past + upcoming split by
+      // NOW client-side).
+      if (!isCurrentMonth) {
+        const [ys, ms] = selectedMonth.split('-');
+        const y = Number(ys), m = Number(ms);
+        if (!Number.isNaN(y) && !Number.isNaN(m)) {
+          const startDate = new Date(Date.UTC(y, m - 1, 1));
+          const endDate = new Date(Date.UTC(y, m, 0));
+          params.set('fromDate', startDate.toISOString().slice(0, 10));
+          params.set('toDate', endDate.toISOString().slice(0, 10));
+        }
+      }
       const res = await api.get<Meeting[]>(
         `/api/v1/trainer/weekly-meetings?${params.toString()}`,
       );
@@ -77,7 +94,7 @@ function WeeklyMeetingsInner() {
     } finally {
       setLoading(false);
     }
-  }, [status, internFilter]);
+  }, [status, internFilter, selectedMonth, isCurrentMonth]);
 
   useEffect(() => { void load(); }, [load]);
 

@@ -8,6 +8,7 @@ import PeriodPicker, {
 } from '@/components/ui/PeriodPicker';
 import MonthlyRosterTable from '@/components/roster/MonthlyRosterTable';
 import type { ActiveInternListPage } from '@/components/trainer/types';
+import { useTrainerDashboard } from '@/components/trainer/TrainerDashboardContext';
 
 /**
  * Phase A trainer roster — reworked to use the shared
@@ -28,10 +29,34 @@ export default function ActiveInternsPage() {
 }
 
 function ActiveInternsInner() {
+  const { selectedMonth, setSelectedMonth } = useTrainerDashboard();
   const [period, setPeriod] = usePeriodFromUrl();
   const [data, setData] = useState<ActiveInternListPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
+  // Seed the on-page PeriodPicker from the sticky global month whenever
+  // the sticky month changes. The picker still owns its local state so
+  // the on-page ← / → chevrons feel responsive, but every change flows
+  // BOTH ways: sticky → page (this effect) and page → sticky (below).
+  useEffect(() => {
+    const [ys, ms] = selectedMonth.split('-');
+    const y = Number(ys);
+    const m = Number(ms);
+    if (!Number.isNaN(y) && !Number.isNaN(m)
+        && (period.year !== y || period.month !== m)) {
+      setPeriod({ year: y, month: m });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMonth]);
+
+  useEffect(() => {
+    const asString = `${period.year}-${String(period.month).padStart(2, '0')}`;
+    if (asString !== selectedMonth) {
+      setSelectedMonth(asString);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period.year, period.month]);
 
   const load = useCallback(async () => {
     setLoading(true);

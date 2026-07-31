@@ -1,5 +1,6 @@
 package com.anvicorp.api.trainer.dashboard;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.exception.ForbiddenException;
@@ -14,11 +15,13 @@ import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -47,48 +50,60 @@ public class TrainerDashboardService {
 
     private final JdbcTemplate jdbc;
 
+    private record CacheKey(UUID userId, String month) {}
     private record CacheEntry(TrainerDashboardResponse value, Instant cachedAt) {}
-    private final Map<UUID, CacheEntry> cache = new ConcurrentHashMap<>();
+    private final Map<CacheKey, CacheEntry> cache = new ConcurrentHashMap<>();
 
     @Transactional(readOnly = true)
-    public TrainerDashboardResponse getDashboard(User caller) {
+    public TrainerDashboardResponse getDashboard(User caller, MonthRange range) {
         requireTrainer(caller);
-        UUID callerId = caller.getId();
-        CacheEntry cached = cache.get(callerId);
+        MonthRange scope = range != null ? range : MonthRange.parse(null);
+        CacheKey key = new CacheKey(caller.getId(), scope.label());
+        CacheEntry cached = cache.get(key);
         if (cached != null
                 && Duration.between(cached.cachedAt(), Instant.now()).getSeconds()
                         < TrainerThresholds.DASHBOARD_CACHE_TTL_SECONDS) {
             return cached.value();
         }
-        TrainerDashboardResponse fresh = build(caller);
-        cache.put(callerId, new CacheEntry(fresh, Instant.now()));
+        TrainerDashboardResponse fresh = build(caller, scope);
+        cache.put(key, new CacheEntry(fresh, Instant.now()));
         return fresh;
     }
 
     public void invalidate(User caller) {
-        if (caller != null) cache.remove(caller.getId());
+        if (caller == null) return;
+        cache.keySet().removeIf(k -> Objects.equals(k.userId(), caller.getId()));
     }
 
-    private TrainerDashboardResponse build(User caller) {
+    private TrainerDashboardResponse build(User caller, MonthRange scope) {
         Instant now = Instant.now();
-        LocalDate today = LocalDate.now(ZONE);
+        // For a past-month selection the "today" cursor lands on the last
+        // day of that month — the week / KPI queries derive their windows
+        // from it, giving a snapshot of that month rather than the live
+        // now. Current-month picks resolve to today, matching the prior
+        // (byte-identical) behaviour.
+        boolean isCurrent = scope.isCurrent();
+        LocalDate today = isCurrent
+                ? LocalDate.now(ZONE)
+                : scope.monthEnd().minusDays(1);
+        String monthYear = scope.label();
         LocalDate weekStart = today.with(DayOfWeek.MONDAY);
         LocalDate weekEnd = weekStart.plusDays(6);
 
         Map<TrainerKpiKey, KpiSnapshot> kpis = new EnumMap<>(TrainerKpiKey.class);
-        kpis.put(TrainerKpiKey.ACTIVE_INTERNS, kpiActiveInterns(caller));
+        kpis.put(TrainerKpiKey.ACTIVE_INTERNS, kpiActiveInterns(caller, monthYear, isCurrent));
         kpis.put(TrainerKpiKey.PROJECTS_DUE_THIS_WEEK,
-                kpiProjectsDueThisWeek(caller, weekStart, weekEnd));
+                kpiProjectsDueThisWeek(caller, weekStart, weekEnd, isCurrent));
         kpis.put(TrainerKpiKey.SUBMISSIONS_PENDING_REVIEW,
-                kpiSubmissionsPendingReview(caller, now));
-        kpis.put(TrainerKpiKey.MEETINGS_DUE, kpiMeetingsDue(caller, today));
-        kpis.put(TrainerKpiKey.OVERDUE_FEEDBACK, kpiOverdueFeedback(caller, now));
-        kpis.put(TrainerKpiKey.REVISION_REQUESTS, kpiRevisionRequests(caller));
+                kpiSubmissionsPendingReview(caller, scope, isCurrent));
+        kpis.put(TrainerKpiKey.MEETINGS_DUE, kpiMeetingsDue(caller, today, scope, isCurrent));
+        kpis.put(TrainerKpiKey.OVERDUE_FEEDBACK, kpiOverdueFeedback(caller, scope, isCurrent));
+        kpis.put(TrainerKpiKey.REVISION_REQUESTS, kpiRevisionRequests(caller, scope, isCurrent));
 
         List<TodayMeetingRow> todayMeetings = loadTodayMeetings(caller, today);
         List<RecentActivityRow> recent = loadRecentActivity(caller);
         long unread = loadUnread(caller);
-        List<FocusItem> focusItems = buildFocusItems(caller, kpis, weekStart, weekEnd);
+        List<FocusItem> focusItems = buildFocusItems(caller, kpis, weekStart, weekEnd, monthYear);
 
         return new TrainerDashboardResponse(
                 new Caller(firstName(caller), lastName(caller), primaryRole(caller)),
@@ -112,9 +127,10 @@ public class TrainerDashboardService {
      */
     private List<FocusItem> buildFocusItems(User caller,
                                             Map<TrainerKpiKey, KpiSnapshot> kpis,
-                                            LocalDate weekStart, LocalDate weekEnd) {
+                                            LocalDate weekStart, LocalDate weekEnd,
+                                            String monthYear) {
         long sessionsThisWeek = countSessionsToActionThisWeek(caller, weekStart, weekEnd);
-        long ktPending = countKtPendingThisMonth(caller);
+        long ktPending = countKtPendingForMonth(caller, monthYear);
         long projectsToAssign = kpis.get(TrainerKpiKey.ACTIVE_INTERNS) != null
                 ? kpis.get(TrainerKpiKey.ACTIVE_INTERNS).urgentCount() : 0L;
         long reviewsPending = kpis.get(TrainerKpiKey.SUBMISSIONS_PENDING_REVIEW) != null
@@ -166,12 +182,11 @@ public class TrainerDashboardService {
                         java.sql.Date.valueOf(weekEnd)));
     }
 
-    /** Projects for the current month whose KT step isn't done yet.
+    /** Projects for the selected month whose KT step isn't done yet.
      *  Per-project (not per-intern) so a trainer with two slots open on
      *  one intern sees two pending KTs — matches what the active-interns
      *  row chips render. */
-    private long countKtPendingThisMonth(User caller) {
-        String currentMonth = java.time.YearMonth.now(ZONE).toString();
+    private long countKtPendingForMonth(User caller, String monthYear) {
         return countOrZero(
                 "SELECT COUNT(*) FROM projects p "
                         + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
@@ -180,7 +195,7 @@ public class TrainerDashboardService {
                         + "   AND p.status <> 'CANCELLED' "
                         + "   AND (p.kt_status IS NULL OR p.kt_status <> 'DONE') "
                         + scopeClause(caller),
-                prependArg(scopeArgs(caller), currentMonth));
+                prependArg(scopeArgs(caller), monthYear));
     }
 
     /** Open doubts addressed to this trainer — matches the openOnly
@@ -201,33 +216,62 @@ public class TrainerDashboardService {
 
     // ── KPI computations ─────────────────────────────────────────────────
 
-    private KpiSnapshot kpiActiveInterns(User caller) {
-        long total = countOrZero(
-                "SELECT COUNT(*) FROM intern_lifecycles il "
-                        + " WHERE il.active_status = 'ACTIVE' "
-                        + scopeClause(caller),
-                scopeArgs(caller));
-        // Urgent = active interns with no Project row for the current
+    private KpiSnapshot kpiActiveInterns(User caller, String monthYear, boolean isCurrent) {
+        // "Active" scope: intern lifecycles that overlap the selected month
+        // (started before end-of-month AND not ended before start-of-month).
+        // Current-month picks resolve to today's "il.active_status='ACTIVE'"
+        // — byte-identical to prior behaviour — via the isCurrent branch.
+        long total;
+        if (isCurrent) {
+            total = countOrZero(
+                    "SELECT COUNT(*) FROM intern_lifecycles il "
+                            + " WHERE il.active_status = 'ACTIVE' "
+                            + scopeClause(caller),
+                    scopeArgs(caller));
+        } else {
+            YearMonth ym = YearMonth.parse(monthYear);
+            java.sql.Date monthStart = java.sql.Date.valueOf(ym.atDay(1));
+            java.sql.Date monthEnd = java.sql.Date.valueOf(ym.plusMonths(1).atDay(1));
+            total = countOrZero(
+                    "SELECT COUNT(*) FROM intern_lifecycles il "
+                            + " WHERE il.started_at IS NOT NULL "
+                            + "   AND il.started_at < ? "
+                            + "   AND (il.ended_at IS NULL OR il.ended_at >= ?) "
+                            + scopeClause(caller),
+                    appendArgs(scopeArgs(caller), monthEnd, monthStart));
+        }
+        // Urgent = active interns with no Project row for the selected
         // month_year (Phase 0 partial UNIQUE means at most 2 slots).
-        String currentMonth = java.time.YearMonth.now(ZONE).toString();
+        String activePredicate = isCurrent
+                ? " AND il.active_status = 'ACTIVE' "
+                : " AND il.started_at IS NOT NULL AND il.started_at < ?::date "
+                        + " AND (il.ended_at IS NULL OR il.ended_at >= ?::date) ";
+        Object[] urgentBase = isCurrent
+                ? scopeArgs(caller)
+                : prependArgs(scopeArgs(caller),
+                        java.time.YearMonth.parse(monthYear).plusMonths(1).atDay(1).toString(),
+                        java.time.YearMonth.parse(monthYear).atDay(1).toString());
         long urgent = countOrZero(
                 "SELECT COUNT(*) FROM intern_lifecycles il "
-                        + " WHERE il.active_status = 'ACTIVE' "
+                        + " WHERE 1=1 " + activePredicate
                         + scopeClause(caller)
                         + " AND NOT EXISTS (SELECT 1 FROM projects p "
                         + "                    WHERE p.intern_lifecycle_id = il.id "
                         + "                      AND p.month_year = ? "
                         + "                      AND p.status <> 'CANCELLED') ",
-                appendArg(scopeArgs(caller), currentMonth));
+                appendArg(urgentBase, monthYear));
+        String helperNoun = isCurrent ? "this month" : "in " + monthYear;
         return new KpiSnapshot(
                 TrainerKpiKey.ACTIVE_INTERNS,
                 "Active interns",
                 total, urgent,
-                urgent > 0 ? urgent + " without a project this month" : null,
+                urgent > 0 ? urgent + " without a project " + helperNoun : null,
                 "/careers/trainer/active-interns");
     }
 
-    private KpiSnapshot kpiProjectsDueThisWeek(User caller, LocalDate from, LocalDate to) {
+    private KpiSnapshot kpiProjectsDueThisWeek(User caller,
+                                                LocalDate from, LocalDate to,
+                                                boolean isCurrent) {
         Object[] args = appendArgs(scopeArgs(caller), from, to);
         long total = countOrZero(
                 "SELECT COUNT(*) FROM projects p "
@@ -236,42 +280,63 @@ public class TrainerDashboardService {
                         + "   AND p.due_date BETWEEN ? AND ? "
                         + scopeClause(caller),
                 shuffleForOrder(args, /*scopeFirst*/ false));
-        long urgent = countOrZero(
-                "SELECT COUNT(*) FROM projects p "
-                        + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
-                        + " WHERE p.status IN ('NOT_STARTED','IN_PROGRESS','RETURNED') "
-                        + "   AND p.due_date <= CURRENT_DATE + INTERVAL '1 day' "
-                        + "   AND p.due_date >= CURRENT_DATE "
-                        + scopeClause(caller),
-                scopeArgs(caller));
+        // Urgent slice is "due in next 24h" — only meaningful when
+        // looking at the current week. Past-month picks always return 0
+        // urgent (nothing is imminently due in a snapshot of the past).
+        long urgent = isCurrent
+                ? countOrZero(
+                        "SELECT COUNT(*) FROM projects p "
+                                + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
+                                + " WHERE p.status IN ('NOT_STARTED','IN_PROGRESS','RETURNED') "
+                                + "   AND p.due_date <= CURRENT_DATE + INTERVAL '1 day' "
+                                + "   AND p.due_date >= CURRENT_DATE "
+                                + scopeClause(caller),
+                        scopeArgs(caller))
+                : 0L;
         return new KpiSnapshot(
                 TrainerKpiKey.PROJECTS_DUE_THIS_WEEK,
-                "Projects due this week",
+                isCurrent ? "Projects due this week" : "Projects due (week of " + from + ")",
                 total, urgent,
                 urgent > 0 ? urgent + " due in next 24h" : null,
                 "/careers/trainer/active-interns?filter=due-this-week");
     }
 
-    private KpiSnapshot kpiSubmissionsPendingReview(User caller, Instant now) {
+    private KpiSnapshot kpiSubmissionsPendingReview(User caller, MonthRange scope, boolean isCurrent) {
+        // "Pending" = still SUBMITTED with reviewed_at NULL. For a past
+        // month view we scope by submitted_at within that month (so we
+        // see what submissions BELONGED to that month even if they
+        // eventually got reviewed later — the KPI reports "was pending
+        // for this month" not "is still pending right now").
+        String monthClause = isCurrent
+                ? ""
+                : " AND p.submitted_at >= ?::timestamp AND p.submitted_at < ?::timestamp ";
+        Object[] monthArgs = isCurrent
+                ? scopeArgs(caller)
+                : appendArgs(scopeArgs(caller), scope.startDateString(), scope.endDateString());
         long total = countOrZero(
                 "SELECT COUNT(*) FROM projects p "
                         + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
                         + " WHERE p.status = 'SUBMITTED' "
                         + "   AND p.reviewed_at IS NULL "
-                        + scopeClause(caller),
-                scopeArgs(caller));
-        long urgent = countOrZero(
-                "SELECT COUNT(*) FROM projects p "
-                        + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
-                        + " WHERE p.status = 'SUBMITTED' "
-                        + "   AND p.reviewed_at IS NULL "
-                        + "   AND p.submitted_at < NOW() - INTERVAL '"
-                        + TrainerThresholds.SUBMISSION_PENDING_URGENT_HOURS + " hours' "
-                        + scopeClause(caller),
-                scopeArgs(caller));
+                        + scopeClause(caller)
+                        + monthClause,
+                monthArgs);
+        long urgent = isCurrent
+                ? countOrZero(
+                        "SELECT COUNT(*) FROM projects p "
+                                + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
+                                + " WHERE p.status = 'SUBMITTED' "
+                                + "   AND p.reviewed_at IS NULL "
+                                + "   AND p.submitted_at < NOW() - INTERVAL '"
+                                + TrainerThresholds.SUBMISSION_PENDING_URGENT_HOURS + " hours' "
+                                + scopeClause(caller),
+                        scopeArgs(caller))
+                : 0L;
         return new KpiSnapshot(
                 TrainerKpiKey.SUBMISSIONS_PENDING_REVIEW,
-                "Submissions pending review",
+                isCurrent
+                        ? "Submissions pending review"
+                        : "Submissions pending in " + scope.label(),
                 total, urgent,
                 urgent > 0 ? urgent + " waiting > "
                         + TrainerThresholds.SUBMISSION_PENDING_URGENT_HOURS + "h"
@@ -279,51 +344,87 @@ public class TrainerDashboardService {
                 "/careers/trainer/pending-reviews");
     }
 
-    private KpiSnapshot kpiMeetingsDue(User caller, LocalDate today) {
-        long total = countOrZero(
-                "SELECT COUNT(*) FROM weekly_meetings wm "
-                        + "  JOIN intern_lifecycles il ON il.id = wm.intern_lifecycle_id "
-                        + " WHERE wm.status = 'SCHEDULED' "
-                        + "   AND wm.scheduled_for BETWEEN NOW() "
-                        + "                            AND NOW() + INTERVAL '7 days' "
-                        + scopeClause(caller),
-                scopeArgs(caller));
-        long urgent = countOrZero(
-                "SELECT COUNT(*) FROM weekly_meetings wm "
-                        + "  JOIN intern_lifecycles il ON il.id = wm.intern_lifecycle_id "
-                        + " WHERE wm.status = 'SCHEDULED' "
-                        + "   AND wm.scheduled_for::date = CURRENT_DATE "
-                        + scopeClause(caller),
-                scopeArgs(caller));
+    private KpiSnapshot kpiMeetingsDue(User caller, LocalDate today,
+                                        MonthRange scope, boolean isCurrent) {
+        long total;
+        long urgent;
+        if (isCurrent) {
+            total = countOrZero(
+                    "SELECT COUNT(*) FROM weekly_meetings wm "
+                            + "  JOIN intern_lifecycles il ON il.id = wm.intern_lifecycle_id "
+                            + " WHERE wm.status = 'SCHEDULED' "
+                            + "   AND wm.scheduled_for BETWEEN NOW() "
+                            + "                            AND NOW() + INTERVAL '7 days' "
+                            + scopeClause(caller),
+                    scopeArgs(caller));
+            urgent = countOrZero(
+                    "SELECT COUNT(*) FROM weekly_meetings wm "
+                            + "  JOIN intern_lifecycles il ON il.id = wm.intern_lifecycle_id "
+                            + " WHERE wm.status = 'SCHEDULED' "
+                            + "   AND wm.scheduled_for::date = CURRENT_DATE "
+                            + scopeClause(caller),
+                    scopeArgs(caller));
+        } else {
+            // Past-month view = meetings scheduled anywhere in that
+            // month (any status), so the KPI reflects that month's
+            // meeting load rather than an implicit "next 7 days".
+            total = countOrZero(
+                    "SELECT COUNT(*) FROM weekly_meetings wm "
+                            + "  JOIN intern_lifecycles il ON il.id = wm.intern_lifecycle_id "
+                            + " WHERE wm.scheduled_for >= ?::timestamp "
+                            + "   AND wm.scheduled_for < ?::timestamp "
+                            + scopeClause(caller),
+                    appendArgs(scopeArgs(caller), scope.startDateString(), scope.endDateString()));
+            urgent = 0L;
+        }
         return new KpiSnapshot(
                 TrainerKpiKey.MEETINGS_DUE,
-                "Meetings due",
+                isCurrent ? "Meetings due" : "Meetings in " + scope.label(),
                 total, urgent,
                 urgent > 0 ? urgent + " today" : null,
                 "/careers/trainer/weekly-meetings");
     }
 
-    private KpiSnapshot kpiOverdueFeedback(User caller, Instant now) {
-        long total = countOrZero(
-                "SELECT COUNT(*) FROM projects p "
-                        + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
-                        + " WHERE p.status = 'SUBMITTED' "
-                        + "   AND p.reviewed_at IS NULL "
-                        + "   AND p.submitted_at < NOW() - INTERVAL '48 hours' "
-                        + scopeClause(caller),
-                scopeArgs(caller));
-        long urgent = countOrZero(
-                "SELECT COUNT(*) FROM projects p "
-                        + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
-                        + " WHERE p.status = 'SUBMITTED' "
-                        + "   AND p.reviewed_at IS NULL "
-                        + "   AND p.submitted_at < NOW() - INTERVAL '"
-                        + TrainerThresholds.FEEDBACK_OVERDUE_URGENT_HOURS + " hours' "
-                        + scopeClause(caller),
-                scopeArgs(caller));
+    private KpiSnapshot kpiOverdueFeedback(User caller, MonthRange scope, boolean isCurrent) {
+        // For past-month picks: submissions that were BELONGING to the
+        // selected month (submitted_at within the month) and weren't
+        // reviewed within 48h of submission — a static "how many were
+        // overdue in that month" number.
+        long total;
+        long urgent;
+        if (isCurrent) {
+            total = countOrZero(
+                    "SELECT COUNT(*) FROM projects p "
+                            + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
+                            + " WHERE p.status = 'SUBMITTED' "
+                            + "   AND p.reviewed_at IS NULL "
+                            + "   AND p.submitted_at < NOW() - INTERVAL '48 hours' "
+                            + scopeClause(caller),
+                    scopeArgs(caller));
+            urgent = countOrZero(
+                    "SELECT COUNT(*) FROM projects p "
+                            + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
+                            + " WHERE p.status = 'SUBMITTED' "
+                            + "   AND p.reviewed_at IS NULL "
+                            + "   AND p.submitted_at < NOW() - INTERVAL '"
+                            + TrainerThresholds.FEEDBACK_OVERDUE_URGENT_HOURS + " hours' "
+                            + scopeClause(caller),
+                    scopeArgs(caller));
+        } else {
+            total = countOrZero(
+                    "SELECT COUNT(*) FROM projects p "
+                            + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
+                            + " WHERE p.submitted_at >= ?::timestamp "
+                            + "   AND p.submitted_at < ?::timestamp "
+                            + "   AND (p.reviewed_at IS NULL "
+                            + "         OR p.reviewed_at > p.submitted_at + INTERVAL '48 hours') "
+                            + scopeClause(caller),
+                    appendArgs(scopeArgs(caller), scope.startDateString(), scope.endDateString()));
+            urgent = 0L;
+        }
         return new KpiSnapshot(
                 TrainerKpiKey.OVERDUE_FEEDBACK,
-                "Overdue feedback",
+                isCurrent ? "Overdue feedback" : "Overdue feedback in " + scope.label(),
                 total, urgent,
                 urgent > 0 ? urgent + " > "
                         + TrainerThresholds.FEEDBACK_OVERDUE_URGENT_HOURS + "h"
@@ -331,23 +432,40 @@ public class TrainerDashboardService {
                 "/careers/trainer/pending-reviews?filter=overdue");
     }
 
-    private KpiSnapshot kpiRevisionRequests(User caller) {
-        long total = countOrZero(
-                "SELECT COUNT(*) FROM projects p "
-                        + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
-                        + " WHERE p.status = 'RETURNED' "
-                        + scopeClause(caller),
-                scopeArgs(caller));
-        long urgent = countOrZero(
-                "SELECT COUNT(*) FROM projects p "
-                        + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
-                        + " WHERE p.status = 'RETURNED' "
-                        + "   AND p.due_date < CURRENT_DATE "
-                        + scopeClause(caller),
-                scopeArgs(caller));
+    private KpiSnapshot kpiRevisionRequests(User caller, MonthRange scope, boolean isCurrent) {
+        // Current: any RETURNED right now.
+        // Past-month: projects whose month_year matches the scope AND
+        // were ever RETURNED (approx via current status — deeper history
+        // requires the project audit trail which is out of scope for KPI).
+        long total;
+        long urgent;
+        if (isCurrent) {
+            total = countOrZero(
+                    "SELECT COUNT(*) FROM projects p "
+                            + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
+                            + " WHERE p.status = 'RETURNED' "
+                            + scopeClause(caller),
+                    scopeArgs(caller));
+            urgent = countOrZero(
+                    "SELECT COUNT(*) FROM projects p "
+                            + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
+                            + " WHERE p.status = 'RETURNED' "
+                            + "   AND p.due_date < CURRENT_DATE "
+                            + scopeClause(caller),
+                    scopeArgs(caller));
+        } else {
+            total = countOrZero(
+                    "SELECT COUNT(*) FROM projects p "
+                            + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
+                            + " WHERE p.status = 'RETURNED' "
+                            + "   AND p.month_year = ? "
+                            + scopeClause(caller),
+                    appendArg(scopeArgs(caller), scope.label()));
+            urgent = 0L;
+        }
         return new KpiSnapshot(
                 TrainerKpiKey.REVISION_REQUESTS,
-                "Revision requests",
+                isCurrent ? "Revision requests" : "Revision requests in " + scope.label(),
                 total, urgent,
                 urgent > 0 ? urgent + " past due date" : null,
                 "/careers/trainer/active-interns?filter=revision");
@@ -467,6 +585,13 @@ public class TrainerDashboardService {
         Object[] out = new Object[base.length + 1];
         System.arraycopy(base, 0, out, 0, base.length);
         out[base.length] = tail;
+        return out;
+    }
+
+    private static Object[] prependArgs(Object[] base, Object... head) {
+        Object[] out = new Object[base.length + head.length];
+        System.arraycopy(head, 0, out, 0, head.length);
+        System.arraycopy(base, 0, out, head.length, base.length);
         return out;
     }
 

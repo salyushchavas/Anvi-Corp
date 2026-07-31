@@ -1,6 +1,6 @@
 /** Client-side mirror of com.anvicorp.api.todos.TodoPanelResponse. */
 export interface TodoPanelResponse {
-  role: 'MANAGER' | 'EVALUATOR' | 'ERM' | string;
+  role: 'MANAGER' | 'EVALUATOR' | 'ERM' | 'TRAINER' | string;
   buckets: TodoBucket[];
   totalCount: number;
   hasNewSinceLastSeen: boolean;
@@ -28,13 +28,14 @@ export interface TodoItem {
   dismissed: boolean;
 }
 
-/** Which per-role todos endpoint to hit. Extend when TRAINER ships. */
-export type TodoRole = 'MANAGER' | 'EVALUATOR' | 'ERM';
+/** Which per-role todos endpoint to hit. */
+export type TodoRole = 'MANAGER' | 'EVALUATOR' | 'ERM' | 'TRAINER';
 
 export function endpointForRole(role: TodoRole): string {
   switch (role) {
     case 'MANAGER': return '/api/v1/manager/todos';
     case 'EVALUATOR': return '/api/v1/evaluator/todos';
     case 'ERM': return '/api/v1/erm/todos';
+    case 'TRAINER': return '/api/v1/trainer/todos';
   }
 }

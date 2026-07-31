@@ -5,6 +5,7 @@ import Link from 'next/link';
 import api from '@/lib/careers/api';
 import { Download, RefreshCw } from 'lucide-react';
 import { HorizontalBars, Donut } from '@/components/erm/reports/Bars';
+import { useTrainerDashboard } from '@/components/trainer/TrainerDashboardContext';
 
 type HeadlineStats = {
   monthYear: string;
@@ -70,12 +71,31 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function TrainerReportsPage() {
-  const [monthYear, setMonthYear] = useState<string>(defaultMonth());
+  const { selectedMonth, setSelectedMonth } = useTrainerDashboard();
+  const [monthYear, setMonthYear] = useState<string>(selectedMonth || defaultMonth());
   const [filters, setFilters] = useState<FilterOptions | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Seed reports' local monthYear from the sticky global picker so the
+  // report always renders the same month the rest of the dashboard is
+  // scoped to on entry. Local changes propagate BACK so the sticky
+  // month follows the report — mirrors the Evaluator reports pattern.
+  useEffect(() => {
+    if (selectedMonth && selectedMonth !== monthYear) {
+      setMonthYear(selectedMonth);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMonth]);
+
+  useEffect(() => {
+    if (monthYear && monthYear !== selectedMonth) {
+      setSelectedMonth(monthYear);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthYear]);
 
   const load = useCallback(async () => {
     setLoading(true);

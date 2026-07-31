@@ -1,11 +1,13 @@
 package com.anvicorp.api.trainer.panel;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Trainer Phase 1 — right-side panel HTTP surface. */
@@ -18,7 +20,9 @@ public class TrainerRightPanelController {
 
     @GetMapping
     @PreAuthorize("hasAnyRole('TRAINER', 'SUPER_ADMIN')")
-    public TrainerRightPanelResponse get(@AuthenticationPrincipal User caller) {
-        return service.build(caller);
+    public TrainerRightPanelResponse get(
+            @RequestParam(required = false) String month,
+            @AuthenticationPrincipal User caller) {
+        return service.build(caller, MonthRange.parse(month));
     }
 }

@@ -1,5 +1,6 @@
 package com.anvicorp.api.trainer.panel;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.exception.ForbiddenException;
@@ -12,8 +13,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.YearMonth;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -29,17 +28,21 @@ import java.util.UUID;
 @Slf4j
 public class TrainerRightPanelService {
 
-    private static final ZoneId ZONE = ZoneId.of(TrainerThresholds.DEFAULT_TIMEZONE);
-
     private final JdbcTemplate jdbc;
 
     @Transactional(readOnly = true)
-    public TrainerRightPanelResponse build(User caller) {
+    public TrainerRightPanelResponse build(User caller, MonthRange range) {
         if (caller == null) throw new ForbiddenException("Caller required");
         if (!caller.getRoles().contains(UserRole.TRAINER)
                 && !caller.getRoles().contains(UserRole.SUPER_ADMIN)) {
             throw new ForbiddenException("TRAINER or SUPER_ADMIN required");
         }
+        // The right panel is intentionally a "live" surface: quick-action
+        // badges, unread notifications, today's meeting count are always
+        // NOW. The only piece that reads the month is the project-slot
+        // "without a project" counter, which uses the selected month_year
+        // — so a past-month pick shows how many were unassigned back then.
+        MonthRange scopeMonth = range != null ? range : MonthRange.parse(null);
         UUID callerId = caller.getId();
         // Org-wide trainer model: every TRAINER (there is one) + SUPER_ADMIN
         // sees ALL active interns on the KPI counters. The previous
@@ -48,7 +51,7 @@ public class TrainerRightPanelService {
         // for ACTIVE interns under the single-trainer-org config.
         String scope = "";
         Object[] scopeArg = new Object[]{};
-        String currentMonth = YearMonth.now(ZONE).toString();
+        String currentMonth = scopeMonth.label();
 
         long withoutProject = safeCount(
                 "SELECT COUNT(*) FROM intern_lifecycles il "

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import api from '@/lib/careers/api';
 import { ChevronRight, History, X } from 'lucide-react';
+import { useTrainerDashboard } from '@/components/trainer/TrainerDashboardContext';
 
 type InternRow = { internLifecycleId: string; fullName: string | null };
 
@@ -82,6 +83,7 @@ export default function TrainerFeedbackHistoryPage() {
 function FeedbackHistoryInner() {
   const sp = useSearchParams();
   const prefillIntern = sp?.get('intern') ?? '';
+  const { selectedMonth, isCurrentMonth } = useTrainerDashboard();
 
   const [data, setData] = useState<HistoryPage | null>(null);
   const [interns, setInterns] = useState<InternRow[]>([]);
@@ -96,14 +98,33 @@ function FeedbackHistoryInner() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [timelineFor, setTimelineFor] = useState<string | null>(null);
 
+  // Compute month-window boundaries from the sticky global month —
+  // used as an implicit from/to when the user hasn't set explicit ones.
+  // Current-month picks pass through no window (matches prior semantics
+  // where absent from/to = "all history").
+  const monthWindow = useMemo(() => {
+    if (isCurrentMonth) return null;
+    const [ys, ms] = selectedMonth.split('-');
+    const y = Number(ys), m = Number(ms);
+    if (Number.isNaN(y) || Number.isNaN(m)) return null;
+    const startDate = new Date(Date.UTC(y, m - 1, 1));
+    const endDate = new Date(Date.UTC(y, m, 0));
+    return {
+      from: startDate.toISOString().slice(0, 10),
+      to: endDate.toISOString().slice(0, 10),
+    };
+  }, [selectedMonth, isCurrentMonth]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (internFilter) params.set('internLifecycleId', internFilter);
       if (search.trim()) params.set('search', search.trim());
-      if (from) params.set('from', from);
-      if (to) params.set('to', to);
+      const effectiveFrom = from || monthWindow?.from;
+      const effectiveTo = to || monthWindow?.to;
+      if (effectiveFrom) params.set('from', effectiveFrom);
+      if (effectiveTo) params.set('to', effectiveTo);
       if (decisionFilters.size > 0) {
         params.set('decisions', Array.from(decisionFilters).join(','));
       }
@@ -120,7 +141,7 @@ function FeedbackHistoryInner() {
     } finally {
       setLoading(false);
     }
-  }, [internFilter, search, from, to, decisionFilters, page]);
+  }, [internFilter, search, from, to, monthWindow, decisionFilters, page]);
 
   useEffect(() => { void load(); }, [load]);
 

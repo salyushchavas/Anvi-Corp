@@ -183,13 +183,14 @@ function PopupRow({
 }
 
 function resolveRoleForCaller(roles: readonly string[]): TodoRole | null {
-  // Order matters: MANAGER before EVALUATOR before ERM if a user holds
-  // multiple. SUPER_ADMIN falls through to MANAGER (org-wide is the same
-  // view). ERM is included so the login pop-up + to-do panel fires for
-  // ERM callers using GET /api/v1/erm/todos.
+  // Order matters: MANAGER before EVALUATOR before ERM before TRAINER if
+  // a user holds multiple. SUPER_ADMIN falls through to MANAGER
+  // (org-wide is the same view). TRAINER is the last role to gain a
+  // dedicated /api/v1/{role}/todos endpoint.
   if (roles.includes('MANAGER')) return 'MANAGER';
   if (roles.includes('EVALUATOR')) return 'EVALUATOR';
   if (roles.includes('ERM')) return 'ERM';
+  if (roles.includes('TRAINER')) return 'TRAINER';
   if (roles.includes('SUPER_ADMIN')) return 'MANAGER';
   return null;
 }
