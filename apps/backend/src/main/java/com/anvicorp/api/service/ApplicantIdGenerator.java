@@ -7,15 +7,18 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDate;
 
 /**
- * Issues Anvi Corp Applicant IDs in the format {@code SKZ-INT-YYYY-NNNNNN}.
+ * Issues Anvi Corp Applicant IDs in the format {@code ANVI-INT-YYYY-NNNNNN}.
  *
  * NNNNNN is the next value from the Postgres sequence
  * {@code skyzen_applicant_seq} (created by {@code SchemaFixupRunner}), so two
- * concurrent verification requests can never collide on the suffix. The year
+ * concurrent verification requests can never collide on the suffix. The
+ * sequence name is left at its Skyzen-era spelling to preserve the counter
+ * across the rebrand — only the emitted string prefix moves. The year
  * portion is the calendar year of issuance — the suffix does NOT reset
  * year-over-year (it's a global counter), which means 2027's first ID may be
- * {@code SKZ-INT-2027-001234} rather than {@code SKZ-INT-2027-000001}. That's
- * deliberate: uniqueness is owned by the suffix; the year is informational.
+ * {@code ANVI-INT-2027-001234} rather than {@code ANVI-INT-2027-000001}.
+ * That's deliberate: uniqueness is owned by the suffix; the year is
+ * informational.
  */
 @Component
 @RequiredArgsConstructor

@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDate;
 
 /**
- * Issues Anvi Corp Job IDs in the format {@code SKZ-JOB-YYYY-NNNNNN}.
+ * Issues Anvi Corp Job IDs in the format {@code ANVI-JOB-YYYY-NNNNNN}.
  *
  * <p>Mirrors {@link ApplicantIdGenerator} — NNNNNN is the next value from
  * the Postgres sequence {@code skyzen_job_seq} (created by

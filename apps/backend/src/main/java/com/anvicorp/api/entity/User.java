@@ -96,7 +96,7 @@ public class User {
     private Instant emailVerificationExpiresAt;
 
     /**
-     * Anvi Corp Applicant ID, format {@code SKZ-INT-YYYY-NNNNNN} where NNNNNN
+     * Anvi Corp Applicant ID, format {@code ANVI-INT-YYYY-NNNNNN} where NNNNNN
      * is zero-padded from a Postgres sequence ({@code skyzen_applicant_seq}).
      * Issued on first email-verification for CANDIDATE accounts; staff don't
      * receive one. Unique across the entire users table.

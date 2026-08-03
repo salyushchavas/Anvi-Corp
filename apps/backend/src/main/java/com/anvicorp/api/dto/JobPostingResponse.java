@@ -15,7 +15,7 @@ import java.util.UUID;
 public class JobPostingResponse {
     private UUID id;
     private String slug;
-    /** Anvi Corp Job ID — format {@code SKZ-JOB-YYYY-NNNNNN}. Immutable,
+    /** Anvi Corp Job ID — format {@code ANVI-JOB-YYYY-NNNNNN}. Immutable,
      *  unique, surfaced on the candidate listing + detail so candidates
      *  can reference a specific posting in correspondence. */
     private String jobId;

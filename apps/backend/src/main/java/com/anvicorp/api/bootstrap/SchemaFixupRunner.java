@@ -664,7 +664,7 @@ public class SchemaFixupRunner implements CommandLineRunner {
             log.warn("users verification columns ensure failed (non-fatal): {}", e.getMessage(), e);
         }
 
-        // Sequence backing SKZ-INT-YYYY-NNNNNN. Atomic nextval() under
+        // Sequence backing ANVI-INT-YYYY-NNNNNN. Atomic nextval() under
         // concurrency; CACHE 1 keeps the suffix monotonically increasing
         // across boots even if pre-cached values would otherwise be skipped.
         try {
@@ -675,7 +675,7 @@ public class SchemaFixupRunner implements CommandLineRunner {
             log.warn("skyzen_applicant_seq ensure failed (non-fatal): {}", e.getMessage(), e);
         }
 
-        // Sequence backing SKZ-JOB-YYYY-NNNNNN. Same atomic-nextval/CACHE-1
+        // Sequence backing ANVI-JOB-YYYY-NNNNNN. Same atomic-nextval/CACHE-1
         // pattern as skyzen_applicant_seq above. Used by JobIdGenerator
         // when a new job posting is created and by the one-shot backfill
         // (BACKFILL_JOB_ID_V1) for any rows predating the column.
@@ -1545,10 +1545,19 @@ public class SchemaFixupRunner implements CommandLineRunner {
         selfHealActiveInternStartDates();
 
         // Job ID backfill — one-shot, idempotent. Stamps the new
-        // SKZ-JOB-YYYY-NNNNNN job_id on any existing job_postings row
+        // ANVI-JOB-YYYY-NNNNNN job_id on any existing job_postings row
         // missing one. Future postings are stamped at creation via
         // JobIdGenerator.
         backfillJobIdV1();
+
+        // Intern-code rebrand backfill — one-shot, idempotent. The
+        // ApplicantIdGenerator was flipped to emit ANVI-INT-YYYY-NNNNNN
+        // during the Skyzen → Anvi rebrand but existing users.applicant_id
+        // rows kept their historical SKZ-INT- prefix and surfaced to the
+        // dashboard alongside correctly-rebranded ANVI-EMP- codes on the
+        // same screen. REPLACE preserves the numeric tail so the unique
+        // constraint on users.applicant_id cannot collide.
+        backfillInternCodeAnviV1();
 
         // Manager hire-approval gate columns + one-shot backfill.
         // The new model lets the Manager (not the ERM) approve a hire;
@@ -2098,8 +2107,72 @@ public class SchemaFixupRunner implements CommandLineRunner {
                             + "VALUES (?, ?, NOW(), ?, ?) "
                             + "ON CONFLICT (migration_key) DO NOTHING",
                     java.util.UUID.randomUUID(), migKey, backfilled,
-                    "Stamped SKZ-JOB-YYYY-NNNNNN on " + backfilled
+                    "Stamped ANVI-JOB-YYYY-NNNNNN on " + backfilled
                             + " pre-existing job_postings row(s).");
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] insert migration_log({}) skipped (non-fatal): {}",
+                    migKey, e.getMessage());
+        }
+    }
+
+    /**
+     * One-shot backfill — rewrite any {@code users.applicant_id} still
+     * carrying the pre-rebrand {@code SKZ-INT-} prefix so every intern
+     * code on the platform reads {@code ANVI-INT-YYYY-NNNNNN}. The
+     * {@link com.anvicorp.api.service.ApplicantIdGenerator} was flipped
+     * to emit the new prefix but existing rows were never rewritten,
+     * so the dashboard surfaced {@code SKZ-INT-*} intern codes next to
+     * correctly-rebranded {@code ANVI-EMP-*} employee codes on the same
+     * screen. Idempotent + gated by a {@code migration_log} row keyed
+     * {@code BACKFILL_INTERN_CODE_ANVI_V1}.
+     *
+     * <p>The intern code value is stored in exactly one column
+     * ({@code users.applicant_id}); every other reference in the
+     * codebase reads it through {@code user.getApplicantId()} rather
+     * than holding its own copy, so a single {@code REPLACE} on that
+     * column is sufficient. {@code REPLACE} preserves the numeric tail
+     * so no unique-constraint collision is possible on the surviving
+     * unique index {@code users(applicant_id)}. Emails already sent
+     * and PDFs already generated stay historical — that's expected
+     * for immutable artifacts.</p>
+     */
+    private void backfillInternCodeAnviV1() {
+        final String migKey = "BACKFILL_INTERN_CODE_ANVI_V1";
+        try {
+            Integer existing = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM migration_log WHERE migration_key = ?",
+                    Integer.class, migKey);
+            if (existing != null && existing > 0) {
+                log.info("[SchemaFixup] {} already applied — skip", migKey);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] migration_log lookup failed for {} "
+                    + "(non-fatal, continuing): {}", migKey, e.getMessage());
+        }
+
+        int backfilled = 0;
+        try {
+            backfilled = jdbcTemplate.update(
+                    "UPDATE users "
+                            + "   SET applicant_id = REPLACE(applicant_id, 'SKZ-INT-', 'ANVI-INT-') "
+                            + " WHERE applicant_id LIKE 'SKZ-INT-%'");
+            log.info("[SchemaFixup] {} — rewrote SKZ-INT- → ANVI-INT- on {} users row(s)",
+                    migKey, backfilled);
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] {} backfill failed (non-fatal): {}",
+                    migKey, e.getMessage());
+        }
+
+        try {
+            jdbcTemplate.update(
+                    "INSERT INTO migration_log "
+                            + "(id, migration_key, executed_at, rows_migrated, notes) "
+                            + "VALUES (?, ?, NOW(), ?, ?) "
+                            + "ON CONFLICT (migration_key) DO NOTHING",
+                    java.util.UUID.randomUUID(), migKey, backfilled,
+                    "Rewrote SKZ-INT- → ANVI-INT- on " + backfilled
+                            + " users.applicant_id row(s).");
         } catch (Exception e) {
             log.warn("[SchemaFixup] insert migration_log({}) skipped (non-fatal): {}",
                     migKey, e.getMessage());

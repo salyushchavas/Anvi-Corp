@@ -666,9 +666,9 @@ public class TestDataSeeder implements CommandLineRunner {
                     "SELECT nextval('skyzen_applicant_seq')", Long.class);
             long val = n == null ? 1000 : n;
             int year = LocalDate.now(ZoneOffset.UTC).getYear();
-            return String.format("SKZ-INT-%d-%06d", year, val);
+            return String.format("ANVI-INT-%d-%06d", year, val);
         } catch (Exception e) {
-            return "SKZ-INT-TEST-" + UUID.randomUUID().toString().substring(0, 8);
+            return "ANVI-INT-TEST-" + UUID.randomUUID().toString().substring(0, 8);
         }
     }
 

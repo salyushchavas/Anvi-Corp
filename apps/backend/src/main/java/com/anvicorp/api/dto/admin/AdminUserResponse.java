@@ -21,7 +21,7 @@ public class AdminUserResponse {
     private Boolean active;
     private Instant createdAt;
     /**
-     * Anvi Corp applicant / intern id (e.g. {@code SKZ-A-000123}). Only populated
+     * Anvi Corp applicant / intern id (e.g. {@code ANVI-INT-2026-000123}). Only populated
      * once registration has minted one — null on freshly-created STAFF users
      * who never went through the applicant funnel.
      */
