@@ -118,6 +118,101 @@ export function evaluatorProjectDisplay(
 }
 
 /**
+ * Project statuses at which the evaluator may schedule a Final Session
+ * for a project that has NO POST_PROJECT eval row yet (self-heal path).
+ * Deliberately narrower than "any status not-yet evaluated" — pre-viva
+ * states (SUBMITTED, IN_PROGRESS, RETURNED, NOT_STARTED) are excluded
+ * because scheduling a viva before the trainer has verified the code
+ * inverts the workflow.
+ */
+const NO_EVAL_SCHEDULABLE_STATUSES: ReadonlySet<string> = new Set([
+  'PENDING_VIVA',
+  'TECH_APPROVED',
+  'COMPLETED',
+]);
+
+/**
+ * Statuses of an EXISTING POST_PROJECT eval row that keep it inside the
+ * Final Session picker. Anything else — PUBLISHED / ACKNOWLEDGED /
+ * AMENDED / IN_PROGRESS / CANCELLED — is either done or in-session and
+ * should not be re-scheduled from this dialog.
+ */
+const OPEN_EVAL_STATUSES: ReadonlySet<string> = new Set([
+  'DRAFT',
+  'SCHEDULED',
+]);
+
+/**
+ * Two-branch eligibility for the "Schedule Final Session" picker:
+ * (a) POST_PROJECT eval exists in DRAFT/SCHEDULED — schedule the row, or
+ * (b) NO eval exists AND project status is in the schedulable set
+ *     (PENDING_VIVA / TECH_APPROVED / COMPLETED) — server will
+ *     auto-draft on submit.
+ *
+ * Projects with an eval past the DRAFT/SCHEDULED window are excluded —
+ * they've already been evaluated (or session is in progress) and
+ * belong on other surfaces.
+ */
+export function isEligibleForFinalSession(entry: {
+  evaluationId: string | null;
+  evaluationStatus: string | null;
+  projectStatus: string;
+}): boolean {
+  if (entry.evaluationId != null) {
+    return entry.evaluationStatus != null
+      && OPEN_EVAL_STATUSES.has(entry.evaluationStatus);
+  }
+  return NO_EVAL_SCHEDULABLE_STATUSES.has(entry.projectStatus);
+}
+
+/**
+ * Which of the two eligibility branches this entry falls into — the
+ * dialog needs this so it can route (a) entries as evaluationIds and
+ * (b) entries as projectIds in the same bulk-schedule call.
+ */
+export type FinalSessionEligibility = 'DRAFT_OR_SCHEDULED_EVAL' | 'AUTO_DRAFT_ON_SUBMIT';
+
+export function finalSessionEligibility(entry: {
+  evaluationId: string | null;
+  evaluationStatus: string | null;
+  projectStatus: string;
+}): FinalSessionEligibility | null {
+  if (entry.evaluationId != null
+      && entry.evaluationStatus != null
+      && OPEN_EVAL_STATUSES.has(entry.evaluationStatus)) {
+    return 'DRAFT_OR_SCHEDULED_EVAL';
+  }
+  if (entry.evaluationId == null
+      && NO_EVAL_SCHEDULABLE_STATUSES.has(entry.projectStatus)) {
+    return 'AUTO_DRAFT_ON_SUBMIT';
+  }
+  return null;
+}
+
+/**
+ * Short, friendly hint the picker row shows next to the title so the
+ * evaluator sees WHY a project is schedulable without decoding enum
+ * names. Returns null when the row shouldn't be in the picker at all.
+ */
+export function finalSessionRowHint(entry: {
+  evaluationId: string | null;
+  evaluationStatus: string | null;
+  projectStatus: string;
+}): string | null {
+  const kind = finalSessionEligibility(entry);
+  if (kind == null) return null;
+  if (kind === 'DRAFT_OR_SCHEDULED_EVAL') {
+    return entry.evaluationStatus === 'SCHEDULED' ? 'Scheduled' : 'Draft ready';
+  }
+  switch (entry.projectStatus) {
+    case 'PENDING_VIVA':   return 'Awaiting viva';
+    case 'TECH_APPROVED':  return 'Tech approved';
+    case 'COMPLETED':      return 'Completed';
+    default:               return null;
+  }
+}
+
+/**
  * Table-facing status label — finer-grained than the card label so a
  * dense row can show which pre-verification state the project is in
  * (Not Started vs In Progress vs Submitted vs Returned vs Tech

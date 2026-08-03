@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { CalendarCheck2, X } from 'lucide-react';
+import { CalendarCheck2, Sparkles, X } from 'lucide-react';
 import api from '@/lib/careers/api';
 import MeetingTimezoneSelect from '@/components/ui/MeetingTimezoneSelect';
 import {
@@ -10,19 +10,36 @@ import {
   nowPlus30InZone,
 } from '@/lib/careers/meeting-timezones';
 import type { BulkScheduleResponse, ProjectTimelineEntry } from './perproject-types';
+import {
+  finalSessionEligibility,
+  finalSessionRowHint,
+  isEligibleForFinalSession,
+} from './project-status';
 
 /**
  * "Schedule Final Session" — one Zoom for multiple project evaluations.
  * The evaluator ticks projects (checkboxes) whose POST_PROJECT evals
  * this final session covers, then confirms with a timezone-aware form.
- * All selected evaluations get the same {@code scheduledFor}, one shared
+ * All selected projects get the same {@code scheduledFor}, one shared
  * Zoom meeting id/join url, and advance status together (SCHEDULED, or
  * IN_PROGRESS when {@code markConducted=true} for retroactive recording).
+ *
+ * <p>Selection is two-branch (see
+ * {@code project-status.isEligibleForFinalSession}):</p>
+ * <ul>
+ *   <li>Rows with a POST_PROJECT eval in DRAFT/SCHEDULED submit as
+ *       {@code evaluationIds} (today's shape).</li>
+ *   <li>Rows with NO eval — but a schedulable project status
+ *       (PENDING_VIVA / TECH_APPROVED / COMPLETED) — submit as
+ *       {@code projectIds}. Server auto-drafts each before scheduling
+ *       so the picker never asks the operator to "complete the project
+ *       first, then come back."</li>
+ * </ul>
  */
 interface Props {
-  /** Only rows whose evaluationId is non-null are eligible — the eval
-   *  must exist to schedule against. Server also rejects rows outside
-   *  DRAFT/SCHEDULED status. */
+  /** Rows filtered by {@code isEligibleForFinalSession} at the call site
+   *  — either the top-hub button or the per-cards selection mode.
+   *  Re-guarded internally so a mis-passed row can't slip past. */
   eligibleProjects: ProjectTimelineEntry[];
   onClose: () => void;
   onScheduled: () => void;
@@ -43,12 +60,11 @@ export default function ScheduleFinalSessionDialog({
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const eligibleEvaluationIds = useMemo(
-    () => new Map<string, string>(
-      eligibleProjects
-        .filter((p) => p.evaluationId != null)
-        .map((p) => [p.evaluationId as string, p.projectId] as const),
-    ),
+  // Re-guard: keep only rows the two-branch eligibility rule accepts,
+  // in case a caller passed a stale / broader list. Prevents server
+  // 400s from an eval past DRAFT/SCHEDULED sneaking into the payload.
+  const guardedProjects = useMemo(
+    () => eligibleProjects.filter(isEligibleForFinalSession),
     [eligibleProjects],
   );
 
@@ -71,12 +87,23 @@ export default function ScheduleFinalSessionDialog({
       setErr('Pick a date/time.');
       return;
     }
+    // Split the selection by branch: rows with an existing DRAFT/SCHEDULED
+    // eval submit as evaluationIds; rows without any eval submit as
+    // projectIds (server auto-drafts before merging into the same bulk
+    // transaction). Server rejects the request when both are empty.
     const evalIds: string[] = [];
-    for (const [evId, projectId] of eligibleEvaluationIds.entries()) {
-      if (selected.has(projectId)) evalIds.push(evId);
+    const projectIds: string[] = [];
+    for (const p of guardedProjects) {
+      if (!selected.has(p.projectId)) continue;
+      const kind = finalSessionEligibility(p);
+      if (kind === 'DRAFT_OR_SCHEDULED_EVAL' && p.evaluationId != null) {
+        evalIds.push(p.evaluationId);
+      } else if (kind === 'AUTO_DRAFT_ON_SUBMIT') {
+        projectIds.push(p.projectId);
+      }
     }
-    if (evalIds.length === 0) {
-      setErr('Selected projects have no evaluations to schedule.');
+    if (evalIds.length === 0 && projectIds.length === 0) {
+      setErr('Selected projects are no longer schedulable — reload and try again.');
       return;
     }
     setSubmitting(true);
@@ -85,6 +112,7 @@ export default function ScheduleFinalSessionDialog({
         '/api/v1/evaluator/post-project-evaluations/bulk-schedule',
         {
           evaluationIds: evalIds,
+          projectIds: projectIds.length > 0 ? projectIds : undefined,
           scheduledFor: localInZoneToUtcIso(scheduledFor, timezone),
           durationMinutes,
           timezone,
@@ -123,17 +151,27 @@ export default function ScheduleFinalSessionDialog({
           {/* Project selector */}
           <div>
             <p className="text-xs font-semibold text-slate-700">
-              Projects to cover ({selected.size} selected of {eligibleProjects.length} eligible)
+              Projects to cover ({selected.size} selected of {guardedProjects.length} eligible)
             </p>
-            {eligibleProjects.length === 0 ? (
-              <p className="mt-1 rounded-md border border-dashed border-slate-300 p-3 text-center text-[11px] text-slate-500">
-                No eligible projects. Only DRAFT / SCHEDULED POST_PROJECT
-                evaluations can be bulk-scheduled.
-              </p>
+            {guardedProjects.length === 0 ? (
+              <div className="mt-1 rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-[12px] text-slate-600">
+                <p className="font-medium text-slate-700">
+                  No projects are ready for a session right now.
+                </p>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Projects appear here once the trainer approves them
+                  (awaiting viva) or after they're marked completed. Rows
+                  with a session already conducted or an evaluation
+                  already published don't appear — they're finished.
+                </p>
+              </div>
             ) : (
               <ul className="mt-1 max-h-56 space-y-1 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-2">
-                {eligibleProjects.map((p) => {
+                {guardedProjects.map((p) => {
                   const checked = selected.has(p.projectId);
+                  const kind = finalSessionEligibility(p);
+                  const hint = finalSessionRowHint(p);
+                  const willAutoDraft = kind === 'AUTO_DRAFT_ON_SUBMIT';
                   return (
                     <li key={p.projectId}>
                       <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-white">
@@ -153,9 +191,22 @@ export default function ScheduleFinalSessionDialog({
                             · {p.techStack}
                           </span>
                         )}
-                        {p.evaluationStatus && (
-                          <span className="ml-auto rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
-                            {p.evaluationStatus.replaceAll('_', ' ')}
+                        {hint && (
+                          <span
+                            className={
+                              'ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold '
+                              + (willAutoDraft
+                                ? 'bg-amber-100 text-amber-900'
+                                : 'bg-slate-100 text-slate-700')
+                            }
+                            title={
+                              willAutoDraft
+                                ? 'No evaluation exists yet — one will be drafted when you schedule.'
+                                : undefined
+                            }
+                          >
+                            {willAutoDraft && <Sparkles className="h-2.5 w-2.5" />}
+                            {hint}
                           </span>
                         )}
                       </label>

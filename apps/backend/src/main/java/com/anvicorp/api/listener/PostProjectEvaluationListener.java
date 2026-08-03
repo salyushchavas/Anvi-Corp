@@ -4,7 +4,6 @@ import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.entity.Project;
 import com.anvicorp.api.event.project.ProjectCompletedEvent;
 import com.anvicorp.api.intern.InternEvaluationService;
-import com.anvicorp.api.intern.OrgTeamResolver;
 import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
@@ -18,9 +17,14 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * POST_PROJECT evaluation row for the assigned Evaluator. Best-effort:
  * a failure logs but never rolls back the project completion.
  *
- * <p>If the lifecycle has no evaluator assigned, the draft is skipped
- * with a warning — Phase 7 will fan that into a SentNotification for ERM
- * ("Assign evaluator to {intern}").</p>
+ * <p>Evaluator resolution is delegated to
+ * {@link InternEvaluationService#autoDraftPostProject} which routes
+ * through {@code OrgTeamResolver}: the per-intern
+ * {@code intern_lifecycles.evaluator_id} FK is used when set, otherwise
+ * the configured {@code app.default-evaluator-email}. Only when even
+ * the org fallback is unresolvable does the draft skip — and it skips
+ * with a WARN (never silent), so ERM notice paths + the picker's
+ * self-heal path both surface the miss.</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -30,7 +34,6 @@ public class PostProjectEvaluationListener {
     private final ProjectRepository projectRepository;
     private final InternLifecycleRepository lifecycleRepository;
     private final InternEvaluationService evaluationService;
-    private final OrgTeamResolver orgTeamResolver;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onProjectCompleted(ProjectCompletedEvent event) {
@@ -54,16 +57,6 @@ public class PostProjectEvaluationListener {
             if (lc == null) {
                 log.warn("[PostProjectEval] no InternLifecycle for user {}; skipping",
                         internUserId);
-                return;
-            }
-            // Evaluator resolves through OrgTeamResolver: the org-wide
-            // singleton (DEFAULT_EVALUATOR_EMAIL) is used when the
-            // per-intern evaluator_id was never stamped. Only warn +
-            // skip when even the resolver returns null (env var unset).
-            if (orgTeamResolver.resolveEvaluatorId(lc) == null) {
-                log.warn("[PostProjectEval] no evaluator resolvable for lifecycle {} "
-                                + "(per-intern FK null and DEFAULT_EVALUATOR_EMAIL "
-                                + "unset / unresolvable) — skipping auto-draft", lc.getId());
                 return;
             }
             evaluationService.autoDraftPostProject(lc, project.getId(),

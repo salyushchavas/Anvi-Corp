@@ -164,12 +164,30 @@ public final class PerProjectDtos {
      * — used when the meeting already happened and the evaluator is
      * recording it retroactively).
      *
-     * <p>Every {@code evaluationId} must be POST_PROJECT, owned by the
-     * caller (or SUPER_ADMIN), and in DRAFT/SCHEDULED status. Any row
-     * failing validation rejects the whole batch (atomic).</p>
+     * <p>Two selection channels, both go through the same server
+     * transaction:</p>
+     * <ul>
+     *   <li>{@code evaluationIds} — POST_PROJECT eval rows already in
+     *       DRAFT/SCHEDULED (today's path).</li>
+     *   <li>{@code projectIds} — projects with NO eval row yet (self-heal
+     *       path). Server auto-drafts a DRAFT POST_PROJECT eval per project
+     *       through the same helper {@code scheduleByProject} uses, then
+     *       treats the resulting row like an {@code evaluationIds} entry.
+     *       Lets the picker cover PENDING_VIVA / TECH_APPROVED / COMPLETED
+     *       projects the auto-draft listener never fired on.</li>
+     * </ul>
+     *
+     * <p>Either list may be null / empty, but at least one entry across
+     * both is required. Ownership + type + status rules stay unchanged —
+     * validation runs on the merged row set (atomic; any failure aborts
+     * the batch).</p>
      */
     public record BulkScheduleRequest(
-            @NotNull List<UUID> evaluationIds,
+            List<UUID> evaluationIds,
+            /** Projects with no POST_PROJECT eval yet — server auto-drafts
+             *  before scheduling. Empty / null when the caller only selected
+             *  already-drafted rows. */
+            List<UUID> projectIds,
             @NotNull Instant scheduledFor,
             Integer durationMinutes,
             String timezone,

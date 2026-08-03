@@ -112,6 +112,11 @@ export interface SchedulePostProjectRequest {
 
 export interface BulkScheduleRequest {
   evaluationIds: string[];
+  /** Projects with no POST_PROJECT eval yet — server auto-drafts a
+   *  DRAFT row for each before merging into the same bulk-schedule
+   *  transaction. Empty when the caller only selected rows that
+   *  already have an eval. */
+  projectIds?: string[];
   scheduledFor: string; // UTC ISO
   durationMinutes?: number;
   timezone?: string;

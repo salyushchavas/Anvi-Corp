@@ -22,6 +22,7 @@ import ReferenceQaPanel from '@/components/project/ReferenceQaPanel';
 import type { ProjectTimelineEntry, ProjectTimelineResponse } from './perproject-types';
 import {
   evaluatorProjectDisplay,
+  isEligibleForFinalSession,
   type EvaluatorProjectDisplayState,
 } from './project-status';
 
@@ -101,9 +102,14 @@ export default function ProjectCardsSection({ lifecycleId }: Props) {
   useEffect(() => { void load(); }, [load]);
 
   const entries = data?.entries ?? [];
+  // Two-branch eligibility: (a) row has a POST_PROJECT eval in
+  // DRAFT/SCHEDULED, OR (b) row has NO eval AND project status is in the
+  // schedulable set (PENDING_VIVA / TECH_APPROVED / COMPLETED). Server
+  // auto-drafts (b)-selections through the same code scheduleByProject
+  // uses, so the picker no longer needs a pre-existing row to surface a
+  // project that legitimately needs scheduling.
   const eligibleForBulk = useMemo(
-    () => entries.filter((e) => e.evaluationId != null
-      && (e.evaluationStatus === 'DRAFT' || e.evaluationStatus === 'SCHEDULED')),
+    () => entries.filter(isEligibleForFinalSession),
     [entries],
   );
 
@@ -146,7 +152,7 @@ export default function ProjectCardsSection({ lifecycleId }: Props) {
               <Pill tone="slate" label={`${data.totalProjects} total`} />
             </div>
           )}
-          {eligibleForBulk.length > 1 && !selectionMode && (
+          {eligibleForBulk.length >= 1 && !selectionMode && (
             <button type="button" onClick={() => setSelectionMode(true)}
               className="inline-flex items-center gap-1 rounded-md border border-brand-300 bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-800 hover:bg-brand-100">
               <CalendarCheck2 className="h-3.5 w-3.5" />
@@ -237,10 +243,11 @@ function ProjectCard({
   const [actionErr, setActionErr] = useState<string | null>(null);
   const disp = evaluatorProjectDisplay(entry.projectStatus, entry.evaluationStatus);
   const styles = CARD_BAR_STYLES[disp.state];
-  // Bulk Final still requires an existing evaluation (the bulk endpoint
-  // takes evaluationIds, not projectIds). Consistent with server contract.
-  const eligibleForFinal = !!entry.evaluationId
-    && (entry.evaluationStatus === 'DRAFT' || entry.evaluationStatus === 'SCHEDULED');
+  // Bulk Final accepts BOTH eval-first rows and eval-less rows (the
+  // server auto-drafts for the latter through the same path
+  // scheduleByProject uses). Mirror the picker's two-branch rule so the
+  // checkbox lights up on every row the dialog will accept.
+  const eligibleForFinal = isEligibleForFinalSession(entry);
   const composeHref = entry.evaluationId
     ? `/careers/evaluator/evaluations/${entry.evaluationId}/compose`
     : null;

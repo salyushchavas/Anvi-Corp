@@ -488,8 +488,25 @@ public class PerProjectService {
                         "InternLifecycle not found: " + project.getInternLifecycleId()));
         evaluatorScopeGuard.requireEvaluatorOwnership(lc, caller);
 
-        // Find existing POST_PROJECT eval for this project; create DRAFT
-        // if none. Only one POST_PROJECT eval per project by convention
+        InternEvaluation ev = findOrCreateDraftForProject(projectId, project, lc, caller);
+        // Delegate to the eval-first scheduler, which re-runs the scope
+        // check + Zoom creation + status transition + fanout.
+        return schedulePostProject(ev.getId(), req, caller);
+    }
+
+    /**
+     * Locate the POST_PROJECT evaluation row for {@code projectId} or
+     * auto-draft one when none exists. Extracted from
+     * {@link #scheduleByProject} so the bulk-schedule endpoint can reuse
+     * the same drafting logic when the picker sends {@code projectIds}
+     * for projects with no eval yet (the self-heal path). Callers are
+     * responsible for the caller ownership check on the owning lifecycle
+     * before invoking this — the enclosing @Transactional protects the
+     * insert.
+     */
+    private InternEvaluation findOrCreateDraftForProject(
+            UUID projectId, Project project, InternLifecycle lc, User caller) {
+        // Only one POST_PROJECT eval per project by convention
         // (repository has findByLinkedProjectId returning Optional).
         InternEvaluation ev = evalRepo.findByLinkedProjectId(projectId).orElse(null);
         if (ev == null) {
@@ -511,9 +528,7 @@ public class PerProjectService {
                     "Existing evaluation for this project is not POST_PROJECT "
                             + "(is " + ev.getEvaluationType() + ")");
         }
-        // Delegate to the eval-first scheduler, which re-runs the scope
-        // check + Zoom creation + status transition + fanout.
-        return schedulePostProject(ev.getId(), req, caller);
+        return ev;
     }
 
     // ── §4 Bulk / Final session ──────────────────────────────────────────
@@ -530,8 +545,16 @@ public class PerProjectService {
     public PerProjectDtos.BulkScheduleResponse bulkSchedule(
             PerProjectDtos.BulkScheduleRequest req, User caller) {
         requireEvaluatorOrSuperAdmin(caller);
-        if (req == null || req.evaluationIds() == null || req.evaluationIds().isEmpty()) {
-            throw new BadRequestException("evaluationIds required");
+        if (req == null) {
+            throw new BadRequestException("request body required");
+        }
+        java.util.List<UUID> reqEvalIds = req.evaluationIds() != null
+                ? req.evaluationIds() : java.util.List.of();
+        java.util.List<UUID> reqProjectIds = req.projectIds() != null
+                ? req.projectIds() : java.util.List.of();
+        if (reqEvalIds.isEmpty() && reqProjectIds.isEmpty()) {
+            throw new BadRequestException(
+                    "evaluationIds or projectIds required (at least one entry across both)");
         }
         if (req.scheduledFor() == null) {
             throw new BadRequestException("scheduledFor required");
@@ -553,8 +576,8 @@ public class PerProjectService {
 
         // Deduplicate + load all evaluations, validate each. Load lifecycles
         // in one pass so scope guard doesn't N+1 the DB.
-        java.util.LinkedHashSet<UUID> ids = new java.util.LinkedHashSet<>(req.evaluationIds());
-        java.util.List<InternEvaluation> evals = evalRepo.findAllById(ids);
+        java.util.LinkedHashSet<UUID> ids = new java.util.LinkedHashSet<>(reqEvalIds);
+        java.util.List<InternEvaluation> evals = new java.util.ArrayList<>(evalRepo.findAllById(ids));
         if (evals.size() != ids.size()) {
             throw new BadRequestException(
                     "One or more evaluations not found (requested " + ids.size()
@@ -562,6 +585,42 @@ public class PerProjectService {
         }
         java.util.Set<UUID> lifecycleIds = new java.util.HashSet<>();
         for (InternEvaluation ev : evals) lifecycleIds.add(ev.getInternLifecycleId());
+
+        // Self-heal path: for each projectId, find-or-create the DRAFT
+        // POST_PROJECT eval via the same helper scheduleByProject uses.
+        // Ownership guard runs against the project's owning lifecycle
+        // BEFORE the draft is inserted (an evaluator who can't act on the
+        // intern can't seed an eval row on their behalf). Dedupe against
+        // eval rows already loaded so the same project can't sneak into
+        // both lists.
+        java.util.Set<UUID> alreadyLinkedProjectIds = new java.util.HashSet<>();
+        for (InternEvaluation ev : evals) {
+            if (ev.getLinkedProjectId() != null) {
+                alreadyLinkedProjectIds.add(ev.getLinkedProjectId());
+            }
+        }
+        java.util.LinkedHashSet<UUID> projectIdSet = new java.util.LinkedHashSet<>(reqProjectIds);
+        for (UUID projectId : projectIdSet) {
+            if (alreadyLinkedProjectIds.contains(projectId)) continue;
+            Project project = projectRepository.findById(projectId)
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Project not found: " + projectId));
+            if (project.getInternLifecycleId() == null) {
+                throw new BadRequestException(
+                        "Project " + projectId
+                                + " is not linked to an intern lifecycle — cannot schedule");
+            }
+            InternLifecycle projectLc = lifecycleRepo.findById(project.getInternLifecycleId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "InternLifecycle not found: " + project.getInternLifecycleId()));
+            evaluatorScopeGuard.requireEvaluatorOwnership(projectLc, caller);
+            InternEvaluation ev = findOrCreateDraftForProject(
+                    projectId, project, projectLc, caller);
+            evals.add(ev);
+            lifecycleIds.add(ev.getInternLifecycleId());
+            alreadyLinkedProjectIds.add(projectId);
+        }
+
         java.util.Map<UUID, InternLifecycle> lifecycleMap = new java.util.HashMap<>();
         for (InternLifecycle lc : lifecycleRepo.findAllById(lifecycleIds)) {
             lifecycleMap.put(lc.getId(), lc);

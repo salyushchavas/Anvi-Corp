@@ -66,6 +66,7 @@ public class InternEvaluationService {
     private final ObjectMapper objectMapper;
     private final com.anvicorp.api.service.LifecycleAccessPolicy lifecycleAccessPolicy;
     private final com.anvicorp.api.config.BrandConfig brand;
+    private final OrgTeamResolver orgTeamResolver;
 
     // ── Evaluator commands ────────────────────────────────────────────────
 
@@ -116,18 +117,33 @@ public class InternEvaluationService {
     /**
      * Auto-draft path used by the post-project listener. Allows the system
      * to create rows without an interactive Evaluator session.
+     *
+     * <p>Resolves the evaluator through {@link OrgTeamResolver} — the
+     * per-intern {@code evaluator_id} FK is a hint, not a requirement.
+     * When it's null (single-evaluator-org default), fall through to the
+     * configured {@code app.default-evaluator-email} instead of throwing.
+     * This aligns the drafter with the guard + listener resolution path
+     * so any COMPLETED project on a null-FK lifecycle still gets a row
+     * (the picker can only self-heal from a row that exists). Throws
+     * {@link IllegalStateException} only when even the fallback is
+     * unresolvable — callers wrap that in a WARN, never silent.</p>
      */
     @Transactional
     public InternEvaluation autoDraftPostProject(InternLifecycle lc,
                                                   UUID projectId,
                                                   UUID actorIdIfAny) {
-        if (lc.getEvaluatorId() == null) {
-            throw new IllegalStateException("Lifecycle has no evaluator assigned");
+        UUID evaluatorId = orgTeamResolver.resolveEvaluatorId(lc);
+        if (evaluatorId == null) {
+            throw new IllegalStateException(
+                    "No evaluator resolvable for lifecycle "
+                            + (lc != null ? lc.getId() : null)
+                            + " (per-intern evaluator_id null AND "
+                            + "app.default-evaluator-email unset / unresolvable)");
         }
         InternEvaluation eval = InternEvaluation.builder()
                 .internLifecycleId(lc.getId())
                 .internId(lc.getUserId())
-                .evaluatorId(lc.getEvaluatorId())
+                .evaluatorId(evaluatorId)
                 .evaluationType("POST_PROJECT")
                 .linkedProjectId(projectId)
                 .status("DRAFT")

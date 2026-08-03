@@ -26,6 +26,7 @@ import type {
 import ProjectCardsSection from '@/components/evaluator/ProjectCardsSection';
 import AllWeeklyReportsPanel from '@/components/evaluator/AllWeeklyReportsPanel';
 import ScheduleFinalSessionDialog from '@/components/evaluator/ScheduleFinalSessionDialog';
+import { isEligibleForFinalSession } from '@/components/evaluator/project-status';
 
 export default function EvalueeDetailPage() {
   const params = useParams<{ lifecycleId: string }>();
@@ -78,11 +79,12 @@ export default function EvalueeDetailPage() {
       const res = await api.get<ProjectTimelineResponse>(
         `/api/v1/evaluator/evaluees/${lifecycleId}/project-timeline`,
       );
-      // Server rejects rows outside DRAFT/SCHEDULED; mirror the filter
-      // client-side so the dialog only shows what's actionable.
-      const eligible = res.data.entries.filter((e) =>
-        e.evaluationId != null
-        && (e.evaluationStatus === 'DRAFT' || e.evaluationStatus === 'SCHEDULED'));
+      // Two-branch eligibility (see project-status.isEligibleForFinalSession):
+      // (a) POST_PROJECT eval in DRAFT/SCHEDULED, OR
+      // (b) NO eval + project status PENDING_VIVA / TECH_APPROVED / COMPLETED
+      // (b) rows submit as projectIds; the server auto-drafts each before
+      // the shared-Zoom bulk-schedule transaction.
+      const eligible = res.data.entries.filter(isEligibleForFinalSession);
       setFinalDialogEligible(eligible);
       setFinalDialogOpen(true);
     } catch (e) {
