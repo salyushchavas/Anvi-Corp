@@ -335,6 +335,12 @@ public class AdminUserService {
                 + "<p style=\"color:#6b7280;font-size:13px;margin:0;\">"
                 + "Sign in and change your password immediately.</p>";
 
+        // Credential delivery is account-security mail — must reach the
+        // recipient's external inbox even for an ACTIVATED user (they may
+        // be signing in for the first time). Mark the send so
+        // BridgingEmailProvider's "no external send to ACTIVATED intern"
+        // gate exempts it.
+        com.anvicorp.api.notification.SecurityMailContext.markSecurity();
         try {
             emailProvider.sendBrandedHtml(deliveryEmail, subject, plain, html);
             return true;
@@ -346,6 +352,8 @@ public class AdminUserService {
             log.warn("[AdminUserService] credentials email unexpected failure for {}: {}",
                     deliveryEmail, e.getMessage());
             return false;
+        } finally {
+            com.anvicorp.api.notification.SecurityMailContext.clear();
         }
     }
 

@@ -320,6 +320,12 @@ public class CareersMailProvisioningService {
                 + "<p style=\"color:#6b7280;font-size:13px;margin:0;\">"
                 + "Sign in at /mail to reach your inbox.</p>";
 
+        // Credential delivery is account-security mail — must reach the
+        // recipient's external inbox even for an ACTIVATED user (they may
+        // literally be signing in for the first time). Mark the send so
+        // BridgingEmailProvider's "no external send to ACTIVATED intern"
+        // gate exempts it.
+        com.anvicorp.api.notification.SecurityMailContext.markSecurity();
         try {
             emailProvider.sendBrandedHtml(deliveryEmail, subject, plain, html);
             return true;
@@ -332,6 +338,8 @@ public class CareersMailProvisioningService {
             log.warn("[CareersMailProvisioning] credentials email unexpected failure for {}: {}",
                     deliveryEmail, e.getMessage());
             return false;
+        } finally {
+            com.anvicorp.api.notification.SecurityMailContext.clear();
         }
     }
 
