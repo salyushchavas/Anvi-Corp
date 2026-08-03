@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
 import DashboardSidebar from './DashboardSidebar';
 import DashboardTopbar from './DashboardTopbar';
 import { MailboxSummaryProvider } from './MailboxSummaryContext';
+import ErmTopBar from '@/components/erm/ErmTopBar';
 
 interface Props {
   children: ReactNode;
@@ -21,6 +23,15 @@ interface Props {
  */
 export default function DashboardLayout({ children, title }: Props) {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  // Mount the ERM sticky sub-topbar (month selector + past-month chip)
+  // once here, on every /careers/erm/* page, right under the app-wide
+  // DashboardTopbar. The chrome slot is path-scoped rather than
+  // role-detected so pages that manually render <DashboardLayout>
+  // outside the ERM section (settings, staff dashboards) never see it.
+  // ErmTopBar itself is defensive: it renders null when no
+  // ErmDashboardProvider is above it.
+  const showErmTopBar = pathname?.startsWith('/careers/erm') ?? false;
 
   return (
     <MailboxSummaryProvider>
@@ -51,6 +62,7 @@ export default function DashboardLayout({ children, title }: Props) {
 
         <div className="flex flex-1 flex-col overflow-hidden">
           <DashboardTopbar title={title} onMenuClick={() => setOpen(true)} />
+          {showErmTopBar && <ErmTopBar />}
           <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-8 lg:px-10">
             <div className="mx-auto w-full max-w-7xl">{children}</div>
           </main>

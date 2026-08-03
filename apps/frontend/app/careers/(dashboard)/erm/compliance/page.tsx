@@ -6,6 +6,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import AlertSeverityDot from '@/components/erm/compliance/AlertSeverityDot';
 import type {
   PipelinePage,
@@ -22,6 +23,7 @@ const FILTER_TABS = [
 ];
 
 export default function CompliancePipelinePage() {
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const [filter, setFilter] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
@@ -37,6 +39,7 @@ export default function CompliancePipelinePage() {
       if (search.trim()) params.set('search', search.trim());
       params.set('page', String(page));
       params.set('pageSize', '25');
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       const res = await api.get<PipelinePage>(
         `/api/v1/erm/compliance/pipeline?${params.toString()}`,
       );
@@ -47,7 +50,7 @@ export default function CompliancePipelinePage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, search, page]);
+  }, [filter, search, page, selectedMonth, isCurrentMonth]);
 
   useEffect(() => {
     void load();

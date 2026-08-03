@@ -5,6 +5,7 @@ import { ArrowLeft, CheckCircle2, FileText, Loader2, RotateCcw } from 'lucide-re
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import WeeklyReportAttachmentPreview from '@/components/report/WeeklyReportAttachmentPreview';
 
 /**
@@ -74,6 +75,7 @@ export default function ErmWeeklyReportsPage() {
 }
 
 function ErmWeeklyReportsInner() {
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const [rows, setRows] = useState<WeeklyReportRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -83,7 +85,10 @@ function ErmWeeklyReportsInner() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get<WeeklyReportRow[]>('/api/v1/erm/weekly-reports');
+      const url = isCurrentMonth
+        ? '/api/v1/erm/weekly-reports'
+        : `/api/v1/erm/weekly-reports?month=${encodeURIComponent(selectedMonth)}`;
+      const res = await api.get<WeeklyReportRow[]>(url);
       setRows(res.data ?? []);
       setErr(null);
     } catch (e) {
@@ -92,7 +97,7 @@ function ErmWeeklyReportsInner() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedMonth, isCurrentMonth]);
   useEffect(() => { void load(); }, [load]);
 
   const groups = useMemo(() => groupByIntern(rows), [rows]);

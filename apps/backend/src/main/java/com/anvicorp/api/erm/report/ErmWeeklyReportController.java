@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.report;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.dto.report.ReviewWeeklyReportRequest;
 import com.anvicorp.api.dto.report.WeeklyReportBatchRequest;
 import com.anvicorp.api.dto.report.WeeklyReportResponse;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -42,8 +44,13 @@ public class ErmWeeklyReportController {
      */
     @GetMapping
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
-    public List<WeeklyReportResponse> listSubmitted(@AuthenticationPrincipal User caller) {
-        return service.listSubmittedForErm(caller);
+    public List<WeeklyReportResponse> listSubmitted(
+            @RequestParam(required = false) String month,
+            @AuthenticationPrincipal User caller) {
+        // Past-month scroll filters to reports whose weekStart falls in
+        // the month; current month uses the legacy call path (byte-identical).
+        MonthRange range = MonthRange.parse(month);
+        return service.listSubmittedForErm(caller, range);
     }
 
     @PostMapping("/{id}/verify")

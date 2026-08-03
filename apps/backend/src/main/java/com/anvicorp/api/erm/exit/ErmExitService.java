@@ -1,6 +1,7 @@
 package com.anvicorp.api.erm.exit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.AuditLog;
 import com.anvicorp.api.entity.ExitChecklistItem;
 import com.anvicorp.api.entity.ExitFeedback;
@@ -89,11 +90,30 @@ public class ErmExitService {
     public ErmExitDtos.ErmExitListPage list(
             String state, String search, String scope, User caller,
             int page, int pageSize) {
+        return list(state, search, scope, caller, page, pageSize,
+                MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — non-current months return an empty page.
+     * Current-month path is byte-identical.
+     */
+    @Transactional(readOnly = true)
+    public ErmExitDtos.ErmExitListPage list(
+            String state, String search, String scope, User caller,
+            int page, int pageSize, MonthRange range) {
+        MonthRange monthScope = range != null ? range : MonthRange.parse(null);
         int p = Math.max(0, page);
         int ps = Math.min(100, Math.max(1, pageSize));
 
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> params = new ArrayList<>();
+        // Past-month window: exit_date (LocalDate) falls in month.
+        if (!monthScope.isCurrent()) {
+            where.append(" AND er.exit_date >= ? AND er.exit_date < ? ");
+            params.add(java.sql.Date.valueOf(monthScope.monthStart()));
+            params.add(java.sql.Date.valueOf(monthScope.monthEnd()));
+        }
         if ("mine".equalsIgnoreCase(scope) && caller != null) {
             where.append(" AND (il.erm_id IS NULL OR il.erm_id = ?) ");
             params.add(caller.getId());
@@ -205,10 +225,47 @@ public class ErmExitService {
     @Transactional(readOnly = true)
     public ErmExitDtos.ReadyToExitListPage listReady(
             String scope, User caller, int page, int pageSize) {
+        return listReady(scope, caller, page, pageSize, MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — non-current months return an empty page.
+     * Current-month path is byte-identical.
+     */
+    @Transactional(readOnly = true)
+    public ErmExitDtos.ReadyToExitListPage listReady(
+            String scope, User caller, int page, int pageSize, MonthRange range) {
+        MonthRange monthScope = range != null ? range : MonthRange.parse(null);
         int ps = Math.min(100, Math.max(1, pageSize));
         int p = Math.max(0, page);
         List<ReadyToExitDetector.Row> all = readyDetector.detect(
                 scope, caller != null ? caller.getId() : null, 500);
+        // Past-month window: "ready" is a live-computed detector state, so
+        // for past months we filter by the underlying lifecycle's hired_at
+        // falling inside the month — i.e. interns hired that month who now
+        // appear as ready-to-exit. Lifecycle rows are looked up in bulk to
+        // avoid an N+1.
+        if (!monthScope.isCurrent() && !all.isEmpty()) {
+            java.time.Instant winStart = monthScope.startInclusive();
+            java.time.Instant winEnd = monthScope.endExclusive();
+            List<UUID> ids = new ArrayList<>();
+            for (var r : all) ids.add(r.internLifecycleId());
+            Map<UUID, InternLifecycle> byId = new java.util.HashMap<>();
+            try {
+                for (InternLifecycle lc : lifecycleRepository.findAllById(ids)) {
+                    if (lc != null) byId.put(lc.getId(), lc);
+                }
+            } catch (Exception ignored) {}
+            List<ReadyToExitDetector.Row> filtered = new ArrayList<>();
+            for (var r : all) {
+                InternLifecycle lc = byId.get(r.internLifecycleId());
+                if (lc == null) continue;
+                Instant when = lc.getHiredAt() != null ? lc.getHiredAt() : lc.getStartedAt();
+                if (when == null) continue;
+                if (!when.isBefore(winStart) && when.isBefore(winEnd)) filtered.add(r);
+            }
+            all = filtered;
+        }
         long total = all.size();
         int from = Math.min((int) total, p * ps);
         int to = Math.min((int) total, from + ps);

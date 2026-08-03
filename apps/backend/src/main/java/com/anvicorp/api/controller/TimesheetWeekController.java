@@ -1,5 +1,6 @@
 package com.anvicorp.api.controller;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.dto.supervised.InternTimesheetMonthResponse;
 import com.anvicorp.api.dto.supervised.RejectTimesheetRequest;
 import com.anvicorp.api.dto.supervised.ReturnTimesheetRequest;
@@ -128,10 +129,21 @@ public class TimesheetWeekController {
     @GetMapping("/rollup")
     @PreAuthorize("hasAnyRole('ERM', 'MANAGER', 'SUPER_ADMIN')")
     public TimesheetMonthRollupResponse rollup(
-            @RequestParam("y") int year,
-            @RequestParam("m") int month,
+            @RequestParam(value = "y", required = false) Integer year,
+            @RequestParam(value = "m", required = false) Integer month,
+            @RequestParam(value = "month", required = false) String monthParam,
             @RequestParam("scope") String scope,
             @AuthenticationPrincipal User caller) {
+        // ?month=YYYY-MM is an alias for the legacy y+m pair. When y/m
+        // are supplied they win (backward compat); otherwise resolve
+        // from ?month via MonthRange.parse (falls back to current
+        // month on null/blank/unparseable, matching the existing
+        // implicit contract).
+        if (year == null || month == null) {
+            MonthRange r = MonthRange.parse(monthParam);
+            if (year == null) year = r.month().getYear();
+            if (month == null) month = r.month().getMonthValue();
+        }
         if (year < 1900 || year > 2999) throw new BadRequestException("y out of range");
         if (month < 1 || month > 12) throw new BadRequestException("m must be 1-12");
         TimesheetRollupService.Scope s;

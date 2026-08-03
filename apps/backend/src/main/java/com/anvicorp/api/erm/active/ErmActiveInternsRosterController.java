@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.active;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.trainer.active.ActiveInternsDtos;
@@ -44,9 +45,21 @@ public class ErmActiveInternsRosterController {
             @RequestParam(required = false, name = "timesheetState") List<String> timesheetFilter,
             @RequestParam(required = false, name = "y") Integer year,
             @RequestParam(required = false, name = "m") Integer month,
+            @RequestParam(required = false, name = "month") String monthParam,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "100") int pageSize,
             @AuthenticationPrincipal User caller) {
+        // ?month=YYYY-MM is an alias — when the caller doesn't supply the
+        // legacy y/m pair we derive them from MonthRange.parse so the rest
+        // of the pipeline (which already handles arbitrary past months
+        // via y/m) doesn't need to change. When y+m are supplied they
+        // win, preserving backward compatibility.
+        if ((year == null || month == null)
+                && monthParam != null && !monthParam.isBlank()) {
+            MonthRange r = MonthRange.parse(monthParam);
+            year = r.month().getYear();
+            month = r.month().getMonthValue();
+        }
         if (year != null && (year < 1900 || year > 2999)) {
             throw new BadRequestException("y (year) out of range");
         }

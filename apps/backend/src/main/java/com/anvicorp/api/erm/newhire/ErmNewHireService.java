@@ -1,6 +1,7 @@
 package com.anvicorp.api.erm.newhire;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.AuditLog;
 import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.entity.Offer;
@@ -61,6 +62,17 @@ public class ErmNewHireService {
     @Transactional(readOnly = true)
     public ErmOfferDtos.NewHireListPage list(String tab, User caller,
                                               int page, int pageSize) {
+        return list(tab, caller, page, pageSize, MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — non-current months return an empty page.
+     * Current-month path is byte-identical.
+     */
+    @Transactional(readOnly = true)
+    public ErmOfferDtos.NewHireListPage list(String tab, User caller,
+                                              int page, int pageSize, MonthRange range) {
+        MonthRange r = range != null ? range : MonthRange.parse(null);
         Pageable pageable = PageRequest.of(
                 Math.max(0, page), Math.min(Math.max(1, pageSize), 100));
         // tab=all surfaces every signed-offer intern (PROSPECTIVE + ACTIVE)
@@ -72,6 +84,14 @@ public class ErmNewHireService {
                 ? " WHERE il.active_status IN ('PROSPECTIVE', 'ACTIVE') "
                 : " WHERE il.active_status = 'PROSPECTIVE' ");
         List<Object> params = new ArrayList<>();
+        // Past-month window: new-hire rows whose entry (hired_at, fallback
+        // started_at when hired_at is null on older seed rows) falls in month.
+        if (!r.isCurrent()) {
+            where.append(" AND COALESCE(il.hired_at, il.started_at) >= ?::timestamptz "
+                    + " AND COALESCE(il.hired_at, il.started_at) < ?::timestamptz ");
+            params.add(r.startInclusive().toString());
+            params.add(r.endExclusive().toString());
+        }
         if ("pending".equalsIgnoreCase(tab)) {
             // Legacy filter — pre-Phase-8.6.4 this surfaced interns waiting
             // for ERM to pick T/E/M manually. Auto-link from system config

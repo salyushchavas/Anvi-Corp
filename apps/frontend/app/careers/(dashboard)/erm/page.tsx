@@ -107,22 +107,24 @@ export default function ErmHomePage() {
 // ─── KPI row ─────────────────────────────────────────────────────────────
 
 function KpiRow({ loading }: { loading: boolean }) {
-  const { data } = useErmDashboard();
+  const { data, selectedMonth, isCurrentMonth } = useErmDashboard();
   const [activeCount, setActiveCount] = useState<number | null>(null);
   const [activeLoading, setActiveLoading] = useState(true);
 
   // "Active interns" isn't in the existing 9 KPIs; the monthly roster
-  // summary is the canonical source. Fetch once per page mount; the
-  // roster table below polls separately and shares nothing here so the
-  // request is independent.
+  // summary is the canonical source. Re-fetch whenever the sticky
+  // global month changes so the KPI count reflects the same period as
+  // the rest of the dashboard.
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const now = new Date();
+        const [ys, ms] = isCurrentMonth
+          ? [String(new Date().getFullYear()), String(new Date().getMonth() + 1)]
+          : selectedMonth.split('-').map((v, i) => (i === 1 ? String(Number(v)) : v));
         const params = new URLSearchParams({
-          y: String(now.getFullYear()),
-          m: String(now.getMonth() + 1),
+          y: ys,
+          m: ms,
           page: '0',
           pageSize: '1',
         });
@@ -140,7 +142,7 @@ function KpiRow({ loading }: { loading: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectedMonth, isCurrentMonth]);
 
   const cards: KpiCardData[] = [
     {
@@ -366,16 +368,19 @@ function ActiveInternsTable({
 }: {
   onRowClick: (row: ActiveInternRow) => void;
 }) {
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const [page, setPage] = useState<ActiveInternListPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const now = new Date();
+      const [ys, ms] = isCurrentMonth
+        ? [String(new Date().getFullYear()), String(new Date().getMonth() + 1)]
+        : selectedMonth.split('-').map((v, i) => (i === 1 ? String(Number(v)) : v));
       const params = new URLSearchParams({
-        y: String(now.getFullYear()),
-        m: String(now.getMonth() + 1),
+        y: ys,
+        m: ms,
         page: '0',
         pageSize: '12',
       });
@@ -389,7 +394,7 @@ function ActiveInternsTable({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedMonth, isCurrentMonth]);
 
   useEffect(() => {
     void load();

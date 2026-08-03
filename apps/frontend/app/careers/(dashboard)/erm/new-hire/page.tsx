@@ -42,6 +42,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import type {
   NewHireListPage,
   NewHireRow,
@@ -163,6 +164,7 @@ export default function NewHireListPage() {
 }
 
 function NewHireListInner() {
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const [filter, setFilter] = useState<FilterKey>('ALL');
   const [page, setPage] = useState(0);
   const [data, setData] = useState<NewHireListPage | null>(null);
@@ -175,8 +177,13 @@ function NewHireListInner() {
       // Always fetch tab=all so the filter pills can switch instantly
       // client-side. Backend's tab=all now includes both PROSPECTIVE and
       // ACTIVE so the Active filter has rows to show.
+      const params = new URLSearchParams();
+      params.set('tab', 'all');
+      params.set('page', String(page));
+      params.set('pageSize', '50');
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       const res = await api.get<NewHireListPage>(
-        `/api/v1/erm/new-hire?tab=all&page=${page}&pageSize=50`,
+        `/api/v1/erm/new-hire?${params.toString()}`,
       );
       setData(res.data);
       setErr(null);
@@ -186,7 +193,7 @@ function NewHireListInner() {
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, [page, selectedMonth, isCurrentMonth]);
 
   useEffect(() => { void load(); }, [load]);
 

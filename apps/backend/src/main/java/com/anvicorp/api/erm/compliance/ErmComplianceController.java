@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.compliance;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -21,9 +22,11 @@ public class ErmComplianceController {
     public ErmComplianceDtos.PipelinePage pipeline(
             @RequestParam(required = false) String filter,
             @RequestParam(required = false) String search,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize) {
-        return service.listPipeline(filter, search, page, pageSize);
+        return service.listPipeline(filter, search, page, pageSize,
+                MonthRange.parse(month));
     }
 
     @GetMapping("/interns/{userId}/timeline")

@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import PeriodPicker, {
   formatPeriod,
   usePeriodFromUrl,
@@ -35,10 +36,34 @@ export default function ErmTimesheetsPage() {
 }
 
 function ErmTimesheetsInner() {
+  const { selectedMonth, setSelectedMonth } = useErmDashboard();
   const [period, setPeriod] = usePeriodFromUrl();
   const [data, setData] = useState<RollupResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
+  // Sticky global month → local PeriodPicker (seed). Runs whenever the
+  // sticky month changes so the on-page picker follows the header
+  // selector across the ERM area.
+  useEffect(() => {
+    const [ys, ms] = selectedMonth.split('-');
+    const y = Number(ys);
+    const m = Number(ms);
+    if (!Number.isNaN(y) && !Number.isNaN(m)
+        && (period.year !== y || period.month !== m)) {
+      setPeriod({ year: y, month: m });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMonth]);
+
+  // Local PeriodPicker → sticky global month (sync back).
+  useEffect(() => {
+    const asString = `${period.year}-${String(period.month).padStart(2, '0')}`;
+    if (asString !== selectedMonth) {
+      setSelectedMonth(asString);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period.year, period.month]);
 
   const load = useCallback(async () => {
     setLoading(true);

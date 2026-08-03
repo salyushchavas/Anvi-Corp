@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.dashboard;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +28,19 @@ public class ErmRightPanelService {
     private final JdbcTemplate jdbc;
 
     public ErmRightPanelResponse build(User caller) {
+        return build(caller, MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — past months short-circuit to an empty
+     * panel so scrolling through history doesn't misrepresent stale
+     * current-month counts. Current-month path is byte-identical.
+     */
+    public ErmRightPanelResponse build(User caller, MonthRange range) {
+        MonthRange scope = range != null ? range : MonthRange.parse(null);
+        if (!scope.isCurrent()) {
+            return buildForMonth(caller, scope);
+        }
         UUID callerId = caller.getId();
         Instant now = Instant.now();
 
@@ -200,6 +214,119 @@ public class ErmRightPanelService {
                 0L));
 
         return new ErmRightPanelResponse(actions, unreadNotifications, todayInterviews);
+    }
+
+    /**
+     * Past-month right-panel. Redefines every badge as "items whose primary
+     * timestamp falls in that month" so an ERM scrolling back through
+     * history sees real per-month totals rather than the "waiting on me
+     * right now" semantics of the current-month path.
+     */
+    private ErmRightPanelResponse buildForMonth(User caller, MonthRange scope) {
+        UUID callerId = caller.getId();
+        String start = scope.startInclusive().toString();
+        String end = scope.endExclusive().toString();
+
+        long apps = safeCount(
+                "SELECT COUNT(*) FROM applications "
+                        + "WHERE applied_at >= ?::timestamptz AND applied_at < ?::timestamptz "
+                        + "  AND (erm_owner_id IS NULL OR erm_owner_id = ?)",
+                start, end, callerId);
+        long shortlisted = safeCount(
+                "SELECT COUNT(*) FROM applications a "
+                        + "WHERE a.status = 'SHORTLISTED' "
+                        + "  AND a.applied_at >= ?::timestamptz AND a.applied_at < ?::timestamptz "
+                        + "  AND (a.erm_owner_id IS NULL OR a.erm_owner_id = ?)",
+                start, end, callerId);
+        long selected = safeCount(
+                "SELECT COUNT(*) FROM applications a "
+                        + "WHERE a.status IN ('INTERVIEWED','SELECTED_CONDITIONAL') "
+                        + "  AND COALESCE(a.status_updated_at, a.applied_at) >= ?::timestamptz "
+                        + "  AND COALESCE(a.status_updated_at, a.applied_at) < ?::timestamptz "
+                        + "  AND (a.erm_owner_id IS NULL OR a.erm_owner_id = ?)",
+                start, end, callerId);
+        long newHires = safeCount(
+                "SELECT COUNT(*) FROM intern_lifecycles il "
+                        + "WHERE il.hired_at >= ?::timestamptz AND il.hired_at < ?::timestamptz "
+                        + "  AND (il.erm_id IS NULL OR il.erm_id = ?)",
+                start, end, callerId);
+        long docsAssigned = safeCount(
+                "SELECT COUNT(*) FROM document_packets pk "
+                        + "JOIN intern_lifecycles il ON il.id = pk.intern_lifecycle_id "
+                        + "WHERE pk.assigned_at >= ?::timestamptz "
+                        + "  AND pk.assigned_at < ?::timestamptz "
+                        + "  AND (il.erm_id IS NULL OR il.erm_id = ?)",
+                start, end, callerId);
+        long exits = safeCount(
+                "SELECT COUNT(*) FROM exit_records er "
+                        + "JOIN intern_lifecycles il ON il.id = er.intern_lifecycle_id "
+                        + "WHERE er.exit_date >= ? AND er.exit_date < ? "
+                        + "  AND il.erm_id = ?",
+                java.sql.Date.valueOf(scope.monthStart()),
+                java.sql.Date.valueOf(scope.monthEnd()),
+                callerId);
+        long exceptions = safeCount(
+                "SELECT COUNT(*) FROM exception_records er "
+                        + "JOIN intern_lifecycles il ON il.id = er.intern_lifecycle_id "
+                        + "WHERE er.opened_at >= ?::timestamptz "
+                        + "  AND er.opened_at < ?::timestamptz "
+                        + "  AND (il.erm_id IS NULL OR il.erm_id = ?)",
+                start, end, callerId);
+        long everifyInMonth = safeCount(
+                "SELECT COUNT(*) FROM everify_cases ec "
+                        + "JOIN i9_forms f ON f.id = ec.i9_form_id "
+                        + "JOIN candidates c ON c.id = f.candidate_id "
+                        + "JOIN intern_lifecycles il ON il.user_id = c.user_id "
+                        + "WHERE ec.opened_at >= ?::timestamptz "
+                        + "  AND ec.opened_at < ?::timestamptz "
+                        + "  AND (il.erm_id IS NULL OR il.erm_id = ?)",
+                start, end, callerId);
+        long interviewsInMonth = safeCount(
+                "SELECT COUNT(*) FROM interviews i "
+                        + "JOIN applications a ON a.id = i.application_id "
+                        + "WHERE i.scheduled_at >= ?::timestamptz "
+                        + "  AND i.scheduled_at < ?::timestamptz "
+                        + "  AND (a.erm_owner_id IS NULL OR a.erm_owner_id = ? "
+                        + "       OR i.interviewer_id = ?)",
+                start, end, callerId, callerId);
+        long unreadInMonth = safeCount(
+                "SELECT COUNT(*) FROM user_notifications "
+                        + "WHERE recipient_user_id = ? AND read_at IS NULL "
+                        + "  AND created_at >= ?::timestamptz "
+                        + "  AND created_at < ?::timestamptz",
+                callerId, start, end);
+        long holdInMonth = safeCount(
+                "SELECT COUNT(*) FROM applications "
+                        + "WHERE status = 'HOLD' "
+                        + "  AND applied_at >= ?::timestamptz AND applied_at < ?::timestamptz "
+                        + "  AND (erm_owner_id IS NULL OR erm_owner_id = ?)",
+                start, end, callerId);
+
+        List<ErmRightPanelResponse.QuickAction> actions = new ArrayList<>();
+        actions.add(qa("shortlist", "Review applications",
+                "/careers/erm/applications?status=APPLIED", apps));
+        actions.add(qa("interview", "Schedule interview",
+                "/careers/erm/shortlist", shortlisted));
+        actions.add(qa("offer", "Send offer",
+                "/careers/erm/interviews?decision=SELECTED", selected));
+        actions.add(qa("onboarding-assign", "Assign onboarding",
+                "/careers/erm/new-hire?tab=ready", newHires));
+        actions.add(qa("doc-review", "Review documents",
+                "/careers/erm/onboarding", docsAssigned));
+        actions.add(qa("compliance", "Compliance Tracker",
+                "/careers/erm/compliance", everifyInMonth));
+        actions.add(qa("escalate", "Open escalations",
+                "/careers/erm/escalations", exceptions));
+        actions.add(qa("monitor", "Active Interns",
+                "/careers/erm/active-interns", 0L));
+        actions.add(qa("exit", "Exit checklist",
+                "/careers/erm/exits", exits));
+        actions.add(qa("hold-followup", "Hold queue",
+                "/careers/erm/applications?stage=HOLD", holdInMonth));
+        actions.add(qa("reports", "Open reports",
+                "/careers/erm/reports", 0L));
+
+        return new ErmRightPanelResponse(actions, unreadInMonth, interviewsInMonth);
     }
 
     private long todayInterviewsCount(UUID callerId, Instant now) {

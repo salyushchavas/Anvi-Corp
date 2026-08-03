@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.escalation;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -27,11 +28,13 @@ public class ErmEscalationController {
             @RequestParam(required = false) UUID internLifecycleId,
             @RequestParam(required = false) String search,
             @RequestParam(required = false, defaultValue = "all") String scope,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
         return service.list(status, severity, exceptionType, assignedToId,
-                internLifecycleId, search, scope, caller, page, pageSize);
+                internLifecycleId, search, scope, caller, page, pageSize,
+                MonthRange.parse(month));
     }
 
     @GetMapping("/{id}")

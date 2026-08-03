@@ -5,6 +5,7 @@ import { UserPlus } from 'lucide-react';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import PeriodPicker, {
   formatPeriod,
   usePeriodFromUrl,
@@ -53,12 +54,35 @@ export default function ErmActiveInternsPage() {
 }
 
 function ErmActiveInternsInner() {
+  const { selectedMonth, setSelectedMonth } = useErmDashboard();
   const [period, setPeriod] = usePeriodFromUrl();
   const [data, setData] = useState<ActiveInternListPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [managers, setManagers] = useState<ManagerOption[]>([]);
   const [assignFor, setAssignFor] = useState<ActiveInternRow | null>(null);
+
+  // Sticky → local PeriodPicker. The on-page picker still owns its
+  // state so its ← / → chevrons feel responsive; every change flows
+  // both ways (sticky → page here, page → sticky below).
+  useEffect(() => {
+    const [ys, ms] = selectedMonth.split('-');
+    const y = Number(ys);
+    const m = Number(ms);
+    if (!Number.isNaN(y) && !Number.isNaN(m)
+        && (period.year !== y || period.month !== m)) {
+      setPeriod({ year: y, month: m });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMonth]);
+
+  useEffect(() => {
+    const asString = `${period.year}-${String(period.month).padStart(2, '0')}`;
+    if (asString !== selectedMonth) {
+      setSelectedMonth(asString);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period.year, period.month]);
 
   const load = useCallback(async () => {
     setLoading(true);

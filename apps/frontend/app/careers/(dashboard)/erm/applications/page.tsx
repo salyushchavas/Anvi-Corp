@@ -7,6 +7,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import StagePill from '@/components/erm/applications/StagePill';
 import BulkDecisionModal from '@/components/erm/applications/BulkDecisionModal';
 import type {
@@ -37,6 +38,7 @@ export default function ApplicationInboxPage() {
 
 function ApplicationInboxPageInner() {
   const sp = useSearchParams();
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const initialStage = sp?.get('stage') ?? '';
   const [stage, setStage] = useState<string>(initialStage);
   const [scope, setScope] = useState<'mine' | 'all' | 'unassigned'>('mine');
@@ -57,6 +59,7 @@ function ApplicationInboxPageInner() {
       params.set('scope', scope);
       params.set('page', String(page));
       params.set('pageSize', '25');
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       const res = await api.get<ApplicationListPage>(
         `/api/v1/erm/applications?${params.toString()}`,
       );
@@ -67,7 +70,7 @@ function ApplicationInboxPageInner() {
     } finally {
       setLoading(false);
     }
-  }, [stage, search, scope, page]);
+  }, [stage, search, scope, page, selectedMonth, isCurrentMonth]);
 
   useEffect(() => {
     void load();

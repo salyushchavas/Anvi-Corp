@@ -6,6 +6,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import type {
   InternReviewQueuePage,
   InternReviewQueueRow,
@@ -28,6 +29,7 @@ export default function DocumentReviewQueuePage() {
 }
 
 function Queue() {
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const [data, setData] = useState<InternReviewQueuePage | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -36,8 +38,12 @@ function Queue() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('pageSize', '25');
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       const res = await api.get<InternReviewQueuePage>(
-        `/api/v1/erm/document-review/queue/by-intern?page=${page}&pageSize=25`,
+        `/api/v1/erm/document-review/queue/by-intern?${params.toString()}`,
       );
       setData(res.data);
       setErr(null);
@@ -47,7 +53,7 @@ function Queue() {
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, [page, selectedMonth, isCurrentMonth]);
 
   useEffect(() => { void load(); }, [load]);
 

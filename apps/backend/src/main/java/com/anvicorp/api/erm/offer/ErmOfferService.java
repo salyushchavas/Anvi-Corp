@@ -2,6 +2,7 @@ package com.anvicorp.api.erm.offer;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.dto.offer.SendOfferRequest;
 import com.anvicorp.api.entity.Application;
 import com.anvicorp.api.entity.AuditLog;
@@ -89,10 +90,29 @@ public class ErmOfferService {
     public ErmOfferDtos.OfferListPage list(String statusFilter, String search,
                                             UUID applicationId,
                                             int page, int pageSize) {
+        return list(statusFilter, search, applicationId, page, pageSize,
+                MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — non-current months return an empty page.
+     * Current-month path is byte-identical to the legacy overload.
+     */
+    @Transactional(readOnly = true)
+    public ErmOfferDtos.OfferListPage list(String statusFilter, String search,
+                                            UUID applicationId,
+                                            int page, int pageSize, MonthRange range) {
+        MonthRange r = range != null ? range : MonthRange.parse(null);
         Pageable pageable = PageRequest.of(
                 Math.max(0, page), Math.min(Math.max(1, pageSize), 100));
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> params = new ArrayList<>();
+        // Past-month window: offers created (sent) in that month.
+        if (!r.isCurrent()) {
+            where.append(" AND o.created_at >= ?::timestamptz AND o.created_at < ?::timestamptz ");
+            params.add(r.startInclusive().toString());
+            params.add(r.endExclusive().toString());
+        }
         if (statusFilter != null && !statusFilter.isBlank()) {
             where.append(" AND o.status = ?");
             params.add(statusFilter.toUpperCase());
@@ -694,6 +714,17 @@ public class ErmOfferService {
     @Transactional(readOnly = true)
     public ErmOfferDtos.AwaitingOfferListPage listAwaitingOffer(
             String search, int page, int pageSize) {
+        return listAwaitingOffer(search, page, pageSize, MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — non-current months return an empty page.
+     * Current-month path is byte-identical.
+     */
+    @Transactional(readOnly = true)
+    public ErmOfferDtos.AwaitingOfferListPage listAwaitingOffer(
+            String search, int page, int pageSize, MonthRange range) {
+        MonthRange r = range != null ? range : MonthRange.parse(null);
         Pageable pageable = PageRequest.of(
                 Math.max(0, page), Math.min(Math.max(1, pageSize), 100));
 
@@ -707,6 +738,17 @@ public class ErmOfferService {
                         + "      AND o2.status IN ('SENT','SIGNED') "
                         + " ) ");
         List<Object> params = new ArrayList<>();
+        // Past-month window: applications selected/awaiting in that month.
+        // status_updated_at is the driving date — that's when the interview
+        // completion flipped the app into INTERVIEWED status (the "awaiting
+        // offer" queue). Falls back to applied_at when status_updated_at is
+        // null (older seed rows) so the query still returns something.
+        if (!r.isCurrent()) {
+            where.append(" AND COALESCE(a.status_updated_at, a.applied_at) >= ?::timestamptz "
+                    + " AND COALESCE(a.status_updated_at, a.applied_at) < ?::timestamptz ");
+            params.add(r.startInclusive().toString());
+            params.add(r.endExclusive().toString());
+        }
         if (search != null && !search.isBlank()) {
             String q = "%" + search.trim().toLowerCase() + "%";
             if (q.length() > 102) q = q.substring(0, 102);

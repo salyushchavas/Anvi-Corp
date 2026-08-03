@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.reports;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.erm.reports.ErmReportsDtos.*;
 import lombok.RequiredArgsConstructor;
@@ -105,6 +106,11 @@ public class ErmReportsController {
         public UUID evaluatorId;
         public UUID managerId;
         public String scope;
+        /** {@code ?month=YYYY-MM} alias for from/to — when the caller
+         *  supplies month AND either from or to is null, we translate
+         *  month → firstDay..lastDayInclusive so the existing
+         *  {@link ReportFilters} pipeline reads it as any other window. */
+        public String month;
 
         public void setFrom(LocalDate from) { this.from = from; }
         public void setTo(LocalDate to) { this.to = to; }
@@ -115,9 +121,17 @@ public class ErmReportsController {
         public void setEvaluatorId(UUID evaluatorId) { this.evaluatorId = evaluatorId; }
         public void setManagerId(UUID managerId) { this.managerId = managerId; }
         public void setScope(String scope) { this.scope = scope; }
+        public void setMonth(String month) { this.month = month; }
 
         ReportFilters toFilters() {
-            return new ReportFilters(from, to, jobType, jobId, ermOwnerId,
+            LocalDate f = this.from;
+            LocalDate t = this.to;
+            if ((f == null || t == null) && month != null && !month.isBlank()) {
+                MonthRange r = MonthRange.parse(month);
+                if (f == null) f = r.monthStart();
+                if (t == null) t = r.monthEnd().minusDays(1);
+            }
+            return new ReportFilters(f, t, jobType, jobId, ermOwnerId,
                     trainerId, evaluatorId, managerId, scope);
         }
     }

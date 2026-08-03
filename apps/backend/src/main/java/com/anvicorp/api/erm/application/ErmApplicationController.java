@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.application;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.ApplicationStatus;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,7 @@ public class ErmApplicationController {
             @RequestParam(required = false) String dateTo,
             @RequestParam(required = false) String search,
             @RequestParam(required = false, defaultValue = "mine") String scope,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
@@ -44,7 +46,8 @@ public class ErmApplicationController {
                 jobType,
                 parseCsv(workAuthType),
                 dateFrom, dateTo, search, scope);
-        return ermApplicationService.list(filters, caller, page, pageSize);
+        return ermApplicationService.list(filters, caller, page, pageSize,
+                MonthRange.parse(month));
     }
 
     @GetMapping("/reason-codes")

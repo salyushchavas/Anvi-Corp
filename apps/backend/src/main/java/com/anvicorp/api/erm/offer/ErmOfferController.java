@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.offer;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -25,9 +26,11 @@ public class ErmOfferController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) UUID applicationId,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize) {
-        return ermOfferService.list(status, search, applicationId, page, pageSize);
+        return ermOfferService.list(status, search, applicationId, page, pageSize,
+                MonthRange.parse(month));
     }
 
     /** Phase 8.6 — queue of applications in INTERVIEWED+SELECTED with no
@@ -37,9 +40,11 @@ public class ErmOfferController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public ErmOfferDtos.AwaitingOfferListPage awaiting(
             @RequestParam(required = false) String search,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize) {
-        return ermOfferService.listAwaitingOffer(search, page, pageSize);
+        return ermOfferService.listAwaitingOffer(search, page, pageSize,
+                MonthRange.parse(month));
     }
 
     @GetMapping("/reason-codes")

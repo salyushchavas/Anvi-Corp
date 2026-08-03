@@ -6,6 +6,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import InterviewStatusPill from '@/components/erm/interviews/InterviewStatusPill';
 import DecisionPill from '@/components/erm/interviews/DecisionPill';
 import { formatInZone } from '@/lib/careers/format-interview-time';
@@ -23,6 +24,7 @@ const STATUS_CHIPS: { key: string; label: string }[] = [
 ];
 
 export default function InterviewSchedulerPage() {
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const [view, setView] = useState<'list' | 'calendar'>('list');
   const [status, setStatus] = useState('');
   const [scope, setScope] = useState<'mine' | 'all'>('mine');
@@ -41,6 +43,7 @@ export default function InterviewSchedulerPage() {
       params.set('scope', scope);
       params.set('page', String(page));
       params.set('pageSize', '25');
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       const res = await api.get<InterviewListPage>(
         `/api/v1/erm/interviews?${params.toString()}`,
       );
@@ -51,7 +54,7 @@ export default function InterviewSchedulerPage() {
     } finally {
       setLoading(false);
     }
-  }, [status, search, scope, page]);
+  }, [status, search, scope, page, selectedMonth, isCurrentMonth]);
 
   useEffect(() => { void load(); }, [load]);
 

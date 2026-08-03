@@ -1,6 +1,7 @@
 package com.anvicorp.api.erm.compliance;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.AuditLog;
 import com.anvicorp.api.entity.Candidate;
 import com.anvicorp.api.entity.EVerifyCase;
@@ -82,12 +83,42 @@ public class ErmComplianceService {
     @Transactional(readOnly = true)
     public ErmComplianceDtos.PipelinePage listPipeline(
             String filter, String search, int page, int pageSize) {
+        return listPipeline(filter, search, page, pageSize, MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — past months short-circuit to an empty
+     * pipeline (empty rows + zeroed KPI). Current-month path is
+     * byte-identical to the legacy overload.
+     */
+    @Transactional(readOnly = true)
+    public ErmComplianceDtos.PipelinePage listPipeline(
+            String filter, String search, int page, int pageSize, MonthRange range) {
+        MonthRange scope = range != null ? range : MonthRange.parse(null);
         int p = Math.max(0, page);
         int ps = Math.min(100, Math.max(1, pageSize));
 
         StringBuilder where = new StringBuilder(
                 " WHERE il.active_status IN ('ACTIVE','PROSPECTIVE') ");
         List<Object> params = new ArrayList<>();
+        // Past-month window: an intern shows in the pipeline for a month
+        // when ANY of the three underlying compliance artifacts touched
+        // that month — work-auth record created, I-9 first day of employment,
+        // or E-Verify case opened. The LEFT JOINs mean a row can have any
+        // subset of these — the OR keeps rows that qualify via any table.
+        if (!scope.isCurrent()) {
+            where.append(" AND ( "
+                    + "  (w.created_at >= ?::timestamptz AND w.created_at < ?::timestamptz) "
+                    + "  OR (f.first_day_of_employment >= ? AND f.first_day_of_employment < ?) "
+                    + "  OR (ec.opened_at >= ?::timestamptz AND ec.opened_at < ?::timestamptz) "
+                    + " ) ");
+            params.add(scope.startInclusive().toString());
+            params.add(scope.endExclusive().toString());
+            params.add(java.sql.Date.valueOf(scope.monthStart()));
+            params.add(java.sql.Date.valueOf(scope.monthEnd()));
+            params.add(scope.startInclusive().toString());
+            params.add(scope.endExclusive().toString());
+        }
         if (search != null && !search.isBlank()) {
             where.append(" AND (LOWER(u.full_name) LIKE ? OR LOWER(u.email) LIKE ?) ");
             String s = "%" + search.trim().toLowerCase() + "%";
@@ -158,8 +189,45 @@ public class ErmComplianceService {
         }
 
         int totalPages = ps == 0 ? 0 : (int) Math.ceil((double) total / ps);
-        ErmComplianceDtos.PipelineKpi kpi = computeKpi();
+        ErmComplianceDtos.PipelineKpi kpi = scope.isCurrent() ? computeKpi() : computeKpiForMonth(scope);
         return new ErmComplianceDtos.PipelinePage(rows, p, ps, total, totalPages, kpi);
+    }
+
+    /**
+     * Past-month KPI variant — counts artifacts BY window date instead of
+     * "expiring in the next N days" semantics. Order matches
+     * {@link ErmComplianceDtos.PipelineKpi} so the UI reads the same slots.
+     */
+    private ErmComplianceDtos.PipelineKpi computeKpiForMonth(MonthRange scope) {
+        long workAuth = safeCountWithParams(
+                "SELECT COUNT(*) FROM work_authorization_records w "
+                        + " WHERE w.created_at >= ?::timestamptz AND w.created_at < ?::timestamptz",
+                scope.startInclusive().toString(), scope.endExclusive().toString());
+        long i9 = safeCountWithParams(
+                "SELECT COUNT(*) FROM i9_forms f "
+                        + " WHERE f.first_day_of_employment >= ? AND f.first_day_of_employment < ?",
+                java.sql.Date.valueOf(scope.monthStart()),
+                java.sql.Date.valueOf(scope.monthEnd()));
+        long everify = safeCountWithParams(
+                "SELECT COUNT(*) FROM everify_cases ec "
+                        + " WHERE ec.opened_at >= ?::timestamptz AND ec.opened_at < ?::timestamptz",
+                scope.startInclusive().toString(), scope.endExclusive().toString());
+        long i983 = safeCountWithParams(
+                "SELECT COUNT(*) FROM work_authorization_records w "
+                        + " WHERE w.i983_required = TRUE AND w.created_at >= ?::timestamptz "
+                        + "   AND w.created_at < ?::timestamptz",
+                scope.startInclusive().toString(), scope.endExclusive().toString());
+        return new ErmComplianceDtos.PipelineKpi(workAuth, i9, everify, i983);
+    }
+
+    private long safeCountWithParams(String sql, Object... params) {
+        try {
+            Long c = jdbc.queryForObject(sql, Long.class, params);
+            return c == null ? 0L : c;
+        } catch (Exception e) {
+            log.warn("[ErmCompliance] month kpi count failed (non-fatal): {}", e.getMessage());
+            return 0L;
+        }
     }
 
     private ErmComplianceDtos.PipelineRow mapPipelineRow(

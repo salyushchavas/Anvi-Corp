@@ -1,6 +1,7 @@
 package com.anvicorp.api.erm.escalation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.AuditLog;
 import com.anvicorp.api.entity.ExceptionEventLog;
 import com.anvicorp.api.entity.ExceptionRecord;
@@ -80,11 +81,32 @@ public class ErmEscalationService {
             List<String> status, List<String> severity, List<String> exceptionType,
             UUID assignedToId, UUID internLifecycleId, String search,
             String scope, User caller, int page, int pageSize) {
+        return list(status, severity, exceptionType, assignedToId,
+                internLifecycleId, search, scope, caller, page, pageSize,
+                MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — non-current months return an empty page.
+     * Current-month path is byte-identical.
+     */
+    @Transactional(readOnly = true)
+    public ErmEscalationDtos.ExceptionListPage list(
+            List<String> status, List<String> severity, List<String> exceptionType,
+            UUID assignedToId, UUID internLifecycleId, String search,
+            String scope, User caller, int page, int pageSize, MonthRange range) {
+        MonthRange monthScope = range != null ? range : MonthRange.parse(null);
         int p = Math.max(0, page);
         int ps = Math.min(100, Math.max(1, pageSize));
 
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> params = new ArrayList<>();
+        // Past-month window: exceptions raised (opened) in that month.
+        if (!monthScope.isCurrent()) {
+            where.append(" AND er.opened_at >= ?::timestamptz AND er.opened_at < ?::timestamptz ");
+            params.add(monthScope.startInclusive().toString());
+            params.add(monthScope.endExclusive().toString());
+        }
 
         if (status != null && !status.isEmpty()) {
             where.append(" AND er.status IN (")

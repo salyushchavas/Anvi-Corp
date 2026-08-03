@@ -2,6 +2,7 @@ package com.anvicorp.api.erm.application;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.Application;
 import com.anvicorp.api.entity.ApplicationDecisionLog;
 import com.anvicorp.api.entity.AuditLog;
@@ -94,6 +95,20 @@ public class ErmApplicationService {
     public ErmApplicationDtos.ErmApplicationListPage list(
             ErmApplicationDtos.InboxFilters filters, User caller,
             int page, int pageSize) {
+        return list(filters, caller, page, pageSize, MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — non-current months return an empty page
+     * (items=[], total=0) so past-month scroll on the ERM inbox shows
+     * "empty past month → empty list". Current-month path is
+     * byte-identical to the legacy overload.
+     */
+    @Transactional(readOnly = true)
+    public ErmApplicationDtos.ErmApplicationListPage list(
+            ErmApplicationDtos.InboxFilters filters, User caller,
+            int page, int pageSize, MonthRange range) {
+        MonthRange effective = range != null ? range : MonthRange.parse(null);
         String scope = filters != null && filters.scope() != null
                 ? filters.scope() : "mine";
         Pageable pageable = PageRequest.of(
@@ -101,6 +116,14 @@ public class ErmApplicationService {
 
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> params = new ArrayList<>();
+
+        // Past-month window: constrain rows to applications applied in that month.
+        // Current-month path leaves the WHERE clause untouched (byte-identical).
+        if (!effective.isCurrent()) {
+            where.append(" AND a.applied_at >= ?::timestamptz AND a.applied_at < ?::timestamptz ");
+            params.add(effective.startInclusive().toString());
+            params.add(effective.endExclusive().toString());
+        }
 
         if (filters != null && filters.stages() != null && !filters.stages().isEmpty()) {
             where.append(" AND a.status IN (")

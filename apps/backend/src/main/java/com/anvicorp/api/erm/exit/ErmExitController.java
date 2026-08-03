@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.exit;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -24,20 +25,24 @@ public class ErmExitController {
             @RequestParam(required = false) String state,
             @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "all") String scope,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
-        return service.list(state, search, scope, caller, page, pageSize);
+        return service.list(state, search, scope, caller, page, pageSize,
+                MonthRange.parse(month));
     }
 
     @GetMapping("/ready")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public ErmExitDtos.ReadyToExitListPage listReady(
             @RequestParam(defaultValue = "all") String scope,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
-        return service.listReady(scope, caller, page, pageSize);
+        return service.listReady(scope, caller, page, pageSize,
+                MonthRange.parse(month));
     }
 
     @GetMapping("/reason-codes")

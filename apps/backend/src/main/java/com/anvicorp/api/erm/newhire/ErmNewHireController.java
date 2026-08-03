@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.newhire;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.erm.offer.ErmOfferDtos;
@@ -24,10 +25,12 @@ public class ErmNewHireController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public ErmOfferDtos.NewHireListPage list(
             @RequestParam(required = false, defaultValue = "pending") String tab,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
-        return ermNewHireService.list(tab, caller, page, pageSize);
+        return ermNewHireService.list(tab, caller, page, pageSize,
+                MonthRange.parse(month));
     }
 
     /**
@@ -38,20 +41,23 @@ public class ErmNewHireController {
     @GetMapping("/pending-document-assignment")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public ErmOfferDtos.NewHireListPage pendingDocumentAssignment(
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
         return ermNewHireService.list("pending-document-assignment",
-                caller, page, pageSize);
+                caller, page, pageSize, MonthRange.parse(month));
     }
 
     @GetMapping("/in-progress")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public ErmOfferDtos.NewHireListPage inProgress(
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
-        return ermNewHireService.list("in-progress", caller, page, pageSize);
+        return ermNewHireService.list("in-progress", caller, page, pageSize,
+                MonthRange.parse(month));
     }
 
     @GetMapping("/{lifecycleId}")

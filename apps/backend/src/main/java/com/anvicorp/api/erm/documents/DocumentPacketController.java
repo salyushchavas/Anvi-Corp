@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.documents;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.intern.DocumentVaultService;
 import com.anvicorp.api.repository.DocumentTaskRepository;
@@ -111,10 +112,15 @@ public class DocumentPacketController {
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) UUID internLifecycleId,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize) {
+        // Past-month scroll filters review tasks by task.created_at (task
+        // assigned in the month); current-month path is byte-identical to
+        // the legacy overload.
+        MonthRange range = MonthRange.parse(month);
         return service.listReviewQueue(
-                category, search, internLifecycleId, page, pageSize);
+                category, search, internLifecycleId, page, pageSize, range);
     }
 
     /**
@@ -126,9 +132,13 @@ public class DocumentPacketController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentDtos.InternReviewQueuePage queueByIntern(
             @RequestParam(required = false) String search,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize) {
-        return service.listReviewQueueByIntern(search, page, pageSize);
+        // Past-month scroll filters by packet.assigned_at; current-month
+        // path is byte-identical to the legacy overload.
+        MonthRange range = MonthRange.parse(month);
+        return service.listReviewQueueByIntern(search, page, pageSize, range);
     }
 
     @GetMapping("/document-review/tasks/{id}")

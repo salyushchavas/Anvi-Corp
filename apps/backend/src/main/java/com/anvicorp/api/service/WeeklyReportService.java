@@ -245,11 +245,31 @@ public class WeeklyReportService {
 
     @Transactional(readOnly = true)
     public List<WeeklyReportResponse> listSubmittedForErm(User actor) {
+        return listSubmittedForErm(actor, com.anvicorp.api.common.MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped variant of {@link #listSubmittedForErm(User)} — past
+     * months filter to reports whose {@code weekStart} falls in the
+     * month. Filter happens in-memory on top of the existing status query
+     * (safer than adding a new JPA graph method: the graph fetch stays
+     * identical). Current-month path is byte-identical to the legacy
+     * overload.
+     */
+    @Transactional(readOnly = true)
+    public List<WeeklyReportResponse> listSubmittedForErm(
+            User actor, com.anvicorp.api.common.MonthRange range) {
         ensureErmOrSuperAdmin(actor, "view the ERM weekly-report queue");
-        return reportRepository.findAllByStatusWithGraph(WeeklyReportStatus.SUBMITTED)
-                .stream()
-                .map(this::toResponse)
-                .toList();
+        java.util.stream.Stream<WeeklyReport> stream =
+                reportRepository.findAllByStatusWithGraph(WeeklyReportStatus.SUBMITTED).stream();
+        if (range != null && !range.isCurrent()) {
+            java.time.LocalDate winStart = range.monthStart();
+            java.time.LocalDate winEnd = range.monthEnd();
+            stream = stream.filter(r -> r.getWeekStart() != null
+                    && !r.getWeekStart().isBefore(winStart)
+                    && r.getWeekStart().isBefore(winEnd));
+        }
+        return stream.map(this::toResponse).toList();
     }
 
     /**

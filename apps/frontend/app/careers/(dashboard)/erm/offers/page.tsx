@@ -8,6 +8,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import OfferStatusPill from '@/components/erm/offers/OfferStatusPill';
 import type {
   OfferListPage,
@@ -53,6 +54,7 @@ interface AwaitingOfferPage {
 
 export default function OfferControlPage() {
   const router = useRouter();
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const [tab, setTab] = useState<TabKey>('AWAITING');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
@@ -68,6 +70,7 @@ export default function OfferControlPage() {
       if (search.trim()) params.set('search', search.trim());
       params.set('page', String(page));
       params.set('pageSize', '25');
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       if (tab === 'AWAITING') {
         const res = await api.get<AwaitingOfferPage>(
           `/api/v1/erm/offers/awaiting?${params.toString()}`,
@@ -88,7 +91,7 @@ export default function OfferControlPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, search, page]);
+  }, [tab, search, page, selectedMonth, isCurrentMonth]);
 
   useEffect(() => { void load(); }, [load]);
 

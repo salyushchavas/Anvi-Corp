@@ -6,6 +6,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import SeverityBadge from '@/components/erm/escalations/SeverityBadge';
 import StatusPill from '@/components/erm/escalations/StatusPill';
 import {
@@ -36,6 +37,7 @@ const SEVERITY_TABS: { key: Severity | ''; label: string }[] = [
 const POLL_MS = 60_000;
 
 export default function EscalationsPage() {
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const [status, setStatus] = useState<ExceptionStatus | ''>('OPEN');
   const [severity, setSeverity] = useState<Severity | ''>('');
   const [search, setSearch] = useState('');
@@ -55,6 +57,7 @@ export default function EscalationsPage() {
       params.set('scope', scope);
       params.set('page', String(page));
       params.set('pageSize', '25');
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       const res = await api.get<ExceptionListPage>(
         `/api/v1/erm/escalations?${params.toString()}`,
       );
@@ -65,7 +68,7 @@ export default function EscalationsPage() {
     } finally {
       setLoading(false);
     }
-  }, [status, severity, search, scope, page]);
+  }, [status, severity, search, scope, page, selectedMonth, isCurrentMonth]);
 
   useEffect(() => {
     void load();

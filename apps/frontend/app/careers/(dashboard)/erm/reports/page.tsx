@@ -5,6 +5,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import { Donut, HorizontalBars, VerticalBars } from '@/components/erm/reports/Bars';
 import type {
   AttritionData,
@@ -35,13 +36,69 @@ const DEFAULT_FROM = (() => {
 })();
 const DEFAULT_TO = new Date().toISOString().slice(0, 10);
 
+/**
+ * Compute the first and last calendar day of a {@code YYYY-MM} month
+ * as ISO date strings. Used to seed the from/to date-range picker from
+ * the sticky global month so the report always renders the same period
+ * the rest of the ERM area is scoped to.
+ */
+function monthToRange(monthYear: string): { from: string; to: string } | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(monthYear);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const first = new Date(Date.UTC(y, mo - 1, 1));
+  const last = new Date(Date.UTC(y, mo, 0));
+  return {
+    from: first.toISOString().slice(0, 10),
+    to: last.toISOString().slice(0, 10),
+  };
+}
+
 export default function ReportsPage() {
+  const { selectedMonth, setSelectedMonth } = useErmDashboard();
   const [tab, setTab] = useState<ReportType>('pipeline-funnel');
-  const [filters, setFilters] = useState<ReportFilters>({
-    from: DEFAULT_FROM,
-    to: DEFAULT_TO,
-    scope: 'all',
+  const [filters, setFilters] = useState<ReportFilters>(() => {
+    // Seed the initial from/to from the sticky month so the page opens
+    // on the same period the header MonthPicker is showing.
+    const range = monthToRange(selectedMonth);
+    return {
+      from: range?.from ?? DEFAULT_FROM,
+      to: range?.to ?? DEFAULT_TO,
+      scope: 'all',
+    };
   });
+
+  // Sticky → filters: whenever the sticky month changes, snap the date
+  // range to that whole calendar month. Users who then tweak the range
+  // by hand aren't overridden until the sticky changes again.
+  useEffect(() => {
+    const range = monthToRange(selectedMonth);
+    if (!range) return;
+    setFilters((prev) => (prev.from === range.from && prev.to === range.to
+      ? prev
+      : { ...prev, from: range.from, to: range.to }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMonth]);
+
+  // Filters → sticky: when the picked range spans exactly one calendar
+  // month, push that month back onto the sticky selector so the rest of
+  // the ERM area follows.
+  useEffect(() => {
+    const range = monthToRange(selectedMonth);
+    if (range && range.from === filters.from && range.to === filters.to) return;
+    // Detect single-month ranges (first→last day of the same month).
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(filters.from);
+    const n = /^(\d{4})-(\d{2})-(\d{2})$/.exec(filters.to);
+    if (!m || !n) return;
+    if (m[1] !== n[1] || m[2] !== n[2]) return;
+    const inferred = `${m[1]}-${m[2]}`;
+    const inferredRange = monthToRange(inferred);
+    if (!inferredRange) return;
+    if (inferredRange.from !== filters.from || inferredRange.to !== filters.to) return;
+    if (inferred !== selectedMonth) setSelectedMonth(inferred);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.from, filters.to]);
 
   return (
     <ProtectedRoute requiredRoles={['ERM', 'SUPER_ADMIN']}>

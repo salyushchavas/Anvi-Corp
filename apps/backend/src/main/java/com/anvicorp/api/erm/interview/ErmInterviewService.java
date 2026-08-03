@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.anvicorp.api.application.ApplicationLifecycle;
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.Application;
 import com.anvicorp.api.entity.AuditLog;
 import com.anvicorp.api.entity.Candidate;
@@ -129,10 +130,29 @@ public class ErmInterviewService {
     public ErmInterviewDtos.ErmInterviewListPage list(
             String statusFilter, UUID interviewerId, String search,
             String scope, User caller, int page, int pageSize) {
+        return list(statusFilter, interviewerId, search, scope, caller,
+                page, pageSize, MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — non-current months return an empty page.
+     * Current-month path is byte-identical.
+     */
+    @Transactional(readOnly = true)
+    public ErmInterviewDtos.ErmInterviewListPage list(
+            String statusFilter, UUID interviewerId, String search,
+            String scope, User caller, int page, int pageSize, MonthRange range) {
+        MonthRange r = range != null ? range : MonthRange.parse(null);
         Pageable pageable = PageRequest.of(
                 Math.max(0, page), Math.min(Math.max(1, pageSize), 100));
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> params = new ArrayList<>();
+        // Past-month window: rows whose scheduled_at falls in that month.
+        if (!r.isCurrent()) {
+            where.append(" AND i.scheduled_at >= ?::timestamptz AND i.scheduled_at < ?::timestamptz ");
+            params.add(r.startInclusive().toString());
+            params.add(r.endExclusive().toString());
+        }
         if (statusFilter != null && !statusFilter.isBlank()) {
             where.append(" AND i.status = ?");
             params.add(statusFilter.toUpperCase());
@@ -205,6 +225,23 @@ public class ErmInterviewService {
 
     @Transactional(readOnly = true)
     public List<ErmInterviewDtos.CalendarEntry> calendar(Instant from, Instant to) {
+        return calendar(from, to, MonthRange.parse(null));
+    }
+
+    /**
+     * Month-scoped overload — non-current months return an empty list.
+     * Current-month path is byte-identical.
+     */
+    @Transactional(readOnly = true)
+    public List<ErmInterviewDtos.CalendarEntry> calendar(Instant from, Instant to, MonthRange range) {
+        MonthRange r = range != null ? range : MonthRange.parse(null);
+        // Past-month path: infer from/to from the MonthRange when the caller
+        // didn't send explicit bounds (the frontend passes only ?month=YYYY-MM
+        // for past months). Current-month path preserves the strict validation.
+        if (!r.isCurrent() && (from == null || to == null)) {
+            from = r.startInclusive();
+            to = r.endExclusive();
+        }
         if (from == null || to == null || to.isBefore(from)) {
             throw new BadRequestException("from + to are required (to > from)");
         }

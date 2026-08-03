@@ -540,6 +540,19 @@ public class DocumentPacketService {
     public DocumentTaskListPage listReviewQueue(
             String category, String search,
             UUID internLifecycleId, int page, int pageSize) {
+        return listReviewQueue(category, search, internLifecycleId, page, pageSize, null);
+    }
+
+    /**
+     * Month-scoped overload — past-month view filters to tasks that were
+     * assigned (task.created_at) in that month. Current-month path is
+     * byte-identical to the legacy overload.
+     */
+    @Transactional(readOnly = true)
+    public DocumentTaskListPage listReviewQueue(
+            String category, String search,
+            UUID internLifecycleId, int page, int pageSize,
+            com.anvicorp.api.common.MonthRange range) {
         int p = Math.max(0, page);
         int ps = Math.min(100, Math.max(1, pageSize));
         // ERM Phase 8.9 — post-widening the whitelist of keys per category
@@ -549,6 +562,13 @@ public class DocumentPacketService {
         StringBuilder where = new StringBuilder(
                 " WHERE t.status = 'SUBMITTED' ");
         List<Object> params = new ArrayList<>();
+        // Past-month window: filter to tasks assigned in the month
+        // (document_tasks.created_at is set when the packet is minted).
+        if (range != null && !range.isCurrent()) {
+            where.append(" AND t.created_at >= ?::timestamptz AND t.created_at < ?::timestamptz ");
+            params.add(range.startInclusive().toString());
+            params.add(range.endExclusive().toString());
+        }
         if (internLifecycleId != null) {
             where.append(" AND pk.intern_lifecycle_id = ? ");
             params.add(internLifecycleId);
@@ -627,11 +647,30 @@ public class DocumentPacketService {
     @Transactional(readOnly = true)
     public InternReviewQueuePage listReviewQueueByIntern(
             String search, int page, int pageSize) {
+        return listReviewQueueByIntern(search, page, pageSize, null);
+    }
+
+    /**
+     * Month-scoped overload — past-month view filters to interns whose
+     * packet was assigned (document_packets.assigned_at) in that month.
+     * Current-month path is byte-identical to the legacy overload.
+     */
+    @Transactional(readOnly = true)
+    public InternReviewQueuePage listReviewQueueByIntern(
+            String search, int page, int pageSize,
+            com.anvicorp.api.common.MonthRange range) {
         int p = Math.max(0, page);
         int ps = Math.min(100, Math.max(1, pageSize));
         StringBuilder where = new StringBuilder(
                 " WHERE t.status = 'SUBMITTED' ");
         List<Object> params = new ArrayList<>();
+        // Past-month window: packet-level date — the intern shows up when
+        // their packet was assigned in that month.
+        if (range != null && !range.isCurrent()) {
+            where.append(" AND pk.assigned_at >= ?::timestamptz AND pk.assigned_at < ?::timestamptz ");
+            params.add(range.startInclusive().toString());
+            params.add(range.endExclusive().toString());
+        }
         if (search != null && !search.isBlank()) {
             where.append(" AND LOWER(u.full_name) LIKE ? ");
             params.add("%" + search.trim().toLowerCase() + "%");

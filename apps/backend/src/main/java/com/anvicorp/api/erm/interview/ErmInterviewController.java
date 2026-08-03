@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.interview;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -27,19 +28,22 @@ public class ErmInterviewController {
             @RequestParam(required = false) UUID interviewerId,
             @RequestParam(required = false) String search,
             @RequestParam(required = false, defaultValue = "mine") String scope,
+            @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
         return ermInterviewService.list(status, interviewerId, search,
-                scope, caller, page, pageSize);
+                scope, caller, page, pageSize, MonthRange.parse(month));
     }
 
     @GetMapping("/calendar")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public List<ErmInterviewDtos.CalendarEntry> calendar(
             @RequestParam String from,
-            @RequestParam String to) {
-        return ermInterviewService.calendar(Instant.parse(from), Instant.parse(to));
+            @RequestParam String to,
+            @RequestParam(required = false) String month) {
+        return ermInterviewService.calendar(Instant.parse(from), Instant.parse(to),
+                MonthRange.parse(month));
     }
 
     @GetMapping("/reason-codes")

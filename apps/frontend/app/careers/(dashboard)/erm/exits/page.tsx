@@ -6,6 +6,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import { useErmDashboard } from '@/components/erm/ErmDashboardContext';
 import InitiateExitModal from '@/components/erm/exits/InitiateExitModal';
 import {
   EXIT_TYPE_TONE,
@@ -127,20 +128,25 @@ function ReadyTab({
   scope: 'all' | 'mine';
   onInitiate: (row: ReadyToExitRow) => void;
 }) {
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const [data, setData] = useState<ReadyToExitListPage | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
+      const params = new URLSearchParams();
+      params.set('scope', scope);
+      params.set('pageSize', '50');
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       const res = await api.get<ReadyToExitListPage>(
-        `/api/v1/erm/exits/ready?scope=${scope}&pageSize=50`,
+        `/api/v1/erm/exits/ready?${params.toString()}`,
       );
       setData(res.data);
       setErr(null);
     } catch (e: any) {
       setErr(e?.response?.data?.error ?? 'Failed to load ready-to-exit list');
     }
-  }, [scope]);
+  }, [scope, selectedMonth, isCurrentMonth]);
 
   useEffect(() => {
     void load();
@@ -215,6 +221,7 @@ function ExitListTab({
   scope: 'all' | 'mine';
   search: string;
 }) {
+  const { selectedMonth, isCurrentMonth } = useErmDashboard();
   const [data, setData] = useState<ErmExitListPage | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [page, setPage] = useState(0);
@@ -230,6 +237,7 @@ function ExitListTab({
       if (search.trim()) params.set('search', search.trim());
       params.set('page', String(page));
       params.set('pageSize', '25');
+      if (!isCurrentMonth) params.set('month', selectedMonth);
       const res = await api.get<ErmExitListPage>(
         `/api/v1/erm/exits?${params.toString()}`,
       );
@@ -238,7 +246,7 @@ function ExitListTab({
     } catch (e: any) {
       setErr(e?.response?.data?.error ?? 'Failed to load exits');
     }
-  }, [scope, stateFilter, search, page]);
+  }, [scope, stateFilter, search, page, selectedMonth, isCurrentMonth]);
 
   useEffect(() => {
     void load();
