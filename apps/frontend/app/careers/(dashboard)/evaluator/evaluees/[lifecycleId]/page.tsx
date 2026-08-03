@@ -8,7 +8,6 @@ import {
   Briefcase,
   CalendarCheck,
   CalendarCheck2,
-  CalendarPlus,
   ChevronLeft,
   ClipboardEdit,
   FileText,
@@ -166,13 +165,6 @@ export default function EvalueeDetailPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href={`/careers/evaluator/schedule-session?internId=${data.profile.lifecycleId}`}
-              className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800"
-            >
-              <CalendarPlus className="h-4 w-4" />
-              Schedule next evaluation
-            </Link>
             <button
               type="button"
               onClick={() => void openFinalDialog()}

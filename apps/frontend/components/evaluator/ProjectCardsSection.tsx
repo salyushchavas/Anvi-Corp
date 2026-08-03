@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  CalendarCheck,
   CalendarCheck2,
   CalendarPlus,
   CheckCircle2,
@@ -311,14 +312,16 @@ function ProjectCard({
     <article className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
       {/* Prominent status bar — colored left border + labeled strip.
           One-look answer to "what's this project's session state?"
-          Right side carries the single primary action per state. */}
+          Right side carries the single primary action per state. The
+          concrete scheduled date/time moved to a footer BELOW the card
+          body so the top bar stays a scannable state indicator. */}
       <div className={`flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5 ${styles.bar}`}>
         <div className="flex min-w-0 items-center gap-2">
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${disp.pill}`}>
             {disp.label}
           </span>
           <span className="truncate text-[11px] text-slate-600">
-            {scheduledLabel ?? styles.hint}
+            {styles.hint}
           </span>
         </div>
         {disp.actionKind !== 'NONE' && (
@@ -427,6 +430,21 @@ function ProjectCard({
       </div>
       )}
       </div>
+
+      {/* Scheduled-session footer — beneath the card body so the
+          concrete date/time/timezone lives near the compose / start
+          actions instead of competing with the status label at the
+          top. Only rendered when a scheduled slot exists (SCHEDULED
+          state); other states hide the footer entirely so the card
+          height stays clean. */}
+      {scheduledLabel && (
+        <div className="border-t border-slate-200 bg-brand-50/50 px-4 py-2 text-[11px] text-brand-900">
+          <span className="inline-flex items-center gap-1.5">
+            <CalendarCheck className="h-3.5 w-3.5" />
+            {scheduledLabel}
+          </span>
+        </div>
+      )}
 
       {scheduleOpen && (
         <SchedulePostProjectDialog
