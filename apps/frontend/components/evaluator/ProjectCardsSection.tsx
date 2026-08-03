@@ -318,28 +318,17 @@ function ProjectCard({
   return (
     <article className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
       {/* Prominent status bar — colored left border + labeled strip.
-          One-look answer to "what's this project's session state?"
-          Right side carries the single primary action per state. The
-          concrete scheduled date/time moved to a footer BELOW the card
-          body so the top bar stays a scannable state indicator. */}
-      <div className={`flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5 ${styles.bar}`}>
-        <div className="flex min-w-0 items-center gap-2">
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${disp.pill}`}>
-            {disp.label}
-          </span>
-          <span className="truncate text-[11px] text-slate-600">
-            {styles.hint}
-          </span>
-        </div>
-        {disp.actionKind !== 'NONE' && (
-          <button type="button"
-            onClick={triggerPrimaryAction}
-            disabled={startingSession}
-            className={primaryButtonCls + ' disabled:opacity-60'}>
-            <PrimaryIcon className="h-3 w-3" />
-            {startingSession ? 'Starting…' : disp.actionLabel}
-          </button>
-        )}
+          Pure state indicator: pill + hint. Every action moved to the
+          consolidated bottom footer so evaluators find the "what do I
+          do next?" region in one predictable place, not split across
+          top-bar-primary vs. mid-body-secondary. */}
+      <div className={`flex items-center gap-3 border-b border-slate-200 px-4 py-2.5 ${styles.bar}`}>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${disp.pill}`}>
+          {disp.label}
+        </span>
+        <span className="min-w-0 truncate text-[11px] text-slate-600">
+          {styles.hint}
+        </span>
       </div>
 
       {/* Body */}
@@ -413,43 +402,56 @@ function ProjectCard({
           </p>
         )}
       </div>
+      </div>
 
-      {/* Secondary action row — surfaces "Reschedule" when the primary
-          action is Start Session so evaluators can move a scheduled
-          slot instead of starting it. Hidden otherwise. */}
-      {(showRescheduleSecondary || actionErr) && (
-      <div className="mt-auto pt-3">
-        {showRescheduleSecondary && (
-          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-            <button type="button"
-              onClick={() => setScheduleOpen(true)}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
-              <CalendarPlus className="h-3 w-3" />
-              Reschedule
-            </button>
+      {/* Consolidated bottom footer — ONE action region per card.
+          Scheduled-session info (left, blue when SCHEDULED) + all
+          per-card actions (right: secondary "Reschedule" then the
+          primary action button). Every state routes its actions here
+          — nothing lives in the top status bar or mid-body anymore. */}
+      {(disp.actionKind !== 'NONE' || showRescheduleSecondary || scheduledLabel || actionErr) && (
+        <div className={
+          'border-t border-slate-200 ' +
+          (scheduledLabel ? 'bg-brand-50/50' : 'bg-slate-50/70')
+        }>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
+            {scheduledLabel ? (
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-brand-900">
+                <CalendarCheck className="h-3.5 w-3.5" />
+                {scheduledLabel}
+              </span>
+            ) : (
+              // Spacer keeps justify-between pushing the button cluster
+              // to the right on states with no scheduled-session line.
+              <span />
+            )}
+            {(disp.actionKind !== 'NONE' || showRescheduleSecondary) && (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {showRescheduleSecondary && (
+                  <button type="button"
+                    onClick={() => setScheduleOpen(true)}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                    <CalendarPlus className="h-3 w-3" />
+                    Reschedule
+                  </button>
+                )}
+                {disp.actionKind !== 'NONE' && (
+                  <button type="button"
+                    onClick={triggerPrimaryAction}
+                    disabled={startingSession}
+                    className={primaryButtonCls + ' disabled:opacity-60'}>
+                    <PrimaryIcon className="h-3 w-3" />
+                    {startingSession ? 'Starting…' : disp.actionLabel}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-        )}
-        {actionErr && (
-          <p className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-800">
-            {actionErr}
-          </p>
-        )}
-      </div>
-      )}
-      </div>
-
-      {/* Scheduled-session footer — beneath the card body so the
-          concrete date/time/timezone lives near the compose / start
-          actions instead of competing with the status label at the
-          top. Only rendered when a scheduled slot exists (SCHEDULED
-          state); other states hide the footer entirely so the card
-          height stays clean. */}
-      {scheduledLabel && (
-        <div className="border-t border-slate-200 bg-brand-50/50 px-4 py-2 text-[11px] text-brand-900">
-          <span className="inline-flex items-center gap-1.5">
-            <CalendarCheck className="h-3.5 w-3.5" />
-            {scheduledLabel}
-          </span>
+          {actionErr && (
+            <p className="mx-4 mb-2 rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-800">
+              {actionErr}
+            </p>
+          )}
         </div>
       )}
 
