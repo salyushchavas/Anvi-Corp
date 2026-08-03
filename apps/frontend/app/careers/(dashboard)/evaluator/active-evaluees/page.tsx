@@ -3,16 +3,9 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import {
-  CalendarPlus,
-  CheckCircle2,
-  PenSquare,
-  PlayCircle,
-  Search,
-} from 'lucide-react';
+import { ArrowRight, Search } from 'lucide-react';
 import api from '@/lib/careers/api';
 import { useEvaluatorDashboard } from '@/components/evaluator/EvaluatorDashboardContext';
-import SchedulePostProjectDialog from '@/components/evaluator/SchedulePostProjectDialog';
 import type {
   ActiveEvalueeProjectRow,
   ActiveEvalueeRow,
@@ -20,15 +13,15 @@ import type {
 } from '@/components/evaluator/types';
 import {
   evaluatorProjectDisplay,
-  evaluatorProjectStatusLabel,
-  type EvaluatorProjectActionKind,
+  type EvaluatorProjectDisplayState,
 } from '@/components/evaluator/project-status';
 
 /**
- * Evaluator ⟶ Active Evaluees. One row per intern. Each project (P1,
- * P2 — DB-capped at 2) gets a Status column AND a Quick Action column.
- * Both columns always render real content — never blank, never a dash.
- * An empty project slot renders "Not Assigned" + "No action needed".
+ * Evaluator ⟶ Active Evaluees. One compact row per intern with a status
+ * chip per project slot (P1 + P2, DB-capped at 2) and a single Open
+ * button routing to the evaluee detail page. All scheduling / start /
+ * compose actions live on the detail page — the list is scan-and-jump
+ * only, no per-project verbs.
  */
 export default function ActiveEvalueesPage() {
   return (
@@ -49,9 +42,6 @@ function ActiveEvalueesInner() {
   const [data, setData] = useState<ActiveEvalueesPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [scheduleFor, setScheduleFor] = useState<
-    { projectId: string; projectTitle: string | null } | null
-  >(null);
 
   const { selectedMonth, isCurrentMonth } = useEvaluatorDashboard();
 
@@ -83,16 +73,6 @@ function ActiveEvalueesInner() {
     setSearch('');
     setNeedsAttention(false);
     setPage(0);
-  }
-
-  async function handleStartSession(evaluationId: string) {
-    try {
-      await api.post(`/api/v1/evaluator/evaluations/${evaluationId}/start`);
-      router.push(`/careers/evaluator/evaluations/${evaluationId}/compose`);
-    } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to start session');
-    }
   }
 
   const rows = data?.items ?? [];
@@ -159,10 +139,9 @@ function ActiveEvalueesInner() {
               <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-2">Intern</th>
                 <th className="px-3 py-2">Technology</th>
-                <th className="px-3 py-2">Project 1 Status</th>
-                <th className="px-3 py-2">Project 1 Quick Action</th>
-                <th className="px-3 py-2">Project 2 Status</th>
-                <th className="px-3 py-2">Project 2 Quick Action</th>
+                <th className="px-3 py-2">Project 1</th>
+                <th className="px-3 py-2">Project 2</th>
+                <th className="px-3 py-2 text-right"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -171,9 +150,6 @@ function ActiveEvalueesInner() {
                   key={r.lifecycleId}
                   row={r}
                   onOpen={() => router.push(`/careers/evaluator/evaluees/${r.lifecycleId}`)}
-                  onSchedule={(projectId) => setScheduleFor({ projectId, projectTitle: null })}
-                  onStart={handleStartSession}
-                  onNavigate={(href) => router.push(href)}
                 />
               ))}
             </tbody>
@@ -204,30 +180,22 @@ function ActiveEvalueesInner() {
           </div>
         </div>
       )}
-
-      {scheduleFor && (
-        <SchedulePostProjectDialog
-          projectId={scheduleFor.projectId}
-          projectTitle={scheduleFor.projectTitle}
-          onClose={() => setScheduleFor(null)}
-          onScheduled={() => { setScheduleFor(null); void load(); }}
-        />
-      )}
     </div>
   );
 }
 
-function Row({ row, onOpen, onSchedule, onStart, onNavigate }: {
+function Row({ row, onOpen }: {
   row: ActiveEvalueeRow;
   onOpen: () => void;
-  onSchedule: (projectId: string) => void;
-  onStart: (evaluationId: string) => Promise<void> | void;
-  onNavigate: (href: string) => void;
 }) {
   const projectBySeq = (seq: number): ActiveEvalueeProjectRow | null =>
     row.projects?.find((p) => p.sequence === seq) ?? null;
   const p1 = projectBySeq(1);
   const p2 = projectBySeq(2);
+  // DB caps slots at 2; the safety valve surfaces any future 3rd+ slot
+  // as a compact "+N more" tag in the P2 cell instead of silently
+  // dropping it or breaking the fixed column count.
+  const overflow = Math.max(0, (row.projects?.length ?? 0) - 2);
   return (
     <tr className="cursor-pointer hover:bg-slate-50" onClick={onOpen}>
       <td className="px-3 py-2">
@@ -238,160 +206,75 @@ function Row({ row, onOpen, onSchedule, onStart, onNavigate }: {
         </p>
       </td>
       <td className="px-3 py-2 text-xs text-slate-700">{row.technology ?? '—'}</td>
-      <StatusCell project={p1} />
-      <QuickActionCell
-        project={p1}
-        onSchedule={onSchedule}
-        onStart={onStart}
-        onNavigate={onNavigate}
-      />
-      <StatusCell project={p2} />
-      <QuickActionCell
-        project={p2}
-        onSchedule={onSchedule}
-        onStart={onStart}
-        onNavigate={onNavigate}
-      />
+      <ProjectCell project={p1} />
+      <ProjectCell project={p2} overflow={overflow} />
+      <td className="whitespace-nowrap px-3 py-2 text-right">
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Open
+          <ArrowRight className="h-3 w-3" />
+        </button>
+      </td>
     </tr>
   );
 }
 
-function StatusCell({ project }: { project: ActiveEvalueeProjectRow | null }) {
-  const label = evaluatorProjectStatusLabel({
-    projectStatus: project?.projectStatus,
-    evaluationStatus: project?.evaluationStatus,
-    hasProject: project != null,
-  });
-  const pill = pillClassFor(label);
+function ProjectCell({ project, overflow = 0 }: {
+  project: ActiveEvalueeProjectRow | null;
+  overflow?: number;
+}) {
+  const { label, pill } = friendlyProjectLabel(project);
   return (
     <td className="whitespace-nowrap px-3 py-2">
       <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ${pill}`}>
         {label}
       </span>
+      {overflow > 0 && (
+        <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+          +{overflow} more
+        </span>
+      )}
     </td>
   );
 }
 
-function QuickActionCell({ project, onSchedule, onStart, onNavigate }: {
-  project: ActiveEvalueeProjectRow | null;
-  onSchedule: (projectId: string) => void;
-  onStart: (evaluationId: string) => Promise<void> | void;
-  onNavigate: (href: string) => void;
-}) {
-  // Empty slot → always shows "No action needed" (never a dash / blank).
+/**
+ * Friendly single-glance label per project slot. Uses the shared
+ * evaluator display state so wording tracks the card and detail-page
+ * vocabulary: PENDING_EVAL surfaces as "Awaiting viva" (that state
+ * covers PENDING_VIVA / COMPLETED projects with no eval yet), SCHEDULED
+ * / SESSION_COMPLETED / COMPLETED / CANCELLED map to their friendly
+ * short forms. Empty slot renders a muted "No project yet" chip so the
+ * row column count stays fixed across evaluees.
+ */
+function friendlyProjectLabel(project: ActiveEvalueeProjectRow | null): {
+  label: string;
+  pill: string;
+} {
   if (!project) {
-    return (
-      <td className="px-3 py-2">
-        <span className="text-[11px] italic text-slate-400">No action needed</span>
-      </td>
-    );
+    return {
+      label: 'No project yet',
+      pill: 'bg-slate-50 text-slate-400 italic',
+    };
   }
   const disp = evaluatorProjectDisplay(project.projectStatus, project.evaluationStatus);
-  if (disp.actionKind === 'NONE') {
-    return (
-      <td className="px-3 py-2">
-        <span className="text-[11px] italic text-slate-400">No action needed</span>
-      </td>
-    );
-  }
-  return (
-    <td className="px-3 py-2">
-      <ActionButton
-        kind={disp.actionKind}
-        label={disp.actionLabel}
-        project={project}
-        onSchedule={onSchedule}
-        onStart={onStart}
-        onNavigate={onNavigate}
-      />
-    </td>
-  );
+  return {
+    label: FRIENDLY_LABEL[disp.state],
+    pill: disp.pill,
+  };
 }
 
-function ActionButton({ kind, label, project, onSchedule, onStart, onNavigate }: {
-  kind: EvaluatorProjectActionKind;
-  label: string;
-  project: ActiveEvalueeProjectRow;
-  onSchedule: (projectId: string) => void;
-  onStart: (evaluationId: string) => Promise<void> | void;
-  onNavigate: (href: string) => void;
-}) {
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
-  const commonPrimary =
-    'inline-flex items-center gap-1 rounded-md bg-brand-700 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-brand-800';
-  const commonSecondary =
-    'inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-50';
-  const commonAmber =
-    'inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100';
-
-  if (kind === 'SCHEDULE' || kind === 'RESCHEDULE') {
-    const cls = kind === 'SCHEDULE' ? commonPrimary : commonAmber;
-    return (
-      <button type="button" className={cls}
-        onClick={(e) => { stop(e); if (project.projectId) onSchedule(project.projectId); }}
-      >
-        <CalendarPlus className="h-2.5 w-2.5" />
-        {label}
-      </button>
-    );
-  }
-  if (kind === 'START') {
-    return (
-      <button type="button" className={commonPrimary}
-        onClick={(e) => { stop(e); if (project.evaluationId) void onStart(project.evaluationId); }}
-      >
-        <PlayCircle className="h-2.5 w-2.5" />
-        {label}
-      </button>
-    );
-  }
-  if (kind === 'CONTINUE') {
-    return (
-      <button type="button" className={commonPrimary}
-        onClick={(e) => {
-          stop(e);
-          if (project.evaluationId) onNavigate(
-            `/careers/evaluator/evaluations/${project.evaluationId}/compose`);
-        }}
-      >
-        <PenSquare className="h-2.5 w-2.5" />
-        {label}
-      </button>
-    );
-  }
-  // OPEN
-  return (
-    <button type="button" className={commonSecondary}
-      onClick={(e) => {
-        stop(e);
-        if (project.evaluationId) onNavigate(
-          `/careers/evaluator/evaluations/${project.evaluationId}`);
-      }}
-    >
-      <CheckCircle2 className="h-2.5 w-2.5" />
-      {label}
-    </button>
-  );
-}
-
-/** Pill tone per detailed status label. Keeps the table color-coded
- *  even for the granular pre-verification states the cards collapse. */
-function pillClassFor(label: string): string {
-  switch (label) {
-    case 'Not Assigned':      return 'bg-slate-100 text-slate-500';
-    case 'Not Started':       return 'bg-slate-100 text-slate-700';
-    case 'In Progress':       return 'bg-slate-100 text-slate-700';
-    case 'Submitted':         return 'bg-blue-100 text-blue-800';
-    case 'Returned':          return 'bg-amber-100 text-amber-900';
-    case 'Tech Approved':     return 'bg-emerald-50 text-emerald-800';
-    case 'Pending Evaluation': return 'bg-amber-100 text-amber-900';
-    case 'Scheduled':         return 'bg-brand-100 text-brand-800';
-    case 'Session Completed': return 'bg-amber-100 text-amber-900';
-    case 'Completed':         return 'bg-emerald-100 text-emerald-800';
-    case 'Cancelled':         return 'bg-red-100 text-red-700';
-    default:                  return 'bg-slate-100 text-slate-700';
-  }
-}
+const FRIENDLY_LABEL: Record<EvaluatorProjectDisplayState, string> = {
+  IN_PROGRESS:       'In progress',
+  PENDING_EVAL:      'Awaiting viva',
+  SCHEDULED:         'Scheduled',
+  SESSION_COMPLETED: 'Session done',
+  COMPLETED:         'Completed',
+  CANCELLED:         'Cancelled',
+};
 
 function EmptyState() {
   return (

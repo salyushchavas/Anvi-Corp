@@ -25,6 +25,7 @@ export interface PresignResponse {
 
 export type UploadState =
   | { kind: 'idle' }
+  | { kind: 'selected'; file: File }
   | { kind: 'uploading'; fileName: string; percent: number; abort: () => void }
   | { kind: 'ready'; fileName: string; documentId: string }
   | { kind: 'error'; fileName: string; message: string };
@@ -72,7 +73,12 @@ export default function RecordingUploader({
   const [state, setState] = useState<UploadState>(initial ?? { kind: 'idle' });
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  async function onPick(file: File) {
+  // Step 1: file picked from the OS dialog. Validate synchronously and
+  // park the file in a review state — DO NOT presign or upload yet. The
+  // caller flow reads the review card, confirms the file/target form
+  // fields look right, then clicks Upload to commit. This split lets the
+  // user cancel a mispicked file at zero server cost.
+  function handleFileSelect(file: File) {
     if (accept.startsWith('video/') && !file.type.startsWith('video/')) {
       setState({
         kind: 'error',
@@ -81,6 +87,13 @@ export default function RecordingUploader({
       });
       return;
     }
+    setState({ kind: 'selected', file });
+  }
+
+  // Step 2: user clicked Upload on the review card. Presign + XHR PUT to
+  // S3 — the same code the old auto-upload path ran, just gated behind
+  // an explicit user gesture.
+  async function beginUpload(file: File) {
     let presign: PresignResponse;
     try {
       const res = await api.post<PresignResponse>(presignEndpoint, {
@@ -156,7 +169,7 @@ export default function RecordingUploader({
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
-          if (file) void onPick(file);
+          if (file) handleFileSelect(file);
         }}
       />
       {state.kind === 'idle' && (
@@ -167,6 +180,42 @@ export default function RecordingUploader({
         >
           {buttonLabel}
         </button>
+      )}
+      {state.kind === 'selected' && (
+        <div className="rounded-md border border-slate-200 bg-white p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate font-mono text-xs text-slate-800">{state.file.name}</p>
+              <p className="mt-0.5 text-[11px] text-slate-500">
+                {formatFileSize(state.file.size)}
+                {state.file.type && ` · ${state.file.type}`}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={clear}
+              className="shrink-0 rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+            >
+              Remove
+            </button>
+          </div>
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Replace file
+            </button>
+            <button
+              type="button"
+              onClick={() => void beginUpload(state.file)}
+              className="rounded-md bg-brand-700 px-3 py-1 text-xs font-semibold text-white hover:bg-brand-800"
+            >
+              Upload
+            </button>
+          </div>
+        </div>
       )}
       {state.kind === 'uploading' && (
         <div className="rounded-md border border-slate-200 bg-white p-3">
@@ -233,4 +282,14 @@ export default function RecordingUploader({
       )}
     </div>
   );
+}
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
 }
