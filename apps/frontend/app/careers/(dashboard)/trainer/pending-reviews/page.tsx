@@ -199,7 +199,12 @@ function PendingReviewsInner() {
         <ReviewModal
           submissionId={openId}
           onClose={() => setOpenId(null)}
-          onSubmitted={() => { setOpenId(null); void load(); }}
+          // Feedback submit refreshes the queue in the background so
+          // the row drops off — but the modal stays open so the trainer
+          // can add / refine Reference Q&A after the fact (previously
+          // the modal auto-closed on submit, forcing the trainer to
+          // stage Q&A BEFORE clicking Submit).
+          onSubmitted={() => { void load(); }}
         />
       )}
     </div>
@@ -259,6 +264,11 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
   const [escalationReason, setEscalationReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // After feedback lands, we FLIP the modal into a Q&A-only mode so the
+  // trainer can keep adding reference Q&A after the fact. The parent's
+  // onSubmitted still fires (background queue refresh) — only the auto-
+  // close was removed.
+  const [feedbackSubmittedAt, setFeedbackSubmittedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -320,6 +330,10 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
           escalationReason: decision === 'ESCALATE' ? escalationReason.trim() : null,
         },
       );
+      // Notify parent so the queue refreshes in the background (this
+      // row drops off pending) — but keep the modal open so the trainer
+      // can continue adding / refining Reference Q&A on the LEFT panel.
+      setFeedbackSubmittedAt(new Date());
       onSubmitted();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -348,6 +362,15 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {feedbackSubmittedAt && (
+          <div className="border-b border-emerald-200 bg-emerald-50 px-5 py-2 text-xs text-emerald-900">
+            <span className="font-semibold">Feedback published</span> at{' '}
+            {feedbackSubmittedAt.toLocaleTimeString()}. You can keep adding
+            or refining Reference Q&amp;A on the left — changes save
+            automatically. Close when you're done.
+          </div>
+        )}
 
         <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-5 md:grid-cols-2">
           {/* LEFT: submission viewer */}
@@ -531,12 +554,24 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
             </p>
           )}
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={onClose} className="rounded-md border border-slate-200 px-3 py-1.5 text-sm">Cancel</button>
-            <button type="button" onClick={submit} disabled={submitting}
-              className="rounded-md bg-brand-700 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-800 disabled:bg-slate-300">
-              <FileText className="mr-1 inline h-3.5 w-3.5" />
-              {submitting ? 'Submitting…' : 'Publish feedback'}
-            </button>
+            {feedbackSubmittedAt ? (
+              // Post-submit state — feedback already published; the
+              // only remaining action is to close the modal (Q&A editor
+              // still auto-saves on blur while the modal is open).
+              <button type="button" onClick={onClose}
+                className="rounded-md bg-brand-700 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-800">
+                Done
+              </button>
+            ) : (
+              <>
+                <button type="button" onClick={onClose} className="rounded-md border border-slate-200 px-3 py-1.5 text-sm">Cancel</button>
+                <button type="button" onClick={submit} disabled={submitting}
+                  className="rounded-md bg-brand-700 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-800 disabled:bg-slate-300">
+                  <FileText className="mr-1 inline h-3.5 w-3.5" />
+                  {submitting ? 'Submitting…' : 'Publish feedback'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
