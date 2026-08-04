@@ -4,6 +4,7 @@ import { FormEvent, Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AuthLayout from '@/components/dashboard/AuthLayout';
+import PasswordInput from '@/components/careers/PasswordInput';
 import { useAuth } from '@/lib/careers/auth-context';
 import { BRAND } from '@/lib/careers/brand';
 import { getDashboardForUser, returnToIsAllowedForUser } from '@/lib/careers/role-routing';
@@ -96,9 +97,8 @@ function LoginInner() {
           <label htmlFor="password" className="mb-1 block text-sm font-medium text-gray-700">
             Password
           </label>
-          <input
+          <PasswordInput
             id="password"
-            type="password"
             required
             autoComplete="current-password"
             value={password}

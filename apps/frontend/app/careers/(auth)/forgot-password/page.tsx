@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AuthLayout from '@/components/dashboard/AuthLayout';
+import PasswordInput from '@/components/careers/PasswordInput';
 import api from '@/lib/careers/api';
 
 type Step = 'email' | 'reset' | 'done';
@@ -158,9 +159,8 @@ export default function ForgotPasswordPage() {
             <label htmlFor="newPassword" className="mb-1 block text-sm font-medium text-gray-700">
               New password (min 8 characters)
             </label>
-            <input
+            <PasswordInput
               id="newPassword"
-              type="password"
               required
               minLength={8}
               autoComplete="new-password"
@@ -173,9 +173,8 @@ export default function ForgotPasswordPage() {
             <label htmlFor="confirmPassword" className="mb-1 block text-sm font-medium text-gray-700">
               Confirm new password
             </label>
-            <input
+            <PasswordInput
               id="confirmPassword"
-              type="password"
               required
               autoComplete="new-password"
               value={confirmPassword}

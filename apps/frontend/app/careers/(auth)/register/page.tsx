@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertCircle, UserCircle } from 'lucide-react';
 import AuthLayout from '@/components/dashboard/AuthLayout';
+import PasswordInput from '@/components/careers/PasswordInput';
 import RegisterDebugPanel, {
   type RegisterDebugInfo,
 } from '@/components/dashboard/RegisterDebugPanel';
@@ -440,6 +441,8 @@ interface FieldProps {
 }
 
 function Field(props: FieldProps) {
+  const inputClass =
+    'w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent';
   return (
     <div>
       <label
@@ -449,17 +452,30 @@ function Field(props: FieldProps) {
         {props.label}
         {props.required && <span className="ml-0.5 text-red-500">*</span>}
       </label>
-      <input
-        id={props.id}
-        type={props.type}
-        required={props.required}
-        autoComplete={props.autoComplete}
-        minLength={props.minLength}
-        placeholder={props.placeholder}
-        value={props.value}
-        onChange={(e) => props.onChange(e.target.value)}
-        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-      />
+      {props.type === 'password' ? (
+        <PasswordInput
+          id={props.id}
+          required={props.required}
+          autoComplete={props.autoComplete}
+          minLength={props.minLength}
+          placeholder={props.placeholder}
+          value={props.value}
+          onChange={(e) => props.onChange(e.target.value)}
+          className={inputClass}
+        />
+      ) : (
+        <input
+          id={props.id}
+          type={props.type}
+          required={props.required}
+          autoComplete={props.autoComplete}
+          minLength={props.minLength}
+          placeholder={props.placeholder}
+          value={props.value}
+          onChange={(e) => props.onChange(e.target.value)}
+          className={inputClass}
+        />
+      )}
       {props.hint && (
         <p className="mt-1 text-xs text-gray-500">{props.hint}</p>
       )}
