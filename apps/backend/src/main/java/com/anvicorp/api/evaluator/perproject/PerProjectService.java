@@ -158,12 +158,25 @@ public class PerProjectService {
 
     @Transactional(readOnly = true)
     public PerProjectDtos.ProjectTimelineResponse getInternTimeline(
-            UUID lifecycleId, User caller) {
+            UUID lifecycleId, User caller, MonthRange range) {
         InternLifecycle lc = lifecycleRepo.findById(lifecycleId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "InternLifecycle not found: " + lifecycleId));
         evaluatorScopeGuard.requireEvaluatorOwnership(lc, caller);
 
+        // Month attribution rule (user-confirmed): a project belongs
+        // ONLY to its assignment month (projects.month_year). Filtering
+        // here means a July-assigned project shows on JULY's cards only,
+        // even when its evaluation was published in August — the
+        // evaluation event still counts in August via published_at on
+        // the dashboard KPIs / history / reports (unchanged).
+        MonthRange scope = range != null ? range : MonthRange.parse(null);
+        String monthLabel = scope.label();
+
+        // ranked stays scoped to THIS intern's projects for THIS month
+        // — the ROW_NUMBER() sequence resets per month so the cards
+        // read P1/P2 within the month, not lifetime-wise (matches the
+        // Active Evaluees chip sequencing established in 020d60e).
         String sql =
                 "WITH ranked AS ( "
                         + "  SELECT p.id AS project_id, "
@@ -173,17 +186,22 @@ public class PerProjectService {
                         + "         ) AS project_seq "
                         + "    FROM projects p "
                         + "   WHERE p.intern_lifecycle_id = ? "
+                        + "     AND p.month_year = ? "
                         + "), group_counts AS ( "
                         // How many of THIS intern's project-linked
-                        // evaluations belong to each session group. The
-                        // strip fires when this count >= 2.
-                        + "  SELECT session_group_id, COUNT(*) AS members "
-                        + "    FROM intern_evaluations "
-                        + "   WHERE intern_lifecycle_id = ? "
-                        + "     AND evaluation_type = 'POST_PROJECT' "
-                        + "     AND session_group_id IS NOT NULL "
-                        + "     AND linked_project_id IS NOT NULL "
-                        + "   GROUP BY session_group_id "
+                        // evaluations (for THIS month's projects) belong
+                        // to each session group. Joined against ranked so
+                        // a group whose members span months collapses per
+                        // month — the strip only counts card members
+                        // visible on this page.
+                        + "  SELECT ev.session_group_id, COUNT(*) AS members "
+                        + "    FROM intern_evaluations ev "
+                        + "    JOIN ranked rk ON rk.project_id = ev.linked_project_id "
+                        + "   WHERE ev.intern_lifecycle_id = ? "
+                        + "     AND ev.evaluation_type = 'POST_PROJECT' "
+                        + "     AND ev.session_group_id IS NOT NULL "
+                        + "     AND ev.linked_project_id IS NOT NULL "
+                        + "   GROUP BY ev.session_group_id "
                         + ") "
                         + "SELECT p.id AS project_id, rk.project_seq, "
                         + "       p.title, p.tech_stack, p.status AS project_status, "
@@ -203,6 +221,7 @@ public class PerProjectService {
                         + "  LEFT JOIN group_counts gc "
                         + "         ON gc.session_group_id = ev.session_group_id "
                         + " WHERE p.intern_lifecycle_id = ? "
+                        + "   AND p.month_year = ? "
                         + " ORDER BY rk.project_seq ASC";
 
         List<PerProjectDtos.ProjectTimelineEntry> entries = new ArrayList<>();
@@ -243,7 +262,16 @@ public class PerProjectService {
                                 memberCount,
                                 uiState);
                     };
-            entries = jdbc.query(sql, mapper, lifecycleId, lifecycleId, lifecycleId);
+            // Params bind by ORDER in the SQL string:
+            //   1. ranked WHERE p.intern_lifecycle_id = ?
+            //   2. ranked WHERE p.month_year = ?
+            //   3. group_counts WHERE ev.intern_lifecycle_id = ?
+            //   4. outer WHERE p.intern_lifecycle_id = ?
+            //   5. outer WHERE p.month_year = ?
+            entries = jdbc.query(sql, mapper,
+                    lifecycleId, monthLabel,
+                    lifecycleId,
+                    lifecycleId, monthLabel);
         } catch (Exception e) {
             log.warn("[PerProject] timeline query failed for lc={}: {}",
                     lifecycleId, e.getMessage());

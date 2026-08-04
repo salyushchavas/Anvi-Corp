@@ -36,13 +36,20 @@ public class PerProjectController {
         return service.listAwaiting(caller, MonthRange.parse(month));
     }
 
-    /** §3 — every project for this intern + evaluation status per project. */
+    /** §3 — projects for this intern in the SELECTED month + each project's
+     *  evaluation state. A project belongs to its assignment month
+     *  (projects.month_year) — an August evaluation of a July-assigned
+     *  project renders in JULY's cards, never August's. Absent /
+     *  unparseable {@code ?month=} defaults to the current month via
+     *  {@link MonthRange#parse}, so the byte-identical current-month
+     *  behaviour holds. */
     @GetMapping("/evaluees/{lifecycleId}/project-timeline")
     @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
     public PerProjectDtos.ProjectTimelineResponse timeline(
             @PathVariable UUID lifecycleId,
+            @RequestParam(required = false) String month,
             @AuthenticationPrincipal User caller) {
-        return service.getInternTimeline(lifecycleId, caller);
+        return service.getInternTimeline(lifecycleId, caller, MonthRange.parse(month));
     }
 
     /** §4 — project detail for the context hub's project panel. */

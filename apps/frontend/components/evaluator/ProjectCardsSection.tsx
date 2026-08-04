@@ -20,6 +20,7 @@ import SchedulePostProjectDialog from './SchedulePostProjectDialog';
 import ScheduleFinalSessionDialog from './ScheduleFinalSessionDialog';
 import SessionStrip from './SessionStrip';
 import ReferenceQaPanel from '@/components/project/ReferenceQaPanel';
+import { useEvaluatorDashboard } from './EvaluatorDashboardContext';
 import type { ProjectTimelineEntry, ProjectTimelineResponse } from './perproject-types';
 import {
   evaluatorProjectDisplay,
@@ -78,6 +79,7 @@ const CARD_BAR_STYLES: Record<EvaluatorProjectDisplayState, {
 };
 
 export default function ProjectCardsSection({ lifecycleId }: Props) {
+  const { selectedMonth, isCurrentMonth } = useEvaluatorDashboard();
   const [data, setData] = useState<ProjectTimelineResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -89,9 +91,15 @@ export default function ProjectCardsSection({ lifecycleId }: Props) {
     setLoading(true);
     setErr(null);
     try {
-      const res = await api.get<ProjectTimelineResponse>(
-        `/api/v1/evaluator/evaluees/${lifecycleId}/project-timeline`,
-      );
+      // A project belongs to its assignment month (projects.month_year).
+      // Threading the sticky selected month through the fetch means the
+      // cards on the evaluee detail hub show only projects assigned in
+      // that month — a July project's August evaluation still counts on
+      // the dashboard KPIs (via published_at) but NOT on August's cards.
+      const url = isCurrentMonth
+        ? `/api/v1/evaluator/evaluees/${lifecycleId}/project-timeline`
+        : `/api/v1/evaluator/evaluees/${lifecycleId}/project-timeline?month=${encodeURIComponent(selectedMonth)}`;
+      const res = await api.get<ProjectTimelineResponse>(url);
       setData(res.data);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -99,7 +107,7 @@ export default function ProjectCardsSection({ lifecycleId }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [lifecycleId]);
+  }, [lifecycleId, selectedMonth, isCurrentMonth]);
   useEffect(() => { void load(); }, [load]);
 
   const entries = data?.entries ?? [];
@@ -218,7 +226,9 @@ export default function ProjectCardsSection({ lifecycleId }: Props) {
       )}
       {data && entries.length === 0 && !loading && (
         <p className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-          No projects yet. Projects appear here once the trainer assigns them.
+          {isCurrentMonth
+            ? 'No projects yet. Projects appear here once the trainer assigns them.'
+            : `No projects were assigned in ${formatMonthLabel(selectedMonth)}.`}
         </p>
       )}
 
@@ -557,4 +567,15 @@ function Pill({ tone, icon, label }: {
       {label}
     </span>
   );
+}
+
+/** "2026-07" → "July 2026" for month-aware empty-state copy. */
+function formatMonthLabel(yearMonth: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(yearMonth);
+  if (!m) return yearMonth;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  if (mo < 1 || mo > 12) return yearMonth;
+  return new Date(Date.UTC(y, mo - 1, 1))
+    .toLocaleString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
