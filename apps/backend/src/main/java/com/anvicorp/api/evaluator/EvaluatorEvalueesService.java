@@ -61,11 +61,18 @@ public class EvaluatorEvalueesService {
         // for the rationale. Current-month reduces to today's live set
         // (ended_at IS NULL); past-months surface interns who were
         // active in that month.
+        //
+        // params[0] is ALWAYS the month label (YYYY-MM) — bound to the
+        // month_year filter inside the projects LATERAL in
+        // LIST_BASE_SELECT_PREFIX. Interns get a fresh set of projects
+        // each month, so P1/P2 chips must be scoped to the SELECTED
+        // month's projects, not lifetime-wise.
         StringBuilder where = new StringBuilder(
                 " WHERE il.started_at IS NOT NULL "
                 + "   AND il.started_at < ?::timestamp "
                 + "   AND (il.ended_at IS NULL OR il.ended_at >= ?::timestamp) ");
         List<Object> params = new ArrayList<>();
+        params.add(range.label());           // for the projects LATERAL month_year filter
         params.add(range.endDateString());
         params.add(range.startDateString());
         if (!orgWide) {
@@ -191,10 +198,16 @@ public class EvaluatorEvalueesService {
                     + "       AND ev.status = 'PUBLISHED' "
                     + "       AND ev.intern_acknowledged_at IS NULL "
                     + ") pendingAck ON TRUE "
-                    // Embed the intern's projects (up to 2 per DB CHECK)
-                    // in one shot via json_agg — avoids the N+1 that would
-                    // arise from a per-row lookup for the per-project
-                    // status + evaluation columns.
+                    // Embed the intern's projects for the SELECTED MONTH
+                    // (up to 2 per DB CHECK) in one shot via json_agg —
+                    // avoids the N+1 that would arise from a per-row
+                    // lookup for the per-project status + evaluation
+                    // columns. Interns get a fresh set of projects each
+                    // month, so p.month_year = ? scopes the chips to the
+                    // month the caller has picked — otherwise the list
+                    // would show lifetime-wise P1/P2 and never update on
+                    // month change. The '?' binds to params[0]
+                    // (range.label(), a validated "YYYY-MM" string).
                     + "LEFT JOIN LATERAL ( "
                     + "    SELECT COALESCE(json_agg( "
                     + "        json_build_object( "
@@ -219,6 +232,7 @@ public class EvaluatorEvalueesService {
                     + "                   ON ev.linked_project_id = p.id "
                     + "                  AND ev.evaluation_type = 'POST_PROJECT' "
                     + "           WHERE p.intern_lifecycle_id = il.id "
+                    + "             AND p.month_year = ? "
                     + "      ) pp "
                     + ") proj ON TRUE ";
 
