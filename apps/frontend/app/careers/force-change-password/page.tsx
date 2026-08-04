@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2, KeyRound, ShieldAlert } from 'lucide-react';
+import PasswordInput from '@/components/careers/PasswordInput';
 import api from '@/lib/careers/api';
 import { useAuth } from '@/lib/careers/auth-context';
 
@@ -177,20 +178,33 @@ function Field({
   autoComplete?: string;
   required?: boolean;
 }) {
+  const inputClass =
+    'w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500';
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-slate-700">
         {label}{required && <span className="text-red-500"> *</span>}
       </span>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        required={required}
-        className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-      />
+      {type === 'password' ? (
+        <PasswordInput
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          required={required}
+          className={inputClass}
+        />
+      ) : (
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          required={required}
+          className={inputClass}
+        />
+      )}
     </label>
   );
 }

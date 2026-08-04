@@ -4,6 +4,7 @@ import { FormEvent, Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AuthLayout from '@/components/dashboard/AuthLayout';
+import PasswordInput from '@/components/careers/PasswordInput';
 import api from '@/lib/careers/api';
 
 /**
@@ -158,9 +159,8 @@ function ActivateForm() {
         >
           New password (min 8 characters)
         </label>
-        <input
+        <PasswordInput
           id="newPassword"
-          type="password"
           required
           minLength={8}
           autoComplete="new-password"
@@ -176,9 +176,8 @@ function ActivateForm() {
         >
           Confirm password
         </label>
-        <input
+        <PasswordInput
           id="confirmPassword"
-          type="password"
           required
           autoComplete="new-password"
           value={confirmPassword}
