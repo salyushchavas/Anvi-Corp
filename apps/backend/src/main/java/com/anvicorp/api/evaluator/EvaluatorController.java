@@ -134,8 +134,10 @@ public class EvaluatorController {
     @GetMapping("/pending-evaluations")
     @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
     public EvaluationWorkflowDtos.PendingEvaluationsResponse pendingEvaluations(
+            @RequestParam(required = false) String month,
             @AuthenticationPrincipal User caller) {
-        return pendingService.list(caller);
+        return pendingService.list(caller,
+                com.anvicorp.api.common.MonthRange.parse(month));
     }
 
     /**
@@ -160,8 +162,10 @@ public class EvaluatorController {
     @GetMapping("/i983-evaluations")
     @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
     public I983WorkflowDtos.I983ListResponse i983List(
+            @RequestParam(required = false) String month,
             @AuthenticationPrincipal User caller) {
-        return i983Workflow.list(caller);
+        return i983Workflow.list(caller,
+                com.anvicorp.api.common.MonthRange.parse(month));
     }
 
     @PostMapping("/i983-evaluations")

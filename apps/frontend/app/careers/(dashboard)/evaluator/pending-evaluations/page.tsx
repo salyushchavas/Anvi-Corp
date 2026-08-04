@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, Clock, Eye, Play, RefreshCw, Video } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { useEvaluatorDashboard } from '@/components/evaluator/EvaluatorDashboardContext';
 import type {
   AwaitingAckRow,
   PendingEvaluationsResponse,
@@ -15,6 +16,7 @@ type Tab = 'SCHEDULED' | 'AWAITING_ACK';
 
 export default function PendingEvaluationsPage() {
   const router = useRouter();
+  const { selectedMonth, isCurrentMonth } = useEvaluatorDashboard();
   const [tab, setTab] = useState<Tab>('SCHEDULED');
   const [data, setData] = useState<PendingEvaluationsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -23,9 +25,10 @@ export default function PendingEvaluationsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get<PendingEvaluationsResponse>(
-        '/api/v1/evaluator/pending-evaluations',
-      );
+      const url = isCurrentMonth
+        ? '/api/v1/evaluator/pending-evaluations'
+        : `/api/v1/evaluator/pending-evaluations?month=${encodeURIComponent(selectedMonth)}`;
+      const res = await api.get<PendingEvaluationsResponse>(url);
       setData(res.data);
       setErr(null);
     } catch (e) {
@@ -34,7 +37,7 @@ export default function PendingEvaluationsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedMonth, isCurrentMonth]);
   useEffect(() => { void load(); }, [load]);
 
   async function startSession(id: string) {

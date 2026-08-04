@@ -1,5 +1,6 @@
 package com.anvicorp.api.evaluator;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import lombok.RequiredArgsConstructor;
@@ -23,25 +24,40 @@ public class PendingEvaluationsService {
     private final JdbcTemplate jdbc;
 
     @Transactional(readOnly = true)
-    public EvaluationWorkflowDtos.PendingEvaluationsResponse list(User caller) {
+    public EvaluationWorkflowDtos.PendingEvaluationsResponse list(User caller, MonthRange range) {
         boolean orgWide = caller.getRoles() != null
                 && caller.getRoles().contains(UserRole.SUPER_ADMIN);
         UUID evaluatorId = caller.getId();
+        // Month scoping — current-month returns the byte-identical prior
+        // queue (no filter). For a past month, restrict scheduled rows to
+        // those with scheduled_for in that month, and awaiting-ack rows to
+        // those with published_at in that month.
+        MonthRange scope = range != null ? range : MonthRange.parse(null);
+        boolean isCurrent = scope.isCurrent();
 
         List<EvaluationWorkflowDtos.ScheduledRow> scheduled = new ArrayList<>();
         try {
-            String sql = "SELECT ev.id, ev.intern_lifecycle_id, "
+            StringBuilder sql = new StringBuilder(
+                    "SELECT ev.id, ev.intern_lifecycle_id, "
                     + "u.full_name AS intern_name, il.employee_id, "
                     + "ev.evaluation_type, ev.status, ev.scheduled_for, "
                     + "ev.duration_minutes, ev.zoom_join_url "
                     + "FROM intern_evaluations ev "
                     + "JOIN intern_lifecycles il ON il.id = ev.intern_lifecycle_id "
                     + "JOIN users u ON u.id = il.user_id "
-                    + "WHERE ev.status IN ('SCHEDULED','IN_PROGRESS') "
-                    + (orgWide ? "" : "  AND ev.evaluator_id = ? ")
-                    + "ORDER BY ev.scheduled_for ASC NULLS LAST";
-            Object[] params = orgWide ? new Object[0] : new Object[]{evaluatorId};
-            scheduled = jdbc.query(sql, params, (rs, n) ->
+                    + "WHERE ev.status IN ('SCHEDULED','IN_PROGRESS') ");
+            List<Object> params = new ArrayList<>();
+            if (!orgWide) {
+                sql.append("  AND ev.evaluator_id = ? ");
+                params.add(evaluatorId);
+            }
+            if (!isCurrent) {
+                sql.append("  AND ev.scheduled_for >= ?::timestamp "
+                        + "  AND ev.scheduled_for <  ?::timestamp ");
+                params.add(scope.startDateString()); params.add(scope.endDateString());
+            }
+            sql.append("ORDER BY ev.scheduled_for ASC NULLS LAST");
+            scheduled = jdbc.query(sql.toString(), params.toArray(), (rs, n) ->
                     new EvaluationWorkflowDtos.ScheduledRow(
                             UUID.fromString(rs.getString("id")),
                             UUID.fromString(rs.getString("intern_lifecycle_id")),
@@ -59,18 +75,27 @@ public class PendingEvaluationsService {
 
         List<EvaluationWorkflowDtos.AwaitingAckRow> awaiting = new ArrayList<>();
         try {
-            String sql = "SELECT ev.id, ev.intern_lifecycle_id, "
+            StringBuilder sql = new StringBuilder(
+                    "SELECT ev.id, ev.intern_lifecycle_id, "
                     + "u.full_name AS intern_name, il.employee_id, "
                     + "ev.evaluation_type, ev.published_at "
                     + "FROM intern_evaluations ev "
                     + "JOIN intern_lifecycles il ON il.id = ev.intern_lifecycle_id "
                     + "JOIN users u ON u.id = il.user_id "
                     + "WHERE ev.status = 'PUBLISHED' "
-                    + "  AND ev.intern_acknowledged_at IS NULL "
-                    + (orgWide ? "" : "  AND ev.evaluator_id = ? ")
-                    + "ORDER BY ev.published_at ASC NULLS LAST";
-            Object[] params = orgWide ? new Object[0] : new Object[]{evaluatorId};
-            awaiting = jdbc.query(sql, params, (rs, n) -> {
+                    + "  AND ev.intern_acknowledged_at IS NULL ");
+            List<Object> params = new ArrayList<>();
+            if (!orgWide) {
+                sql.append("  AND ev.evaluator_id = ? ");
+                params.add(evaluatorId);
+            }
+            if (!isCurrent) {
+                sql.append("  AND ev.published_at >= ?::timestamp "
+                        + "  AND ev.published_at <  ?::timestamp ");
+                params.add(scope.startDateString()); params.add(scope.endDateString());
+            }
+            sql.append("ORDER BY ev.published_at ASC NULLS LAST");
+            awaiting = jdbc.query(sql.toString(), params.toArray(), (rs, n) -> {
                 Instant pubAt = rs.getTimestamp("published_at") != null
                         ? rs.getTimestamp("published_at").toInstant() : null;
                 int daysPending = pubAt != null

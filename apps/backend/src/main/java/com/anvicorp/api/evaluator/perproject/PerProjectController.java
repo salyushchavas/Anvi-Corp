@@ -1,5 +1,6 @@
 package com.anvicorp.api.evaluator.perproject;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -23,12 +24,16 @@ public class PerProjectController {
 
     private final PerProjectService service;
 
-    /** §1 — evaluations awaiting this evaluator's action, sorted oldest-first. */
+    /** §1 — evaluations awaiting this evaluator's action, sorted oldest-first.
+     *  Optional {@code ?month=YYYY-MM} scopes the queue to projects whose
+     *  linked {@code completed_at} falls in that month window — current-month
+     *  omits the filter so the byte-identical prior queue is returned. */
     @GetMapping("/pending-post-project-evaluations")
     @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
     public PerProjectDtos.AwaitingEvaluationResponse listAwaiting(
+            @RequestParam(required = false) String month,
             @AuthenticationPrincipal User caller) {
-        return service.listAwaiting(caller);
+        return service.listAwaiting(caller, MonthRange.parse(month));
     }
 
     /** §3 — every project for this intern + evaluation status per project. */

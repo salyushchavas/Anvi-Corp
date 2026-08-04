@@ -1,5 +1,6 @@
 package com.anvicorp.api.evaluator.perproject;
 
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.InternEvaluation;
 import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.entity.Project;
@@ -60,17 +61,25 @@ public class PerProjectService {
     // ── §1 Awaiting-evaluation queue ────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public PerProjectDtos.AwaitingEvaluationResponse listAwaiting(User caller) {
+    public PerProjectDtos.AwaitingEvaluationResponse listAwaiting(User caller, MonthRange range) {
         requireEvaluatorOrSuperAdmin(caller);
         boolean orgWide = caller.getRoles() != null
                 && caller.getRoles().contains(UserRole.SUPER_ADMIN);
         UUID evaluatorId = caller.getId();
+        // Month scoping — current-month is byte-identical to the prior
+        // queue (no filter). For a past month, restrict to rows whose
+        // linked project's completed_at falls in the month window (the
+        // moment the evaluation queue opened for that project), OR whose
+        // evaluation was scheduled inside that window. Either signal
+        // qualifies the row as "was awaiting my action IN that month".
+        MonthRange scope = range != null ? range : MonthRange.parse(null);
+        boolean isCurrent = scope.isCurrent();
 
         // Join intern_evaluations (POST_PROJECT, still-actionable) with
         // projects (the linked project) + lifecycles + users. Also computes
         // per-intern project sequence via a window function so the
         // frontend can render "1st project", "2nd project", etc.
-        String sql =
+        StringBuilder sql = new StringBuilder(
                 "WITH ranked AS ( "
                         + "  SELECT p.id AS project_id, p.intern_lifecycle_id, "
                         + "         ROW_NUMBER() OVER ( "
@@ -94,9 +103,21 @@ public class PerProjectService {
                         + "  JOIN users u ON u.id = il.user_id "
                         + "  LEFT JOIN ranked rk ON rk.project_id = p.id "
                         + " WHERE ev.evaluation_type = 'POST_PROJECT' "
-                        + "   AND ev.status IN ('DRAFT','SCHEDULED','IN_PROGRESS') "
-                        + (orgWide ? "" : "   AND (ev.evaluator_id = ? OR ev.evaluator_id IS NULL) ")
-                        + " ORDER BY p.completed_at ASC NULLS LAST, ev.created_at ASC";
+                        + "   AND ev.status IN ('DRAFT','SCHEDULED','IN_PROGRESS') ");
+        List<Object> params = new ArrayList<>();
+        if (!orgWide) {
+            sql.append("   AND (ev.evaluator_id = ? OR ev.evaluator_id IS NULL) ");
+            params.add(evaluatorId);
+        }
+        if (!isCurrent) {
+            sql.append("   AND ( "
+                    + "        (p.completed_at >= ?::timestamp AND p.completed_at < ?::timestamp) "
+                    + "     OR (ev.scheduled_for >= ?::timestamp AND ev.scheduled_for < ?::timestamp) "
+                    + "   ) ");
+            params.add(scope.startDateString()); params.add(scope.endDateString());
+            params.add(scope.startDateString()); params.add(scope.endDateString());
+        }
+        sql.append(" ORDER BY p.completed_at ASC NULLS LAST, ev.created_at ASC");
 
         List<PerProjectDtos.AwaitingEvaluationRow> rows = new ArrayList<>();
         try {
@@ -126,9 +147,7 @@ public class PerProjectService {
                                         ? rs.getTimestamp("scheduled_for").toInstant() : null,
                                 hoursWaiting);
                     };
-            rows = orgWide
-                    ? jdbc.query(sql, mapper)
-                    : jdbc.query(sql, mapper, evaluatorId);
+            rows = jdbc.query(sql.toString(), mapper, params.toArray());
         } catch (Exception e) {
             log.warn("[PerProject] awaiting-eval query failed: {}", e.getMessage());
         }

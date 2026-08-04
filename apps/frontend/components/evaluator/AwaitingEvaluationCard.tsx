@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { AlertCircle, ClipboardList, RefreshCw, TimerReset } from 'lucide-react';
 import api from '@/lib/careers/api';
 import type { AwaitingEvaluationResponse, AwaitingEvaluationRow } from './perproject-types';
+import { useEvaluatorDashboard } from './EvaluatorDashboardContext';
 
 /**
  * Evaluator's "Projects Awaiting Evaluation" worklist.
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export default function AwaitingEvaluationCard({ limit = 6, showHeader = true }: Props) {
+  const { selectedMonth, isCurrentMonth } = useEvaluatorDashboard();
   const [data, setData] = useState<AwaitingEvaluationResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -32,9 +34,14 @@ export default function AwaitingEvaluationCard({ limit = 6, showHeader = true }:
     setLoading(true);
     setErr(null);
     try {
-      const res = await api.get<AwaitingEvaluationResponse>(
-        '/api/v1/evaluator/pending-post-project-evaluations',
-      );
+      // Sticky month scope — for a past month, restrict to projects
+      // whose completed_at (or scheduled_for) falls in that month.
+      // Current month omits the param so the byte-identical prior
+      // queue comes back.
+      const url = isCurrentMonth
+        ? '/api/v1/evaluator/pending-post-project-evaluations'
+        : `/api/v1/evaluator/pending-post-project-evaluations?month=${encodeURIComponent(selectedMonth)}`;
+      const res = await api.get<AwaitingEvaluationResponse>(url);
       setData(res.data);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -42,7 +49,7 @@ export default function AwaitingEvaluationCard({ limit = 6, showHeader = true }:
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedMonth, isCurrentMonth]);
   useEffect(() => { void load(); }, [load]);
 
   const shown = useMemo(

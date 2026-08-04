@@ -1,6 +1,7 @@
 package com.anvicorp.api.evaluator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.anvicorp.api.common.MonthRange;
 import com.anvicorp.api.entity.AuditLog;
 import com.anvicorp.api.entity.I983Evaluation;
 import com.anvicorp.api.entity.InternLifecycle;
@@ -54,13 +55,21 @@ public class I983EvaluationWorkflowService {
     // ── List (3 tabs in one response) ─────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public I983WorkflowDtos.I983ListResponse list(User caller) {
+    public I983WorkflowDtos.I983ListResponse list(User caller, MonthRange range) {
         boolean orgWide = caller.getRoles() != null
                 && caller.getRoles().contains(UserRole.SUPER_ADMIN);
         UUID evaluatorId = caller.getId();
+        // Month scoping — current-month keeps the byte-identical prior
+        // response. For a past month, filter existing eval rows to
+        // COALESCE(published_at, created_at) inside that month, and drop
+        // the dueSoon eligible-interns tab (it's a live-now concept —
+        // "who is due for I-983 attention right now").
+        MonthRange scope = range != null ? range : MonthRange.parse(null);
+        boolean isCurrent = scope.isCurrent();
 
         // 1) Existing I-983 evaluation rows (in-progress + completed)
-        String evalSql = "SELECT ie.id, ie.intern_lifecycle_id, "
+        StringBuilder evalSql = new StringBuilder(
+                "SELECT ie.id, ie.intern_lifecycle_id, "
                 + "u.full_name AS intern_name, il.employee_id, "
                 + "ie.evaluation_type, ie.status, ie.published_at, "
                 + "ie.acknowledged_at, ie.dso_submitted_to_school_at, "
@@ -74,19 +83,27 @@ public class I983EvaluationWorkflowService {
                 + "      FROM i983_plans WHERE candidate_id = c.id "
                 + "      ORDER BY created_at DESC LIMIT 1 "
                 + ") ip ON TRUE "
-                // Single-evaluator fallback — include rows where the
-                // row's evaluator_id is null OR the lifecycle's
-                // evaluator_id is null, so the list matches the
-                // EvaluatorScopeGuard's null-fallback semantics used by
-                // the detail/write paths.
-                + (orgWide ? "" : "WHERE (ie.evaluator_id = ? "
-                        + "OR ie.evaluator_id IS NULL "
-                        + "OR il.evaluator_id IS NULL) ")
-                + "ORDER BY COALESCE(ie.published_at, ie.created_at) DESC";
+                + "WHERE 1=1 ");
+        List<Object> evalParams = new ArrayList<>();
+        if (!orgWide) {
+            // Single-evaluator fallback — include rows where the row's
+            // evaluator_id is null OR the lifecycle's evaluator_id is
+            // null, matching EvaluatorScopeGuard's null-fallback semantics.
+            evalSql.append("  AND (ie.evaluator_id = ? "
+                    + "OR ie.evaluator_id IS NULL "
+                    + "OR il.evaluator_id IS NULL) ");
+            evalParams.add(evaluatorId);
+        }
+        if (!isCurrent) {
+            evalSql.append("  AND COALESCE(ie.published_at, ie.created_at) >= ?::timestamp "
+                    + "  AND COALESCE(ie.published_at, ie.created_at) <  ?::timestamp ");
+            evalParams.add(scope.startDateString()); evalParams.add(scope.endDateString());
+        }
+        evalSql.append("ORDER BY COALESCE(ie.published_at, ie.created_at) DESC");
         List<I983WorkflowDtos.I983ListRow> evalRows = new ArrayList<>();
         try {
-            evalRows = jdbc.query(evalSql,
-                    orgWide ? new Object[0] : new Object[]{evaluatorId},
+            evalRows = jdbc.query(evalSql.toString(),
+                    evalParams.toArray(),
                     (rs, n) -> {
                         Date tsd = rs.getDate("training_start_date");
                         Date ted = rs.getDate("training_end_date");
@@ -113,7 +130,12 @@ public class I983EvaluationWorkflowService {
             log.warn("[I983.list] eval query failed: {}", e.getMessage());
         }
 
-        // 2) Eligible interns (STEM OPT, no in-progress evaluation, computed due date)
+        // 2) Eligible interns (STEM OPT, no in-progress evaluation, computed due date).
+        // Skipped entirely on past-month views — the dueSoon tab is a
+        // live-now concept ("who currently needs I-983 attention"), so
+        // showing it for July's snapshot in August would be misleading.
+        List<I983WorkflowDtos.I983ListRow> eligible = new ArrayList<>();
+        if (isCurrent) {
         String eligibleSql = "SELECT il.id, u.full_name AS intern_name, "
                 + "il.employee_id, ip.training_start_date, ip.training_end_date "
                 + "FROM intern_lifecycles il "
@@ -133,7 +155,6 @@ public class I983EvaluationWorkflowService {
                 // was never stamped.
                 + (orgWide ? "" : "  AND (il.evaluator_id = ? "
                         + "OR il.evaluator_id IS NULL) ");
-        List<I983WorkflowDtos.I983ListRow> eligible = new ArrayList<>();
         try {
             eligible = jdbc.query(eligibleSql,
                     orgWide ? new Object[0] : new Object[]{evaluatorId},
@@ -162,6 +183,7 @@ public class I983EvaluationWorkflowService {
         } catch (Exception e) {
             log.warn("[I983.list] eligible query failed: {}", e.getMessage());
         }
+        } // close if (isCurrent)
 
         // Partition rows into 3 tabs.
         List<I983WorkflowDtos.I983ListRow> dueSoon = new ArrayList<>();

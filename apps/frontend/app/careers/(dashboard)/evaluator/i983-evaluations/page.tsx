@@ -15,12 +15,14 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { useEvaluatorDashboard } from '@/components/evaluator/EvaluatorDashboardContext';
 import type { I983ListResponse, I983ListRow } from '@/components/evaluator/types';
 
 type Tab = 'DUE_SOON' | 'IN_PROGRESS' | 'COMPLETED';
 
 export default function I983EvaluationsPage() {
   const router = useRouter();
+  const { selectedMonth, isCurrentMonth } = useEvaluatorDashboard();
   const [tab, setTab] = useState<Tab>('DUE_SOON');
   const [data, setData] = useState<I983ListResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,7 +31,10 @@ export default function I983EvaluationsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get<I983ListResponse>('/api/v1/evaluator/i983-evaluations');
+      const url = isCurrentMonth
+        ? '/api/v1/evaluator/i983-evaluations'
+        : `/api/v1/evaluator/i983-evaluations?month=${encodeURIComponent(selectedMonth)}`;
+      const res = await api.get<I983ListResponse>(url);
       setData(res.data);
       setErr(null);
     } catch (e) {
@@ -38,7 +43,7 @@ export default function I983EvaluationsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedMonth, isCurrentMonth]);
   useEffect(() => { void load(); }, [load]);
 
   async function startEval(id: string) {
