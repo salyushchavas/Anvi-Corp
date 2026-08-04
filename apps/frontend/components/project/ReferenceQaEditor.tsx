@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { HelpCircle, Plus, Save, Trash2 } from 'lucide-react';
 import api from '@/lib/careers/api';
 
@@ -70,21 +70,34 @@ export default function ReferenceQaEditor({ projectId }: Props) {
     setDirty(true);
   }
 
-  async function save() {
+  // Ref-tracked mutable copy so the auto-save timer + blur handler can
+  // read the latest pairs without adding `pairs` to their dep arrays
+  // (which would re-schedule the timer on every keystroke).
+  const pairsRef = useRef(pairs);
+  useEffect(() => { pairsRef.current = pairs; }, [pairs]);
+  const dirtyRef = useRef(dirty);
+  useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
+  const savingRef = useRef(false);
+  useEffect(() => { savingRef.current = saving; }, [saving]);
+
+  const doSave = useCallback(async (currentPairs: ReferenceQaPair[], opts?: { silent?: boolean }) => {
+    if (savingRef.current) return;
+    const clean = currentPairs
+      .map((p) => ({ question: p.question.trim(), answer: p.answer.trim() }))
+      .filter((p) => p.question || p.answer);
+    // Auto-save silently skips half-filled pairs — the trainer is
+    // probably mid-typing an answer. Manual Save still surfaces the
+    // hard error so the button click always gets feedback.
+    const halfFilled = clean.find((p) => !p.question || !p.answer);
+    if (halfFilled) {
+      if (!opts?.silent) {
+        setSaveErr('Every pair needs both a question and an answer.');
+      }
+      return;
+    }
     setSaving(true);
     setSaveErr(null);
     try {
-      const clean = pairs
-        .map((p) => ({ question: p.question.trim(), answer: p.answer.trim() }))
-        .filter((p) => p.question || p.answer);
-      // Reject half-filled pairs client-side so the backend 400 message
-      // never surprises the trainer mid-save.
-      const halfFilled = clean.find((p) => !p.question || !p.answer);
-      if (halfFilled) {
-        setSaveErr('Every pair needs both a question and an answer.');
-        setSaving(false);
-        return;
-      }
       const res = await api.put<{ pairs: ReferenceQaPair[] }>(
         `/api/v1/trainer/projects/${projectId}/reference-qa`,
         { pairs: clean },
@@ -101,7 +114,37 @@ export default function ReferenceQaEditor({ projectId }: Props) {
     } finally {
       setSaving(false);
     }
-  }
+  }, [projectId]);
+
+  // Manual "Save Q&A" button — surfaces the half-filled error loudly so
+  // the trainer sees why nothing persisted.
+  const save = useCallback(() => {
+    void doSave(pairsRef.current, { silent: false });
+  }, [doSave]);
+
+  // Auto-save on blur — fixes the classic loss case where the trainer
+  // types Q&A pairs, then closes the review modal via the outer
+  // "Submit feedback" button without ever clicking the separate
+  // "Save Q&A" button. Blur fires before the modal unmounts, so the
+  // in-flight PUT persists even if the parent tears the editor down.
+  const handleBlur = useCallback(() => {
+    if (dirtyRef.current) {
+      void doSave(pairsRef.current, { silent: true });
+    }
+  }, [doSave]);
+
+  // Debounced auto-save — catches long typing sessions where the
+  // trainer never tabs away from a field but pauses. Fires 2s after
+  // the last change.
+  useEffect(() => {
+    if (!dirty) return;
+    const t = setTimeout(() => {
+      if (dirtyRef.current && !savingRef.current) {
+        void doSave(pairsRef.current, { silent: true });
+      }
+    }, 2000);
+    return () => clearTimeout(t);
+  }, [dirty, pairs, doSave]);
 
   return (
     <section className="rounded-md border border-slate-200 bg-white p-3">
@@ -153,6 +196,7 @@ export default function ReferenceQaEditor({ projectId }: Props) {
                     <textarea
                       value={p.question}
                       onChange={(e) => update(idx, { question: e.target.value })}
+                      onBlur={handleBlur}
                       rows={2}
                       maxLength={2000}
                       placeholder="e.g. Why was Kubernetes chosen over ECS for this deployment?"
@@ -166,6 +210,7 @@ export default function ReferenceQaEditor({ projectId }: Props) {
                     <textarea
                       value={p.answer}
                       onChange={(e) => update(idx, { answer: e.target.value })}
+                      onBlur={handleBlur}
                       rows={3}
                       maxLength={5000}
                       placeholder="The reference answer the evaluator can compare against."

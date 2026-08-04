@@ -299,8 +299,12 @@ export default function ComposePage() {
 
           {/* Trainer Reference Q&A — read-only panel resolved via the
               evaluation's linked project OR the recording project selector
-              (updates live if the evaluator picks a different project). */}
-          <ReferenceQaPanel projectId={selectedProject || data.linkedProjectId || null} />
+              (updates live if the evaluator picks a different project).
+              alwaysShow renders an explicit empty-state note when the
+              trainer hasn't attached any pairs — otherwise the panel
+              silently disappears and the evaluator can't tell "no Q&A"
+              apart from "Q&A never loaded". */}
+          <ReferenceQaPanel projectId={selectedProject || data.linkedProjectId || null} alwaysShow />
 
           {/* Session recording */}
           <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
