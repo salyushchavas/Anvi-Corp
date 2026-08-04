@@ -105,4 +105,25 @@ public class PerProjectController {
             @AuthenticationPrincipal User caller) {
         return service.bulkSchedule(req, caller);
     }
+
+    /**
+     * §6 — start EVERY evaluation covered by a shared session in ONE
+     * click. Backs the session-strip's Start button on the evaluee
+     * detail hub: for a "Schedule Final" that covered two projects,
+     * both rows advance to IN_PROGRESS together so the trainer no
+     * longer sees mixed Start / Continue states across group members.
+     * A group-of-one (single-project session) also works — same call,
+     * same semantics, just one row advances.
+     */
+    @PostMapping("/session-groups/{sessionGroupId}/start")
+    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
+    public java.util.Map<String, Object> startSessionGroup(
+            @PathVariable UUID sessionGroupId,
+            @AuthenticationPrincipal User caller) {
+        java.util.List<UUID> started = service.startSessionGroup(sessionGroupId, caller);
+        return java.util.Map.of(
+                "sessionGroupId", sessionGroupId,
+                "startedEvaluationIds", started,
+                "count", started.size());
+    }
 }

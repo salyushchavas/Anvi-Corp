@@ -163,6 +163,18 @@ public class InternEvaluation {
     private UUID recordingDocumentId;
 
     /**
+     * Session grouping — evaluations scheduled together (bulkSchedule
+     * covering multiple POST_PROJECT evaluations) share a single
+     * {@code sessionGroupId} so the evaluator sees ONE start affordance,
+     * ONE recording, and ONE cancel/reschedule surface for the whole
+     * meeting. Single-project sessions get a group-of-one on schedule
+     * (deterministic per-eval UUID). Null on legacy rows until the
+     * SchemaFixupRunner backfill runs at boot.
+     */
+    @Column(name = "session_group_id")
+    private UUID sessionGroupId;
+
+    /**
      * Manager approval gate for the attached recording. Set to
      * {@code PENDING_APPROVAL} the moment a recording is saved on the
      * evaluation, then transitions to {@code APPROVED} or

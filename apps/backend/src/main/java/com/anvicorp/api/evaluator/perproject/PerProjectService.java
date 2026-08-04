@@ -173,6 +173,17 @@ public class PerProjectService {
                         + "         ) AS project_seq "
                         + "    FROM projects p "
                         + "   WHERE p.intern_lifecycle_id = ? "
+                        + "), group_counts AS ( "
+                        // How many of THIS intern's project-linked
+                        // evaluations belong to each session group. The
+                        // strip fires when this count >= 2.
+                        + "  SELECT session_group_id, COUNT(*) AS members "
+                        + "    FROM intern_evaluations "
+                        + "   WHERE intern_lifecycle_id = ? "
+                        + "     AND evaluation_type = 'POST_PROJECT' "
+                        + "     AND session_group_id IS NOT NULL "
+                        + "     AND linked_project_id IS NOT NULL "
+                        + "   GROUP BY session_group_id "
                         + ") "
                         + "SELECT p.id AS project_id, rk.project_seq, "
                         + "       p.title, p.tech_stack, p.status AS project_status, "
@@ -181,12 +192,16 @@ public class PerProjectService {
                         + "       ev.scheduled_for AS eval_scheduled_for, "
                         + "       ev.timezone AS eval_timezone, "
                         + "       ev.published_at AS eval_published_at, "
-                        + "       ev.overall_score, ev.recommendation "
+                        + "       ev.overall_score, ev.recommendation, "
+                        + "       ev.session_group_id AS session_group_id, "
+                        + "       gc.members AS session_group_members "
                         + "  FROM projects p "
                         + "  JOIN ranked rk ON rk.project_id = p.id "
                         + "  LEFT JOIN intern_evaluations ev "
                         + "         ON ev.linked_project_id = p.id "
                         + "        AND ev.evaluation_type = 'POST_PROJECT' "
+                        + "  LEFT JOIN group_counts gc "
+                        + "         ON gc.session_group_id = ev.session_group_id "
                         + " WHERE p.intern_lifecycle_id = ? "
                         + " ORDER BY rk.project_seq ASC";
 
@@ -199,6 +214,10 @@ public class PerProjectService {
                         Integer overallScore = (Integer) rs.getObject("overall_score");
                         String uiState = deriveUiState(projStatus, evalStatus);
                         String evalIdRaw = rs.getString("evaluation_id");
+                        String groupIdRaw = rs.getString("session_group_id");
+                        Object membersObj = rs.getObject("session_group_members");
+                        Integer memberCount = membersObj != null
+                                ? ((Number) membersObj).intValue() : null;
                         return new PerProjectDtos.ProjectTimelineEntry(
                                 UUID.fromString(rs.getString("project_id")),
                                 rs.getInt("project_seq"),
@@ -220,9 +239,11 @@ public class PerProjectService {
                                         ? rs.getTimestamp("eval_published_at").toInstant() : null,
                                 overallScore,
                                 rs.getString("recommendation"),
+                                groupIdRaw != null ? UUID.fromString(groupIdRaw) : null,
+                                memberCount,
                                 uiState);
                     };
-            entries = jdbc.query(sql, mapper, lifecycleId, lifecycleId);
+            entries = jdbc.query(sql, mapper, lifecycleId, lifecycleId, lifecycleId);
         } catch (Exception e) {
             log.warn("[PerProject] timeline query failed for lc={}: {}",
                     lifecycleId, e.getMessage());
@@ -424,6 +445,14 @@ public class PerProjectService {
         ev.setTimezone(req.timezone() != null && !req.timezone().isBlank()
                 ? req.timezone() : "UTC");
         ev.setStatus("SCHEDULED");
+        // Group-of-one — a single-project session gets its own
+        // sessionGroupId so downstream reads (project timeline, session
+        // strip, scheduled sessions) can uniformly treat every scheduled
+        // evaluation as a member of some group. Existing group id is
+        // preserved on reschedule so the group stays intact.
+        if (ev.getSessionGroupId() == null) {
+            ev.setSessionGroupId(UUID.randomUUID());
+        }
         // Stamp the period on POST_PROJECT rows so the recording gallery
         // groups the session under the correct month folder. MONTHLY +
         // FINAL evaluations set period_start at creation; POST_PROJECT
@@ -682,6 +711,12 @@ public class PerProjectService {
             }
         }
 
+        // One session group id shared across every row in this bulk —
+        // the whole point of "Final Session" is one meeting = one
+        // group. Downstream the strip UI, recording propagation, and
+        // cancel/reschedule all key on this id.
+        UUID sharedGroupId = UUID.randomUUID();
+
         // Stamp shared meeting details on every row + advance status.
         java.util.List<UUID> updatedIds = new java.util.ArrayList<>(evals.size());
         for (InternEvaluation ev : evals) {
@@ -698,6 +733,7 @@ public class PerProjectService {
                 ev.setZoomPassword(password);
             }
             ev.setStatus(targetStatus);
+            ev.setSessionGroupId(sharedGroupId);
             InternEvaluation saved = evalRepo.save(ev);
             updatedIds.add(saved.getId());
             try {
@@ -712,6 +748,63 @@ public class PerProjectService {
                 updatedIds.size(), caller.getId(), targetStatus);
         return new PerProjectDtos.BulkScheduleResponse(
                 updatedIds.size(), zoomId, joinUrl, updatedIds);
+    }
+
+    // ── §6 Session-group actions ─────────────────────────────────────────
+
+    /**
+     * Start EVERY evaluation covered by a shared session in one action.
+     * Any SCHEDULED member advances to IN_PROGRESS; PUBLISHED /
+     * ACKNOWLEDGED / AMENDED / CANCELLED members are skipped silently
+     * (already terminal — starting them would regress state). Returns
+     * the list of eval ids the caller can now compose against.
+     *
+     * <p>Ownership: every member's lifecycle must pass the evaluator
+     * scope guard. Because bulkSchedule already validated ownership for
+     * every row when the group was created, this is defensive — an
+     * evaluator who lost access mid-flow won't accidentally advance
+     * rows they can't own.</p>
+     */
+    @Transactional
+    public java.util.List<UUID> startSessionGroup(UUID sessionGroupId, User caller) {
+        requireEvaluatorOrSuperAdmin(caller);
+        if (sessionGroupId == null) {
+            throw new BadRequestException("sessionGroupId required");
+        }
+        java.util.List<InternEvaluation> members = evalRepo.findBySessionGroupId(sessionGroupId);
+        if (members.isEmpty()) {
+            throw new ResourceNotFoundException(
+                    "No evaluations found for session group: " + sessionGroupId);
+        }
+        // Validate ownership on every member first — atomic: if any
+        // member fails scope, no transitions land.
+        java.util.Set<UUID> lifecycleIds = new java.util.HashSet<>();
+        for (InternEvaluation ev : members) lifecycleIds.add(ev.getInternLifecycleId());
+        java.util.Map<UUID, InternLifecycle> lifecycleMap = new java.util.HashMap<>();
+        for (InternLifecycle lc : lifecycleRepo.findAllById(lifecycleIds)) {
+            lifecycleMap.put(lc.getId(), lc);
+        }
+        for (InternEvaluation ev : members) {
+            InternLifecycle lc = lifecycleMap.get(ev.getInternLifecycleId());
+            evaluatorScopeGuard.requireEvaluatorOwnership(lc, caller);
+        }
+        java.util.List<UUID> started = new java.util.ArrayList<>(members.size());
+        for (InternEvaluation ev : members) {
+            if ("SCHEDULED".equals(ev.getStatus())) {
+                ev.setStatus("IN_PROGRESS");
+                evalRepo.save(ev);
+                started.add(ev.getId());
+            } else if ("IN_PROGRESS".equals(ev.getStatus())) {
+                // Already in-session — include in the return so the caller
+                // knows every group member is now startable.
+                started.add(ev.getId());
+            }
+            // Terminal / cancelled rows are skipped silently — group
+            // start never un-publishes work.
+        }
+        log.info("[PerProject] session group {} started {} of {} members by {}",
+                sessionGroupId, started.size(), members.size(), caller.getId());
+        return started;
     }
 
     // ── Guards ──────────────────────────────────────────────────────────

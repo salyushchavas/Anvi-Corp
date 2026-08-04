@@ -100,6 +100,22 @@ public class SchemaFixupRunner implements CommandLineRunner {
                     e.getMessage(), e);
         }
 
+        // Session-group column — evaluations scheduled together via
+        // bulkSchedule share a session_group_id so the evaluator sees ONE
+        // start button + ONE recording surface. Column is IF NOT EXISTS
+        // (ddl-auto=update also adds it, this belts-and-suspenders for
+        // boot ordering); backfill runs once and stamps a group id on
+        // every legacy row that has a scheduled_for (row-alone gets its
+        // own group-of-one; rows sharing lifecycle + scheduled_for +
+        // zoom_meeting_id collapse to one group).
+        try {
+            ensureEvaluationSessionGroupIdColumn();
+        } catch (Exception e) {
+            log.error("[SchemaFixupRunner] session_group_id column ensure threw "
+                    + "(non-fatal, per-card start remains until next boot): {}",
+                    e.getMessage(), e);
+        }
+
         // Recording gallery month-folder fix — backfill period_start on
         // intern_evaluations rows where it never got stamped (POST_PROJECT
         // auto-drafts, legacy rows). Without a period_start the gallery
@@ -4440,6 +4456,88 @@ public class SchemaFixupRunner implements CommandLineRunner {
         } catch (Exception e) {
             log.warn("[SchemaFixupRunner] intern_evaluations.period_start "
                     + "backfill skipped (non-fatal): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Adds {@code intern_evaluations.session_group_id UUID NULL} + an
+     * index for group lookups, then backfills legacy rows so an existing
+     * "final session" (multiple POST_PROJECT rows scheduled together
+     * before this feature existed) collapses into one group id.
+     *
+     * <p>Collapse rule: rows sharing the same
+     * ({@code intern_lifecycle_id}, {@code scheduled_for},
+     * {@code zoom_meeting_id}) are treated as the same session and
+     * assigned one group id. Rows with a scheduled_for but no zoom (or
+     * standalone rows) each get their own group id (group-of-one). Rows
+     * with a NULL scheduled_for stay NULL — they haven't been scheduled
+     * so there's no group yet.</p>
+     *
+     * <p>Fully idempotent: only touches rows where
+     * {@code session_group_id IS NULL}, so a repeat boot is a cheap
+     * no-op.</p>
+     */
+    private void ensureEvaluationSessionGroupIdColumn() {
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE intern_evaluations "
+                            + "ADD COLUMN IF NOT EXISTS session_group_id UUID");
+            log.info("[SchemaFixupRunner] session_group_id column ensured on intern_evaluations");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] session_group_id ADD COLUMN skipped (non-fatal): {}",
+                    e.getMessage());
+            return;
+        }
+        try {
+            jdbcTemplate.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_intern_evaluations_session_group_id "
+                            + "ON intern_evaluations (session_group_id) "
+                            + "WHERE session_group_id IS NOT NULL");
+        } catch (Exception e) {
+            log.debug("[SchemaFixupRunner] session_group_id index skipped (non-fatal): {}",
+                    e.getMessage());
+        }
+        // Multi-row groups first: rows sharing lifecycle + scheduled_for
+        // + zoom_meeting_id collapse to one uuid_generate_v4() per set.
+        // Uses a CTE so every row in the same set gets the same id in
+        // one UPDATE.
+        try {
+            int multi = jdbcTemplate.update(
+                    "WITH shared AS ( "
+                            + "  SELECT intern_lifecycle_id, scheduled_for, zoom_meeting_id, "
+                            + "         gen_random_uuid() AS gid "
+                            + "    FROM intern_evaluations "
+                            + "   WHERE session_group_id IS NULL "
+                            + "     AND scheduled_for IS NOT NULL "
+                            + "     AND zoom_meeting_id IS NOT NULL "
+                            + "   GROUP BY intern_lifecycle_id, scheduled_for, zoom_meeting_id "
+                            + "  HAVING COUNT(*) > 1 "
+                            + ") "
+                            + "UPDATE intern_evaluations ev "
+                            + "   SET session_group_id = s.gid "
+                            + "  FROM shared s "
+                            + " WHERE ev.session_group_id IS NULL "
+                            + "   AND ev.intern_lifecycle_id = s.intern_lifecycle_id "
+                            + "   AND ev.scheduled_for = s.scheduled_for "
+                            + "   AND ev.zoom_meeting_id = s.zoom_meeting_id");
+            log.info("[SchemaFixupRunner] session_group_id backfill — collapsed {} legacy "
+                    + "multi-row groups", multi);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] session_group_id multi-row backfill skipped "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+        // Then group-of-one for every remaining scheduled row.
+        try {
+            int solo = jdbcTemplate.update(
+                    "UPDATE intern_evaluations "
+                            + "   SET session_group_id = gen_random_uuid() "
+                            + " WHERE session_group_id IS NULL "
+                            + "   AND scheduled_for IS NOT NULL");
+            log.info("[SchemaFixupRunner] session_group_id backfill — stamped {} legacy "
+                    + "group-of-one rows (idempotent)", solo);
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] session_group_id solo backfill skipped "
+                    + "(non-fatal): {}", e.getMessage());
         }
     }
 

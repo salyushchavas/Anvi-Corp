@@ -274,6 +274,12 @@ export interface ScheduledRow {
   scheduledFor: string | null;
   durationMinutes: number | null;
   zoomJoinUrl: string | null;
+  /** Rows sharing the same non-null value belong to one meeting —
+   *  the page collapses them into one "N projects" entry. */
+  sessionGroupId: string | null;
+  /** Optional per-row project label so the collapsed entry can read
+   *  "Project A + Project B". Null on MONTHLY / FINAL rows. */
+  linkedProjectTitle: string | null;
 }
 
 export interface AwaitingAckRow {

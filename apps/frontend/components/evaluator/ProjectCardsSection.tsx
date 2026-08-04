@@ -18,6 +18,7 @@ import ProjectContextPanel from './ProjectContextPanel';
 import InlineRecordingPlayer from './InlineRecordingPlayer';
 import SchedulePostProjectDialog from './SchedulePostProjectDialog';
 import ScheduleFinalSessionDialog from './ScheduleFinalSessionDialog';
+import SessionStrip from './SessionStrip';
 import ReferenceQaPanel from '@/components/project/ReferenceQaPanel';
 import type { ProjectTimelineEntry, ProjectTimelineResponse } from './perproject-types';
 import {
@@ -113,6 +114,33 @@ export default function ProjectCardsSection({ lifecycleId }: Props) {
     [entries],
   );
 
+  // Multi-project session groups — every non-null sessionGroupId with
+  // >=2 members in this intern's cards forms a group that renders as a
+  // single SessionStrip. The per-card Start button is suppressed for
+  // every card in such a group; per-card Continue / Open / etc. stay
+  // (composition + publishing remain per-project).
+  const sessionGroups = useMemo(() => {
+    const byGroup = new Map<string, ProjectTimelineEntry[]>();
+    for (const e of entries) {
+      if (!e.sessionGroupId) continue;
+      if ((e.sessionGroupMemberCount ?? 1) < 2) continue;
+      const list = byGroup.get(e.sessionGroupId) ?? [];
+      list.push(e);
+      byGroup.set(e.sessionGroupId, list);
+    }
+    return Array.from(byGroup.entries()).map(([groupId, members]) => ({
+      groupId,
+      members: members.sort((a, b) => a.projectSequence - b.projectSequence),
+    }));
+  }, [entries]);
+  const groupSuppressedProjectIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of sessionGroups) {
+      for (const m of g.members) set.add(m.projectId);
+    }
+    return set;
+  }, [sessionGroups]);
+
   function toggleSelected(projectId: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -194,6 +222,18 @@ export default function ProjectCardsSection({ lifecycleId }: Props) {
         </p>
       )}
 
+      {/* Session strips — one per multi-project group. Placed BETWEEN
+          the header/pills row and the project cards so the operator's
+          eye reaches "one session covering these projects, one Start
+          button" before it lands on the individual card grid. */}
+      {sessionGroups.map((g) => (
+        <SessionStrip
+          key={g.groupId}
+          members={g.members}
+          onGroupStarted={load}
+        />
+      ))}
+
       {entries.length > 0 && (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {entries.map((entry) => (
@@ -204,6 +244,7 @@ export default function ProjectCardsSection({ lifecycleId }: Props) {
               selected={selected.has(entry.projectId)}
               onToggleSelect={() => toggleSelected(entry.projectId)}
               onChange={load}
+              groupSuppressStart={groupSuppressedProjectIds.has(entry.projectId)}
             />
           ))}
         </div>
@@ -230,12 +271,18 @@ export default function ProjectCardsSection({ lifecycleId }: Props) {
 
 function ProjectCard({
   entry, selectionMode, selected, onToggleSelect, onChange,
+  groupSuppressStart,
 }: {
   entry: ProjectTimelineEntry;
   selectionMode: boolean;
   selected: boolean;
   onToggleSelect: () => void;
   onChange: () => void;
+  /** True when this card is a member of a multi-project session group.
+   *  The Start / Reschedule affordances live on the shared SessionStrip
+   *  above the card grid — the card shows state only for those actions.
+   *  Continue / Open / other terminal-state actions stay per-card. */
+  groupSuppressStart: boolean;
 }) {
   const router = useRouter();
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -408,52 +455,67 @@ function ProjectCard({
           Scheduled-session info (left, blue when SCHEDULED) + all
           per-card actions (right: secondary "Reschedule" then the
           primary action button). Every state routes its actions here
-          — nothing lives in the top status bar or mid-body anymore. */}
-      {(disp.actionKind !== 'NONE' || showRescheduleSecondary || scheduledLabel || actionErr) && (
-        <div className={
-          'border-t border-slate-200 ' +
-          (scheduledLabel ? 'bg-brand-50/50' : 'bg-slate-50/70')
-        }>
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
-            {scheduledLabel ? (
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-brand-900">
-                <CalendarCheck className="h-3.5 w-3.5" />
-                {scheduledLabel}
-              </span>
-            ) : (
-              // Spacer keeps justify-between pushing the button cluster
-              // to the right on states with no scheduled-session line.
-              <span />
-            )}
-            {(disp.actionKind !== 'NONE' || showRescheduleSecondary) && (
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                {showRescheduleSecondary && (
-                  <button type="button"
-                    onClick={() => setScheduleOpen(true)}
-                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                    <CalendarPlus className="h-3 w-3" />
-                    Reschedule
-                  </button>
-                )}
-                {disp.actionKind !== 'NONE' && (
-                  <button type="button"
-                    onClick={triggerPrimaryAction}
-                    disabled={startingSession}
-                    className={primaryButtonCls + ' disabled:opacity-60'}>
-                    <PrimaryIcon className="h-3 w-3" />
-                    {startingSession ? 'Starting…' : disp.actionLabel}
-                  </button>
-                )}
-              </div>
+          — nothing lives in the top status bar or mid-body anymore.
+
+          When groupSuppressStart AND the state is SCHEDULED, the
+          Start + Reschedule buttons are hidden here because the shared
+          SessionStrip above owns them. The datetime line still shows so
+          the card is self-describing. Post-session (IN_PROGRESS /
+          COMPLETED), per-card Continue / Open still render — composition
+          and publishing stay per-project even inside a shared session. */}
+      {(() => {
+        const suppressPrimary = groupSuppressStart && disp.actionKind === 'START';
+        const suppressReschedule = groupSuppressStart && showRescheduleSecondary;
+        const showPrimary = disp.actionKind !== 'NONE' && !suppressPrimary;
+        const showReschedule = showRescheduleSecondary && !suppressReschedule;
+        const showFooter = showPrimary || showReschedule || scheduledLabel || actionErr;
+        if (!showFooter) return null;
+        return (
+          <div className={
+            'border-t border-slate-200 ' +
+            (scheduledLabel ? 'bg-brand-50/50' : 'bg-slate-50/70')
+          }>
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
+              {scheduledLabel ? (
+                <span className="inline-flex items-center gap-1.5 text-[11px] text-brand-900">
+                  <CalendarCheck className="h-3.5 w-3.5" />
+                  {scheduledLabel}
+                </span>
+              ) : (
+                // Spacer keeps justify-between pushing the button cluster
+                // to the right on states with no scheduled-session line.
+                <span />
+              )}
+              {(showPrimary || showReschedule) && (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {showReschedule && (
+                    <button type="button"
+                      onClick={() => setScheduleOpen(true)}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                      <CalendarPlus className="h-3 w-3" />
+                      Reschedule
+                    </button>
+                  )}
+                  {showPrimary && (
+                    <button type="button"
+                      onClick={triggerPrimaryAction}
+                      disabled={startingSession}
+                      className={primaryButtonCls + ' disabled:opacity-60'}>
+                      <PrimaryIcon className="h-3 w-3" />
+                      {startingSession ? 'Starting…' : disp.actionLabel}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            {actionErr && (
+              <p className="mx-4 mb-2 rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-800">
+                {actionErr}
+              </p>
             )}
           </div>
-          {actionErr && (
-            <p className="mx-4 mb-2 rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-800">
-              {actionErr}
-            </p>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       {scheduleOpen && (
         <SchedulePostProjectDialog

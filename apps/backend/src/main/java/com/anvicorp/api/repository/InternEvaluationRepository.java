@@ -27,4 +27,9 @@ public interface InternEvaluationRepository extends JpaRepository<InternEvaluati
     Optional<InternEvaluation> findByLinkedProjectId(UUID linkedProjectId);
 
     Optional<InternEvaluation> findFirstByZoomMeetingId(String zoomMeetingId);
+
+    /** Every evaluation covered by one shared session (final-session or
+     *  single-project group-of-one). Used for one-click group start,
+     *  group-scoped recording propagation, and cancel/reschedule fan-out. */
+    List<InternEvaluation> findBySessionGroupId(UUID sessionGroupId);
 }

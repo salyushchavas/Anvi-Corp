@@ -70,6 +70,17 @@ public final class PerProjectDtos {
             Instant evaluationPublishedAt,
             Integer evaluationOverallScore,
             String evaluationRecommendation,
+            /** Session-group id shared by every evaluation covered by the
+             *  same meeting. Null when the evaluation hasn't been scheduled
+             *  yet (no group). Two entries with the same non-null
+             *  {@code sessionGroupId} render ONE session strip together;
+             *  a group of one collapses back to per-card render. */
+            UUID sessionGroupId,
+            /** How many project cards for THIS intern share this
+             *  {@code sessionGroupId}. 1 = per-card render (single project
+             *  session). ≥2 = render the shared session strip; per-card
+             *  Start hidden. Null when {@code sessionGroupId} is null. */
+            Integer sessionGroupMemberCount,
             /** Derived UI state for the timeline chip. */
             String uiState                  // IN_PROGRESS | AWAITING_EVAL | EVALUATED | AMENDED
     ) {}

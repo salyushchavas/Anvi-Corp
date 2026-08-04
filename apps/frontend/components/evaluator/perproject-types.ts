@@ -47,6 +47,13 @@ export interface ProjectTimelineEntry {
   evaluationPublishedAt: string | null;
   evaluationOverallScore: number | null;
   evaluationRecommendation: string | null;
+  /** Non-null once the evaluation is scheduled. Two entries with the
+   *  same non-null value share a session — a session strip renders and
+   *  the per-card Start button is hidden. */
+  sessionGroupId: string | null;
+  /** How many of THIS intern's project-linked evaluations share the
+   *  same {@code sessionGroupId}. >=2 triggers the strip. */
+  sessionGroupMemberCount: number | null;
   uiState: ProjectTimelineUiState;
 }
 

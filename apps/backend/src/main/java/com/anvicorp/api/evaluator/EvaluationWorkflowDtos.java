@@ -205,7 +205,16 @@ public final class EvaluationWorkflowDtos {
             String status,
             Instant scheduledFor,
             Integer durationMinutes,
-            String zoomJoinUrl
+            String zoomJoinUrl,
+            /** Shared across every evaluation covered by the same meeting.
+             *  The frontend collapses rows with the same non-null value
+             *  into one "one session covering N projects" entry. Null on
+             *  legacy rows until the SchemaFixupRunner backfill runs. */
+            UUID sessionGroupId,
+            /** Optional per-row project label so the collapsed entry can
+             *  render "Project A + Project B" — null for MONTHLY / FINAL
+             *  rows that aren't project-linked. */
+            String linkedProjectTitle
     ) {}
 
     public record AwaitingAckRow(

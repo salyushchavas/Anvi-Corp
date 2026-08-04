@@ -41,10 +41,12 @@ public class PendingEvaluationsService {
                     "SELECT ev.id, ev.intern_lifecycle_id, "
                     + "u.full_name AS intern_name, il.employee_id, "
                     + "ev.evaluation_type, ev.status, ev.scheduled_for, "
-                    + "ev.duration_minutes, ev.zoom_join_url "
+                    + "ev.duration_minutes, ev.zoom_join_url, "
+                    + "ev.session_group_id, p.title AS linked_project_title "
                     + "FROM intern_evaluations ev "
                     + "JOIN intern_lifecycles il ON il.id = ev.intern_lifecycle_id "
                     + "JOIN users u ON u.id = il.user_id "
+                    + "LEFT JOIN projects p ON p.id = ev.linked_project_id "
                     + "WHERE ev.status IN ('SCHEDULED','IN_PROGRESS') ");
             List<Object> params = new ArrayList<>();
             if (!orgWide) {
@@ -57,18 +59,22 @@ public class PendingEvaluationsService {
                 params.add(scope.startDateString()); params.add(scope.endDateString());
             }
             sql.append("ORDER BY ev.scheduled_for ASC NULLS LAST");
-            scheduled = jdbc.query(sql.toString(), params.toArray(), (rs, n) ->
-                    new EvaluationWorkflowDtos.ScheduledRow(
-                            UUID.fromString(rs.getString("id")),
-                            UUID.fromString(rs.getString("intern_lifecycle_id")),
-                            rs.getString("intern_name"),
-                            rs.getString("employee_id"),
-                            rs.getString("evaluation_type"),
-                            rs.getString("status"),
-                            rs.getTimestamp("scheduled_for") != null
-                                    ? rs.getTimestamp("scheduled_for").toInstant() : null,
-                            (Integer) rs.getObject("duration_minutes"),
-                            rs.getString("zoom_join_url")));
+            scheduled = jdbc.query(sql.toString(), params.toArray(), (rs, n) -> {
+                String groupIdRaw = rs.getString("session_group_id");
+                return new EvaluationWorkflowDtos.ScheduledRow(
+                        UUID.fromString(rs.getString("id")),
+                        UUID.fromString(rs.getString("intern_lifecycle_id")),
+                        rs.getString("intern_name"),
+                        rs.getString("employee_id"),
+                        rs.getString("evaluation_type"),
+                        rs.getString("status"),
+                        rs.getTimestamp("scheduled_for") != null
+                                ? rs.getTimestamp("scheduled_for").toInstant() : null,
+                        (Integer) rs.getObject("duration_minutes"),
+                        rs.getString("zoom_join_url"),
+                        groupIdRaw != null ? UUID.fromString(groupIdRaw) : null,
+                        rs.getString("linked_project_title"));
+            });
         } catch (Exception e) {
             log.warn("[PendingEvaluations] scheduled query failed: {}", e.getMessage());
         }

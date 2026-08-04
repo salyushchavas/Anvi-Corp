@@ -184,45 +184,62 @@ public class EvaluationRecordingService {
             ev.setLinkedProjectId(req.linkedProjectId());
         }
 
-        ev.setRecordingDocumentId(doc.getId());
-        // Safety net for the recording gallery month grouping. If the
-        // evaluation row somehow reached upload with a null period_start
-        // (legacy rows, or a POST_PROJECT auto-draft that was never
-        // scheduled through the standard path), stamp one now so the
-        // gallery groups the recording under a real month instead of
-        // "unknown". Rule: scheduled session date if present, else
-        // recording upload date, else today. Only stamp when null so a
-        // re-upload doesn't rewrite an already-set period.
-        if (ev.getPeriodStart() == null) {
-            LocalDate derived = ev.getScheduledFor() != null
-                    ? ev.getScheduledFor().atZone(java.time.ZoneOffset.UTC).toLocalDate()
-                    : (doc.getCreatedAt() != null
-                            ? doc.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate()
-                            : LocalDate.now(java.time.ZoneOffset.UTC));
-            ev.setPeriodStart(derived);
-            if (ev.getPeriodEnd() == null) ev.setPeriodEnd(derived);
-        }
-        // Any (re-)upload resets the gate to PENDING_APPROVAL. Applies
-        // both to a fresh upload and to a re-upload after REVISION_REQUESTED:
-        // the manager gets the same fresh-eyes queue treatment either way,
-        // and the evaluator can't peek at their own recording until the
-        // manager clears it (visibility matrix enforced in presignDownload).
-        ev.setRecordingApprovalStatus(STATUS_PENDING);
-        ev.setRecordingRevisionNotes(null);
-        ev.setRecordingApprovedBy(null);
-        ev.setRecordingApprovedAt(null);
+        // Group-scoped recording — a "Schedule Final" that covers two
+        // projects should surface ONE recording upload that satisfies
+        // both project cards. If this evaluation belongs to a
+        // multi-member session group, stamp the recording (+ approval
+        // reset + period backfill) on EVERY member so downstream
+        // reads (gallery, cards, validations) see one uploaded artifact
+        // group-wide. Single-project sessions (group-of-one or no
+        // group) update only this row.
+        List<InternEvaluation> updateTargets = ev.getSessionGroupId() != null
+                ? evalRepo.findBySessionGroupId(ev.getSessionGroupId())
+                : List.of(ev);
+
+        LocalDate derivedPeriod = ev.getScheduledFor() != null
+                ? ev.getScheduledFor().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                : (doc.getCreatedAt() != null
+                        ? doc.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                        : LocalDate.now(java.time.ZoneOffset.UTC));
+        String scopeToApply = null;
         if (req.scope() != null && !req.scope().isBlank()) {
             String s = req.scope().trim().toUpperCase();
             if (!"P1".equals(s) && !"P2".equals(s) && !"P1_P2".equals(s)) {
                 throw new BadRequestException(
                         "scope must be P1, P2, or P1_P2 (got '" + req.scope() + "')");
             }
-            ev.setRecordingScope(s);
+            scopeToApply = s;
         }
-        evalRepo.save(ev);
+        for (InternEvaluation target : updateTargets) {
+            target.setRecordingDocumentId(doc.getId());
+            // Safety net for the recording gallery month grouping. If a
+            // row somehow reached upload with a null period_start
+            // (legacy rows, or a POST_PROJECT auto-draft that was never
+            // scheduled through the standard path), stamp one now so the
+            // gallery groups the recording under a real month instead of
+            // "unknown". Only stamp when null so a re-upload doesn't
+            // rewrite an already-set period.
+            if (target.getPeriodStart() == null) {
+                target.setPeriodStart(derivedPeriod);
+                if (target.getPeriodEnd() == null) target.setPeriodEnd(derivedPeriod);
+            }
+            // Any (re-)upload resets the gate to PENDING_APPROVAL for
+            // every group member. Applies both to a fresh upload and a
+            // re-upload after REVISION_REQUESTED: the manager gets one
+            // approval decision that covers the whole session.
+            target.setRecordingApprovalStatus(STATUS_PENDING);
+            target.setRecordingRevisionNotes(null);
+            target.setRecordingApprovedBy(null);
+            target.setRecordingApprovedAt(null);
+            if (scopeToApply != null) {
+                target.setRecordingScope(scopeToApply);
+            }
+            evalRepo.save(target);
+        }
         log.info("[EvaluationRecording] saved recording eval={} docId={} projectId={} "
-                        + "scope={} → PENDING_APPROVAL", evaluationId, doc.getId(),
-                ev.getLinkedProjectId(), ev.getRecordingScope());
+                        + "scope={} groupId={} propagatedTo={} row(s) → PENDING_APPROVAL",
+                evaluationId, doc.getId(), ev.getLinkedProjectId(),
+                ev.getRecordingScope(), ev.getSessionGroupId(), updateTargets.size());
 
         // Fan out to every MANAGER — they own the approval queue. Best-effort;
         // any dispatcher error is logged, not propagated (the recording is
