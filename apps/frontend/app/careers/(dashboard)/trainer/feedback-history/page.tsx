@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import api from '@/lib/careers/api';
 import { ChevronRight, History, X } from 'lucide-react';
 import { useTrainerDashboard } from '@/components/trainer/TrainerDashboardContext';
+import ReferenceQaEditor from '@/components/project/ReferenceQaEditor';
 
 type InternRow = { internLifecycleId: string; fullName: string | null };
 
@@ -437,6 +438,21 @@ function DetailDrawer({ submissionId, onClose }: { submissionId: string; onClose
                   </pre>
                 </Section>
               )}
+
+              {/* Reference Q&A for the underlying project. Persists on
+                  the Project row (not the submission), so it survives
+                  across rounds and is editable AFTER feedback has been
+                  published — solves the "I already submitted feedback
+                  but forgot to add Q&A" case. Auto-saves on blur; no
+                  explicit save click required. */}
+              <Section title="Reference Q&A">
+                <p className="mb-2 text-[11px] text-slate-500">
+                  Discussion points the evaluator will see for this
+                  project. Add / edit anytime — changes persist even
+                  though feedback is already published.
+                </p>
+                <ReferenceQaEditor projectId={detail.projectId} />
+              </Section>
             </>
           )}
         </div>
