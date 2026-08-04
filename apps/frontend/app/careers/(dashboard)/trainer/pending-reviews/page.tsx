@@ -1,11 +1,13 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import api from '@/lib/careers/api';
 import { AlertOctagon, CheckCircle2, Clock, FileText, RotateCcw, X } from 'lucide-react';
-import ReferenceQaEditor from '@/components/project/ReferenceQaEditor';
+import ReferenceQaEditor, {
+  type ReferenceQaEditorHandle,
+} from '@/components/project/ReferenceQaEditor';
 
 type InternRow = { internLifecycleId: string; fullName: string | null };
 
@@ -269,6 +271,10 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
   // onSubmitted still fires (background queue refresh) — only the auto-
   // close was removed.
   const [feedbackSubmittedAt, setFeedbackSubmittedAt] = useState<Date | null>(null);
+  // Ref to the child Q&A editor so submit() can persist any pending
+  // pairs right before it POSTs the feedback — nothing typed is lost
+  // when the trainer clicks Publish without hitting Save Q&A first.
+  const qaEditorRef = useRef<ReferenceQaEditorHandle>(null);
 
   useEffect(() => {
     (async () => {
@@ -315,6 +321,12 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
     }
     setSubmitting(true);
     try {
+      // Persist any pending Reference Q&A pairs BEFORE the feedback
+      // POST so nothing typed is lost. saveIfDirty() no-ops when the
+      // editor has no unsaved changes, and any half-filled pairs are
+      // skipped silently (they'll still be visible in the editor for
+      // the trainer to complete + Save manually if they wish).
+      try { await qaEditorRef.current?.saveIfDirty(); } catch { /* non-fatal */ }
       await api.post(
         `/api/v1/trainer/pending-reviews/${submissionId}/feedback`,
         {
@@ -449,7 +461,7 @@ function ReviewModal({ submissionId, onClose, onSubmitted }: {
             {detail && (
               <>
                 <h4 className="mt-2 text-xs font-semibold uppercase text-slate-500">Reference Q&amp;A</h4>
-                <ReferenceQaEditor projectId={detail.projectId} />
+                <ReferenceQaEditor ref={qaEditorRef} projectId={detail.projectId} />
               </>
             )}
           </section>
