@@ -104,6 +104,7 @@ const STAFF_ROLE_LINKS: Record<UserRole, StaffLink[]> = {
     {
       icon: UserPlus, label: 'New Hire List', href: '/careers/erm/new-hire',
       children: [
+        { icon: UserPlus,       label: 'Direct Onboarding',  href: '/careers/erm/direct-onboarding' },
         { icon: Package,        label: 'Document Packets',   href: '/careers/erm/document-packets' },
         { icon: ClipboardCheck, label: 'Review Queue',       href: '/careers/erm/document-review' },
         { icon: ShieldCheck,    label: 'I-9 / E-Verify',     href: '/careers/erm/compliance' },

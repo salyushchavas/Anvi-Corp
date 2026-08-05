@@ -116,6 +116,23 @@ public class SchemaFixupRunner implements CommandLineRunner {
                     e.getMessage(), e);
         }
 
+        // Direct-Onboarding — engagements.application_id + offer_id go
+        // nullable so a direct-hire (no application, no offer) can have
+        // an Engagement row. The existing unconditional
+        // uk_engagement_application / uk_engagement_offer would each
+        // collapse every direct-hire row into a NULL-collision on
+        // Postgres (NULL is not treated as distinct by UNIQUE); the
+        // partial indexes below only enforce uniqueness where the FK is
+        // actually populated, preserving the "one engagement per accepted
+        // offer" invariant on the offer-flow rows.
+        try {
+            ensureEngagementsNullableUniqueSchema();
+        } catch (Exception e) {
+            log.error("[SchemaFixupRunner] engagements nullable-unique schema ensure "
+                    + "threw (non-fatal, direct-onboarding writes will 23502/23505 "
+                    + "until resolved): {}", e.getMessage(), e);
+        }
+
         // Recording gallery month-folder fix — backfill period_start on
         // intern_evaluations rows where it never got stamped (POST_PROJECT
         // auto-drafts, legacy rows). Without a period_start the gallery
@@ -4343,6 +4360,149 @@ public class SchemaFixupRunner implements CommandLineRunner {
             log.warn("[SchemaFixupRunner] post-ensure verify on "
                     + "uk_application_candidate_job_posting_open failed (non-fatal): {}",
                     verifyErr.getMessage());
+        }
+    }
+
+    /**
+     * Direct-Onboarding — make {@code engagements.application_id} and
+     * {@code engagements.offer_id} NULLABLE and swap their unconditional
+     * UNIQUE constraints for partial unique indexes scoped
+     * {@code WHERE <col> IS NOT NULL}.
+     *
+     * <p>Before this fix the engagement table required a non-null offer
+     * + application for every row — fine for the funnel path, but the
+     * pre-platform-employees flow ({@code DirectOnboardingService}) has
+     * neither. Making them nullable + partial-unique preserves the
+     * offer-path invariant ("one engagement per accepted offer") while
+     * letting direct-hire rows coexist with NULL FKs.</p>
+     *
+     * <p>All statements are idempotent (IF EXISTS / IF NOT EXISTS) and
+     * each is wrapped in its own try/catch — a failure here degrades the
+     * direct-onboarding path but never blocks boot. A post-state verify
+     * line logs whether the partial indexes and NULLABLE columns are
+     * present, so the ops surface can see at a glance whether the fix
+     * took on this deploy.</p>
+     */
+    private void ensureEngagementsNullableUniqueSchema() {
+        // 1) Drop the legacy unconditional UNIQUE constraints. Hibernate may
+        //    emit these as CONSTRAINT or bare INDEX depending on which
+        //    ddl-auto pass ran first — belt-and-brace with both DROPs.
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE engagements "
+                            + "DROP CONSTRAINT IF EXISTS uk_engagement_application");
+            log.info("[SchemaFixupRunner] engagements DROP CONSTRAINT "
+                    + "uk_engagement_application (IF EXISTS) — done");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] uk_engagement_application constraint drop "
+                    + "skipped (non-fatal): {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute(
+                    "DROP INDEX IF EXISTS uk_engagement_application");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] uk_engagement_application index drop "
+                    + "skipped (non-fatal): {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE engagements "
+                            + "DROP CONSTRAINT IF EXISTS uk_engagement_offer");
+            log.info("[SchemaFixupRunner] engagements DROP CONSTRAINT "
+                    + "uk_engagement_offer (IF EXISTS) — done");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] uk_engagement_offer constraint drop "
+                    + "skipped (non-fatal): {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute(
+                    "DROP INDEX IF EXISTS uk_engagement_offer");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] uk_engagement_offer index drop "
+                    + "skipped (non-fatal): {}", e.getMessage());
+        }
+
+        // 2) Widen the columns to NULLABLE. Application-layer guarantees the
+        //    offer-flow rows still populate them; direct-hire rows leave both
+        //    NULL by design.
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE engagements ALTER COLUMN application_id DROP NOT NULL");
+            log.info("[SchemaFixupRunner] engagements.application_id NOT NULL dropped");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] engagements.application_id widen skipped "
+                    + "(non-fatal — either already nullable or table absent): {}",
+                    e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE engagements ALTER COLUMN offer_id DROP NOT NULL");
+            log.info("[SchemaFixupRunner] engagements.offer_id NOT NULL dropped");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] engagements.offer_id widen skipped "
+                    + "(non-fatal — either already nullable or table absent): {}",
+                    e.getMessage());
+        }
+
+        // 3) Recreate uniqueness as PARTIAL indexes scoped to non-null rows.
+        //    Postgres NULLs are already distinct under a plain UNIQUE, but
+        //    naming the indexes ourselves (rather than relying on Hibernate)
+        //    keeps the intent explicit and self-documenting.
+        try {
+            jdbcTemplate.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                            + "uk_engagement_application_active "
+                            + "ON engagements (application_id) "
+                            + "WHERE application_id IS NOT NULL");
+            log.info("[SchemaFixupRunner] created partial UNIQUE "
+                    + "uk_engagement_application_active (application_id) "
+                    + "WHERE application_id IS NOT NULL");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] uk_engagement_application_active create "
+                    + "failed (non-fatal): {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                            + "uk_engagement_offer_active "
+                            + "ON engagements (offer_id) "
+                            + "WHERE offer_id IS NOT NULL");
+            log.info("[SchemaFixupRunner] created partial UNIQUE "
+                    + "uk_engagement_offer_active (offer_id) "
+                    + "WHERE offer_id IS NOT NULL");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] uk_engagement_offer_active create "
+                    + "failed (non-fatal): {}", e.getMessage());
+        }
+
+        // 4) Post-state verify — one summary line the ops surface can grep
+        //    for after a deploy.
+        try {
+            List<Map<String, Object>> cols = jdbcTemplate.queryForList(
+                    "SELECT column_name, is_nullable FROM information_schema.columns "
+                            + "WHERE table_name = 'engagements' "
+                            + "  AND column_name IN ('application_id', 'offer_id')");
+            List<Map<String, Object>> idx = jdbcTemplate.queryForList(
+                    "SELECT indexname FROM pg_indexes "
+                            + "WHERE tablename = 'engagements' "
+                            + "  AND indexname IN (?, ?)",
+                    "uk_engagement_application_active",
+                    "uk_engagement_offer_active");
+            boolean appActivePartial = idx.stream()
+                    .anyMatch(r -> "uk_engagement_application_active"
+                            .equals(String.valueOf(r.get("indexname"))));
+            boolean offerActivePartial = idx.stream()
+                    .anyMatch(r -> "uk_engagement_offer_active"
+                            .equals(String.valueOf(r.get("indexname"))));
+            log.info("[SchemaFixupRunner] engagements direct-onboarding verify: "
+                            + "columns={} partialIndexes={{application={},offer={}}} — {}",
+                    cols, appActivePartial, offerActivePartial,
+                    (appActivePartial && offerActivePartial)
+                            ? "HEALTHY — direct-hire engagements can insert with NULL FKs"
+                            : "BROKEN — direct-onboarding inserts will collide until resolved");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] engagements direct-onboarding verify failed "
+                    + "(non-fatal): {}", e.getMessage());
         }
     }
 

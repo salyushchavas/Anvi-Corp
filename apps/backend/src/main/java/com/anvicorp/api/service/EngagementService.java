@@ -132,6 +132,91 @@ public class EngagementService {
     }
 
     /**
+     * Direct-Onboarding — create an Engagement for a pre-platform employee
+     * who never went through the application/offer funnel. Sibling of
+     * {@link #createForAcceptedOffer}: same PENDING_COMPLIANCE seed, same
+     * planned-dates shape, but inserts with a NULL application + offer
+     * FK. The partial unique indexes {@code uk_engagement_application_active}
+     * and {@code uk_engagement_offer_active} (see {@code SchemaFixupRunner})
+     * only enforce uniqueness where those FKs are populated, so multiple
+     * direct-hire rows for the same candidate remain legal for the DB —
+     * duplicate-lifecycle guarding happens upstream on
+     * {@code intern_lifecycles.user_id UNIQUE}.
+     *
+     * <p>Runs in {@code REQUIRES_NEW} to match the offer-flow shape — a
+     * creation blip here doesn't roll back the surrounding
+     * {@code DirectOnboardingService.directOnboard} transaction; the outer
+     * write still commits and the engagement can be healed later via
+     * {@link #healForUserEmail}.</p>
+     *
+     * @param intern        the newly-created intern User (INTERN role, active)
+     * @param candidate     the Candidate row for that user (created upstream in
+     *                      the same direct-onboarding flow)
+     * @param entity        StaffingEntity the intern works for (denormalized
+     *                      to keep queries one join shorter, matching the
+     *                      offer-flow convention)
+     * @param track         WorkAuthTrack snapshot at hire time (may be null;
+     *                      compliance routing tolerates null the same way it
+     *                      does for legacy rows)
+     * @param plannedStart  the ERM-supplied planned start date (mirrors
+     *                      {@code offer.startDate} for the funnel path)
+     * @param actor         the ERM user performing the direct onboarding —
+     *                      stamped on {@code created_by} + the audit row
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Engagement createForDirectHire(User intern,
+                                          Candidate candidate,
+                                          StaffingEntity entity,
+                                          WorkAuthTrack track,
+                                          LocalDate plannedStart,
+                                          User actor) {
+        if (intern == null || intern.getId() == null) {
+            throw new IllegalArgumentException("intern must be non-null with an id");
+        }
+        if (candidate == null || candidate.getId() == null) {
+            throw new IllegalArgumentException("candidate must be non-null with an id");
+        }
+        if (entity == null || entity.getId() == null) {
+            throw new IllegalArgumentException("entity must be non-null with an id");
+        }
+
+        // Idempotency for the direct-hire path — if the candidate already
+        // has any non-terminated engagement, return it rather than
+        // stacking a second row. Uniqueness on the offer-flow rows is
+        // still enforced by the partial index; this guard handles the
+        // "ERM double-clicked create" case for direct-hires (no offer FK
+        // to key uniqueness on).
+        Optional<Engagement> existing = engagementRepository.findByCandidateId(candidate.getId()).stream()
+                .filter(e -> e.getStatus() != EngagementStatus.TERMINATED
+                        && e.getStatus() != EngagementStatus.BLOCKED_NO_AUTHORIZATION)
+                .findFirst();
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        UUID actorId = actor != null ? actor.getId() : null;
+        Engagement engagement = Engagement.builder()
+                .application(null)
+                .candidate(candidate)
+                .offer(null)
+                .entity(entity)
+                .track(track)
+                .status(EngagementStatus.PENDING_COMPLIANCE)
+                .plannedStartDate(plannedStart)
+                .plannedEndDate(null)
+                .createdBy(actorId)
+                .build();
+
+        engagement = engagementRepository.save(engagement);
+        writeCreateAudit(engagement, actorId);
+        log.info("Engagement {} created for direct-hire user={} candidate={} "
+                        + "entity={} track={} plannedStart={}",
+                engagement.getId(), intern.getId(), candidate.getId(),
+                entity.getId(), track, plannedStart);
+        return engagement;
+    }
+
+    /**
      * Targeted SUPER_ADMIN-only repair — create the missing Engagement for a
      * single intern identified by email. Reuses {@link #createForAcceptedOffer}
      * verbatim so there's no second Engagement-creation path. Idempotent: if
