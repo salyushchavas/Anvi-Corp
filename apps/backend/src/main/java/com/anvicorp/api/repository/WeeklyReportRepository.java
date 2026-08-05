@@ -64,4 +64,22 @@ public interface WeeklyReportRepository extends JpaRepository<WeeklyReport, UUID
             "WHERE r.status = :status " +
             "ORDER BY r.submittedAt ASC NULLS LAST, r.weekStart ASC")
     List<WeeklyReport> findAllByStatusWithGraph(@Param("status") WeeklyReportStatus status);
+
+    /**
+     * Past-month view for the ERM queue. Returns every report whose
+     * {@code weekStart} falls in the window regardless of status, so a
+     * historical list doesn't shrink as reports advance out of SUBMITTED.
+     * Ordered by weekStart DESC so recent weeks-of-that-month surface
+     * first.
+     */
+    @Query("SELECT r FROM WeeklyReport r " +
+            "JOIN FETCH r.intern i " +
+            "JOIN FETCH i.user u " +
+            "LEFT JOIN FETCH r.reviewedBy rv " +
+            "LEFT JOIN FETCH r.verifiedBy vb " +
+            "WHERE r.weekStart >= :start AND r.weekStart < :end " +
+            "ORDER BY r.weekStart DESC, r.submittedAt ASC NULLS LAST")
+    List<WeeklyReport> findAllByWeekStartWithGraph(
+            @Param("start") java.time.LocalDate start,
+            @Param("end")   java.time.LocalDate end);
 }

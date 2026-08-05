@@ -187,9 +187,12 @@ public class ErmDashboardService {
                 p.add(callerId); p.add(callerId); p.add(callerId);
             }
             long total = countWithParams(sql.toString(), p);
+            // Past-month semantics = "interviews scheduled in this month",
+            // not "today". Relabel so the tile card doesn't read like a
+            // live-today count on a historical view.
             out.put(ErmKpiKey.INTERVIEWS_TODAY, new KpiSnapshot(
                     ErmKpiKey.INTERVIEWS_TODAY,
-                    "Interviews today", total, total, null,
+                    "Interviews scheduled", total, total, null,
                     "/careers/erm/interviews"));
         }
         // Offers sent/created in month.

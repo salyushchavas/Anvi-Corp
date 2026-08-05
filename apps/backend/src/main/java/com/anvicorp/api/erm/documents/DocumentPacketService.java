@@ -559,13 +559,18 @@ public class DocumentPacketService {
         // lives on {@code onboarding_document_templates}, so we resolve
         // the category filter against that table (covers both enum-seeded
         // rows and admin-added custom rows).
-        StringBuilder where = new StringBuilder(
-                " WHERE t.status = 'SUBMITTED' ");
+        //
+        // Past months are pure history: every task created in the window,
+        // regardless of current status. Otherwise the past list would
+        // silently shrink as tasks advance out of SUBMITTED. Current
+        // month keeps the live "waiting on ERM" queue semantics.
+        StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> params = new ArrayList<>();
-        // Past-month window: filter to tasks assigned in the month
-        // (document_tasks.created_at is set when the packet is minted).
-        if (range != null && !range.isCurrent()) {
-            where.append(" AND t.created_at >= ?::timestamptz AND t.created_at < ?::timestamptz ");
+        if (range == null || range.isCurrent()) {
+            where.append(" AND t.status = 'SUBMITTED' ");
+        } else {
+            where.append(" AND t.created_at >= ?::timestamptz "
+                    + "  AND t.created_at <  ?::timestamptz ");
             params.add(range.startInclusive().toString());
             params.add(range.endExclusive().toString());
         }
@@ -661,13 +666,16 @@ public class DocumentPacketService {
             com.anvicorp.api.common.MonthRange range) {
         int p = Math.max(0, page);
         int ps = Math.min(100, Math.max(1, pageSize));
-        StringBuilder where = new StringBuilder(
-                " WHERE t.status = 'SUBMITTED' ");
+        // Same pure-history rule as listReviewQueue: past months include
+        // every intern whose packet was assigned in the window, all
+        // task statuses. Current month keeps the SUBMITTED-only queue.
+        StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> params = new ArrayList<>();
-        // Past-month window: packet-level date — the intern shows up when
-        // their packet was assigned in that month.
-        if (range != null && !range.isCurrent()) {
-            where.append(" AND pk.assigned_at >= ?::timestamptz AND pk.assigned_at < ?::timestamptz ");
+        if (range == null || range.isCurrent()) {
+            where.append(" AND t.status = 'SUBMITTED' ");
+        } else {
+            where.append(" AND pk.assigned_at >= ?::timestamptz "
+                    + "  AND pk.assigned_at <  ?::timestamptz ");
             params.add(range.startInclusive().toString());
             params.add(range.endExclusive().toString());
         }

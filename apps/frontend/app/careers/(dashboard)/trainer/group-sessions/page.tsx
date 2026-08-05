@@ -11,6 +11,7 @@ import {
   localInZoneToUtcIso,
   nowPlus30InZone,
 } from '@/lib/careers/meeting-timezones';
+import { useTrainerDashboard } from '@/components/trainer/TrainerDashboardContext';
 
 type InternRow = {
   internLifecycleId: string;
@@ -43,6 +44,7 @@ type GroupSession = {
 };
 
 export default function TrainerGroupSessionsPage() {
+  const { selectedMonth, isCurrentMonth } = useTrainerDashboard();
   const [sessions, setSessions] = useState<GroupSession[]>([]);
   const [interns, setInterns] = useState<InternRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,7 +54,25 @@ export default function TrainerGroupSessionsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get<GroupSession[]>('/api/v1/trainer/group-sessions');
+      const params = new URLSearchParams();
+      // Sticky month: past-month bounds scheduled_at to that month's
+      // window; current-month leaves params empty (byte-identical to
+      // the pre-scoping fetch). Mirrors weekly-meetings.
+      if (!isCurrentMonth) {
+        const [ys, ms] = selectedMonth.split('-');
+        const y = Number(ys), m = Number(ms);
+        if (!Number.isNaN(y) && !Number.isNaN(m)) {
+          const start = new Date(Date.UTC(y, m - 1, 1));
+          const end = new Date(Date.UTC(y, m, 0));
+          params.set('fromDate', start.toISOString().slice(0, 10));
+          params.set('toDate', end.toISOString().slice(0, 10));
+        }
+      }
+      const qs = params.toString();
+      const url = qs
+        ? `/api/v1/trainer/group-sessions?${qs}`
+        : '/api/v1/trainer/group-sessions';
+      const res = await api.get<GroupSession[]>(url);
       setSessions(res.data ?? []);
       setErr(null);
     } catch (e) {
@@ -61,7 +81,7 @@ export default function TrainerGroupSessionsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isCurrentMonth, selectedMonth]);
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {

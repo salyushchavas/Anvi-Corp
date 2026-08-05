@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Paperclip, Send, Video, X } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { useTrainerDashboard } from '@/components/trainer/TrainerDashboardContext';
 
 // ── Types (mirrors DoubtDtos.DoubtResponse, trainer view) ────────────────
 
@@ -43,6 +44,7 @@ interface DoubtResponse {
 }
 
 export default function TrainerDoubtsPage() {
+  const { selectedMonth, isCurrentMonth } = useTrainerDashboard();
   const [openOnly, setOpenOnly] = useState(true);
   const [doubts, setDoubts] = useState<DoubtResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,8 +53,22 @@ export default function TrainerDoubtsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const params = new URLSearchParams();
+      params.set('open', String(openOnly));
+      // Sticky month: past-month bounds createdAt to that month; current
+      // month leaves the window absent so the queue behaves as before.
+      if (!isCurrentMonth) {
+        const [ys, ms] = selectedMonth.split('-');
+        const y = Number(ys), m = Number(ms);
+        if (!Number.isNaN(y) && !Number.isNaN(m)) {
+          const start = new Date(Date.UTC(y, m - 1, 1));
+          const end = new Date(Date.UTC(y, m, 0));
+          params.set('fromDate', start.toISOString().slice(0, 10));
+          params.set('toDate', end.toISOString().slice(0, 10));
+        }
+      }
       const res = await api.get<DoubtResponse[]>(
-        '/api/v1/trainer/doubts?open=' + openOnly);
+        '/api/v1/trainer/doubts?' + params.toString());
       setDoubts(res.data ?? []);
       setErr(null);
     } catch (e) {
@@ -60,7 +76,7 @@ export default function TrainerDoubtsPage() {
     } finally {
       setLoading(false);
     }
-  }, [openOnly]);
+  }, [openOnly, isCurrentMonth, selectedMonth]);
 
   useEffect(() => { void load(); }, [load]);
 

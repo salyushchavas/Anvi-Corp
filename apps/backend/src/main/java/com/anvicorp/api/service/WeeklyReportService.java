@@ -260,16 +260,23 @@ public class WeeklyReportService {
     public List<WeeklyReportResponse> listSubmittedForErm(
             User actor, com.anvicorp.api.common.MonthRange range) {
         ensureErmOrSuperAdmin(actor, "view the ERM weekly-report queue");
-        java.util.stream.Stream<WeeklyReport> stream =
-                reportRepository.findAllByStatusWithGraph(WeeklyReportStatus.SUBMITTED).stream();
-        if (range != null && !range.isCurrent()) {
-            java.time.LocalDate winStart = range.monthStart();
-            java.time.LocalDate winEnd = range.monthEnd();
-            stream = stream.filter(r -> r.getWeekStart() != null
-                    && !r.getWeekStart().isBefore(winStart)
-                    && r.getWeekStart().isBefore(winEnd));
+        // Current month keeps the live SUBMITTED queue semantics — that's
+        // the actual "what's waiting on me" list ERM works from. Past
+        // months are pure history: every report whose weekStart fell in
+        // the window, regardless of current status. Otherwise the past
+        // list would silently shrink as reports advance out of SUBMITTED.
+        if (range == null || range.isCurrent()) {
+            return reportRepository
+                    .findAllByStatusWithGraph(WeeklyReportStatus.SUBMITTED)
+                    .stream()
+                    .map(this::toResponse)
+                    .toList();
         }
-        return stream.map(this::toResponse).toList();
+        return reportRepository
+                .findAllByWeekStartWithGraph(range.monthStart(), range.monthEnd())
+                .stream()
+                .map(this::toResponse)
+                .toList();
     }
 
     /**

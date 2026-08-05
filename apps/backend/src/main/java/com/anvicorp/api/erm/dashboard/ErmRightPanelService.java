@@ -245,9 +245,14 @@ public class ErmRightPanelService {
                         + "  AND COALESCE(a.status_updated_at, a.applied_at) < ?::timestamptz "
                         + "  AND (a.erm_owner_id IS NULL OR a.erm_owner_id = ?)",
                 start, end, callerId);
+        // Belongs-to for a new-hire row: HIRED_AT is the true hire event;
+        // some legacy rows only carry STARTED_AT. Fall back to started_at
+        // so a directly-onboarded intern whose hired_at is null (rare
+        // pre-onboarding-flow data) still lands in its month.
         long newHires = safeCount(
                 "SELECT COUNT(*) FROM intern_lifecycles il "
-                        + "WHERE il.hired_at >= ?::timestamptz AND il.hired_at < ?::timestamptz "
+                        + "WHERE COALESCE(il.hired_at, il.started_at) >= ?::timestamptz "
+                        + "  AND COALESCE(il.hired_at, il.started_at) <  ?::timestamptz "
                         + "  AND (il.erm_id IS NULL OR il.erm_id = ?)",
                 start, end, callerId);
         long docsAssigned = safeCount(
@@ -272,6 +277,21 @@ public class ErmRightPanelService {
                         + "  AND er.opened_at < ?::timestamptz "
                         + "  AND (il.erm_id IS NULL OR il.erm_id = ?)",
                 start, end, callerId);
+        // Compliance is a THREE-artifact concept — I-9, E-Verify, and
+        // Work-Auth. Past-month must sum all three windowed counts so the
+        // slot carries the same meaning it does on current-month (which
+        // sums three live-risk queries above). Otherwise a historical
+        // view under-counts by dropping I-9 + Work-Auth activity.
+        long i9InMonth = safeCount(
+                "SELECT COUNT(*) FROM i9_forms f "
+                        + "JOIN candidates c ON c.id = f.candidate_id "
+                        + "JOIN intern_lifecycles il ON il.user_id = c.user_id "
+                        + "WHERE f.first_day_of_employment >= ? "
+                        + "  AND f.first_day_of_employment <  ? "
+                        + "  AND (il.erm_id IS NULL OR il.erm_id = ?)",
+                java.sql.Date.valueOf(scope.monthStart()),
+                java.sql.Date.valueOf(scope.monthEnd()),
+                callerId);
         long everifyInMonth = safeCount(
                 "SELECT COUNT(*) FROM everify_cases ec "
                         + "JOIN i9_forms f ON f.id = ec.i9_form_id "
@@ -281,6 +301,14 @@ public class ErmRightPanelService {
                         + "  AND ec.opened_at < ?::timestamptz "
                         + "  AND (il.erm_id IS NULL OR il.erm_id = ?)",
                 start, end, callerId);
+        long workAuthInMonth = safeCount(
+                "SELECT COUNT(*) FROM work_authorization_records w "
+                        + "JOIN intern_lifecycles il ON il.user_id = w.user_id "
+                        + "WHERE w.created_at >= ?::timestamptz "
+                        + "  AND w.created_at <  ?::timestamptz "
+                        + "  AND (il.erm_id IS NULL OR il.erm_id = ?)",
+                start, end, callerId);
+        long complianceInMonth = i9InMonth + everifyInMonth + workAuthInMonth;
         long interviewsInMonth = safeCount(
                 "SELECT COUNT(*) FROM interviews i "
                         + "JOIN applications a ON a.id = i.application_id "
@@ -295,10 +323,14 @@ public class ErmRightPanelService {
                         + "  AND created_at >= ?::timestamptz "
                         + "  AND created_at < ?::timestamptz",
                 callerId, start, end);
+        // Belongs-to for a HOLD row is the moment the HOLD state was set —
+        // status_updated_at. Fall back to applied_at only when the status
+        // timestamp is null (older rows).
         long holdInMonth = safeCount(
                 "SELECT COUNT(*) FROM applications "
                         + "WHERE status = 'HOLD' "
-                        + "  AND applied_at >= ?::timestamptz AND applied_at < ?::timestamptz "
+                        + "  AND COALESCE(status_updated_at, applied_at) >= ?::timestamptz "
+                        + "  AND COALESCE(status_updated_at, applied_at) <  ?::timestamptz "
                         + "  AND (erm_owner_id IS NULL OR erm_owner_id = ?)",
                 start, end, callerId);
 
@@ -314,7 +346,7 @@ public class ErmRightPanelService {
         actions.add(qa("doc-review", "Review documents",
                 "/careers/erm/onboarding", docsAssigned));
         actions.add(qa("compliance", "Compliance Tracker",
-                "/careers/erm/compliance", everifyInMonth));
+                "/careers/erm/compliance", complianceInMonth));
         actions.add(qa("escalate", "Open escalations",
                 "/careers/erm/escalations", exceptions));
         actions.add(qa("monitor", "Active Interns",
