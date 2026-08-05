@@ -51,17 +51,22 @@ public class DocumentVaultService {
             Set.of("PII", "FINANCIAL", "GOVERNMENT_ID");
 
     /** Categories that auto-tag a sensitivity classification on upload. */
-    private static final Map<String, String> CATEGORY_SENSITIVITY = Map.of(
-            "W4",                  "PII",
-            "I9",                  "GOVERNMENT_ID",
-            "ACH",                 "FINANCIAL",
-            "EMERGENCY_CONTACT",   "NORMAL",
-            "HANDBOOK_ACK",        "NORMAL",
-            "I983",                "PII",
-            "SIGNED_OFFER",        "PII",
-            "EVERIFY",             "GOVERNMENT_ID",
-            "RESUME",              "NORMAL",
-            "OTHER",               "NORMAL"
+    private static final Map<String, String> CATEGORY_SENSITIVITY = Map.ofEntries(
+            Map.entry("W4",                        "PII"),
+            Map.entry("I9",                        "GOVERNMENT_ID"),
+            Map.entry("ACH",                       "FINANCIAL"),
+            Map.entry("EMERGENCY_CONTACT",         "NORMAL"),
+            Map.entry("HANDBOOK_ACK",              "NORMAL"),
+            Map.entry("I983",                      "PII"),
+            Map.entry("SIGNED_OFFER",              "PII"),
+            Map.entry("EVERIFY",                   "GOVERNMENT_ID"),
+            Map.entry("RESUME",                    "NORMAL"),
+            // Editable Documents Phase 1 — the DOCX source the admin
+            // uploads for the template studio. Not PII on its own (blank
+            // template), so NORMAL sensitivity keeps it out of the
+            // encrypted-envelope path.
+            Map.entry("EDITABLE_TEMPLATE_SOURCE",  "NORMAL"),
+            Map.entry("OTHER",                     "NORMAL")
     );
 
     private final DocumentRepository documentRepository;

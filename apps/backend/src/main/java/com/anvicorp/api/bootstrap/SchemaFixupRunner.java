@@ -133,6 +133,23 @@ public class SchemaFixupRunner implements CommandLineRunner {
                     + "until resolved): {}", e.getMessage(), e);
         }
 
+        // Editable Documents Phase 1 — the admin template studio.
+        // Creates editable_templates with a UNIQUE key, a canonical_html
+        // TEXT column (Postgres persistence — the survey's Vercel/Railway
+        // split rules out passing the rendered HTML by reference), and
+        // JSONB field_schema + fidelity_warnings columns for the
+        // per-field metadata + the docx-preview conversion warnings the
+        // studio captures at save. Hoisted-safe + idempotent per the
+        // runner convention; a verify log line surfaces the presence of
+        // the table + its five key columns after each run.
+        try {
+            ensureEditableTemplatesSchema();
+        } catch (Exception e) {
+            log.error("[SchemaFixupRunner] editable_templates schema ensure threw "
+                    + "(non-fatal, editable-documents studio writes will 42P01 "
+                    + "until resolved): {}", e.getMessage(), e);
+        }
+
         // Recording gallery month-folder fix — backfill period_start on
         // intern_evaluations rows where it never got stamped (POST_PROJECT
         // auto-drafts, legacy rows). Without a period_start the gallery
@@ -4502,6 +4519,140 @@ public class SchemaFixupRunner implements CommandLineRunner {
                             : "BROKEN — direct-onboarding inserts will collide until resolved");
         } catch (Exception e) {
             log.warn("[SchemaFixupRunner] engagements direct-onboarding verify failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Editable Documents Phase 1 — the admin template studio's storage.
+     *
+     * <p>Creates the {@code editable_templates} table with:</p>
+     * <ul>
+     *   <li>{@code key_} UNIQUE — stable identifier used in URLs;</li>
+     *   <li>{@code source_document_id} FK-shape (bare UUID, mirrors the
+     *       existing document-vault linkage on
+     *       {@code onboarding_document_templates.current_document_id});</li>
+     *   <li>{@code canonical_html} TEXT — persisted server-side because
+     *       the Vercel / Railway split (survey §2) means the studio can
+     *       never rely on the browser's rendered HTML being still in
+     *       memory on the next session;</li>
+     *   <li>{@code field_schema} JSONB — array of
+     *       {@code {id, name, type, assignee, anchor:{spanId}, required,
+     *       defaultSource}} field entries;</li>
+     *   <li>{@code fidelity_warnings} JSONB — docx-preview conversion
+     *       warnings captured at save time so the admin sees the fidelity
+     *       banner on every re-open.</li>
+     * </ul>
+     *
+     * <p>All statements idempotent ({@code CREATE TABLE IF NOT EXISTS},
+     * {@code ALTER TABLE ADD COLUMN IF NOT EXISTS}) so the runner can be
+     * re-run any number of times without side effects. Non-fatal per the
+     * runner convention — a failure logs and the studio stays 500 on
+     * writes until resolved.</p>
+     *
+     * <p>The verify pass at the end logs a single line the ops surface
+     * can grep for:</p>
+     * <pre>{@code
+     * [SchemaFixupRunner] editable_templates verify: tablePresent=true
+     *   columns={id,key_,title,description,active,sort_order,created_by_id,
+     *   source_document_id,canonical_html,field_schema,fidelity_warnings,
+     *   created_at,updated_at} uniqueKeyIndex=true
+     *   — HEALTHY — editable-templates studio can persist canonical HTML + schema
+     * }</pre>
+     */
+    private void ensureEditableTemplatesSchema() {
+        // 1) Create the table if missing. All rows require key + title +
+        //    created_by_id; the canonical HTML + schema columns stay
+        //    nullable so a freshly created row can exist between "admin
+        //    created the shell" and "admin uploaded the source DOCX".
+        try {
+            jdbcTemplate.execute(
+                    "CREATE TABLE IF NOT EXISTS editable_templates ("
+                            + "  id UUID PRIMARY KEY,"
+                            + "  key_ VARCHAR(100) NOT NULL,"
+                            + "  title VARCHAR(200) NOT NULL,"
+                            + "  description TEXT,"
+                            + "  active BOOLEAN NOT NULL DEFAULT TRUE,"
+                            + "  sort_order INTEGER NOT NULL DEFAULT 500,"
+                            + "  created_by_id UUID NOT NULL,"
+                            + "  source_document_id UUID,"
+                            + "  canonical_html TEXT,"
+                            + "  field_schema JSONB,"
+                            + "  fidelity_warnings JSONB,"
+                            + "  created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+                            + "  updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
+                            + ")");
+            log.info("[SchemaFixupRunner] editable_templates CREATE TABLE IF NOT EXISTS — done");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] editable_templates create failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+
+        // 2) Belt-and-brace ALTER ADD COLUMNs — covers a stale table left
+        //    behind by an earlier partial migration attempt.
+        String[] alters = {
+                "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS description TEXT",
+                "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS source_document_id UUID",
+                "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS canonical_html TEXT",
+                "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS field_schema JSONB",
+                "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS fidelity_warnings JSONB",
+                "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE",
+                "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 500"
+        };
+        for (String sql : alters) {
+            try {
+                jdbcTemplate.execute(sql);
+            } catch (Exception e) {
+                log.warn("[SchemaFixupRunner] editable_templates ALTER skipped "
+                        + "(non-fatal): {} — {}", sql, e.getMessage());
+            }
+        }
+
+        // 3) Indexes. UNIQUE on key_ is the studio's URL-stability guarantee;
+        //    the (active, sort_order) index keeps the admin list one seek.
+        try {
+            jdbcTemplate.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uk_editable_templates_key "
+                            + "ON editable_templates (key_)");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] uk_editable_templates_key create failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_editable_templates_active_sort "
+                            + "ON editable_templates (active, sort_order, title)");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] idx_editable_templates_active_sort create "
+                    + "failed (non-fatal): {}", e.getMessage());
+        }
+
+        // 4) Verify — one summary line an operator can grep for after each boot.
+        try {
+            Integer tablePresent = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                            + "WHERE table_name = 'editable_templates'", Integer.class);
+            List<Map<String, Object>> cols = jdbcTemplate.queryForList(
+                    "SELECT column_name FROM information_schema.columns "
+                            + "WHERE table_name = 'editable_templates' "
+                            + "ORDER BY ordinal_position");
+            Integer uniqueKeyIndex = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM pg_indexes "
+                            + "WHERE tablename = 'editable_templates' "
+                            + "  AND indexname = 'uk_editable_templates_key'", Integer.class);
+            boolean tOk = tablePresent != null && tablePresent > 0;
+            boolean idxOk = uniqueKeyIndex != null && uniqueKeyIndex > 0;
+            String columnNames = cols.stream()
+                    .map(r -> String.valueOf(r.get("column_name")))
+                    .reduce((a, b) -> a + "," + b).orElse("");
+            log.info("[SchemaFixupRunner] editable_templates verify: tablePresent={} "
+                            + "columns={{{}}} uniqueKeyIndex={} — {}",
+                    tOk, columnNames, idxOk,
+                    (tOk && idxOk)
+                            ? "HEALTHY — editable-templates studio can persist canonical HTML + schema"
+                            : "BROKEN — editable-templates writes will fail until resolved");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] editable_templates verify failed "
                     + "(non-fatal): {}", e.getMessage());
         }
     }
