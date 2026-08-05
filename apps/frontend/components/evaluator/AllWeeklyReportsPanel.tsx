@@ -60,7 +60,7 @@ export default function AllWeeklyReportsPanel({ lifecycleId }: Props) {
             )}
           </div>
           <p className="mt-0.5 text-[11px] text-slate-500">
-            Intern&apos;s own account of what they built each week — newest first.
+            Newest first.
           </p>
         </div>
         <button type="button" onClick={() => void load()}

@@ -176,8 +176,7 @@ function PageContent() {
         <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-base font-semibold text-slate-900">Basic details</h2>
           <p className="mt-1 text-xs text-slate-500">
-            The title is what admins and staff will see; the key is a stable
-            identifier that stays put even if the title changes.
+            The key is a stable identifier — it stays put even if the title changes.
           </p>
 
           <div className="mt-5 space-y-4">

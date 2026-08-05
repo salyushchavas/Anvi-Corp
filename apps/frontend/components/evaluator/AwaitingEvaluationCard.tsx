@@ -76,7 +76,7 @@ export default function AwaitingEvaluationCard({ limit = 6, showHeader = true }:
               )}
             </div>
             <p className="mt-0.5 text-[11px] text-slate-500">
-              Completed projects with an open evaluation. Oldest first.
+              Oldest first.
             </p>
           </div>
           <button type="button" onClick={() => void load()}

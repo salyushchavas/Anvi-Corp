@@ -68,14 +68,14 @@ export function RecordEverifyModal({
   return (
     <Shell
       title="Record E-Verify case"
-      subtitle="Logged from a separate federal E-Verify session — encrypted at rest, masked in UI."
+      subtitle="Encrypted at rest, masked in the UI."
       saving={saving}
       err={err}
       onClose={onClose}
       onSave={submit}
       saveLabel="Open case"
     >
-      <Field label="Case number (plaintext on wire)">
+      <Field label="Case number">
         <input
           value={casePlain}
           onChange={(e) => setCasePlain(e.target.value)}

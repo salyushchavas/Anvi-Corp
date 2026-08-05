@@ -131,10 +131,9 @@ export default function AssignPacketModal({
               {tentativeStartDate && <span> · starts {tentativeStartDate}</span>}
             </p>
             <p className="mt-1 text-[11px] text-slate-500">
-              Fill-and-sign docs: the intern downloads the PDF, fills it by
-              hand, scans all pages into a single PDF, and uploads. Upload-only
-              docs (passport, license, education) skip the template — they
-              scan/photo the existing document and upload directly.
+              Fill-and-sign docs need the intern to download the template,
+              hand-fill, and upload the scanned PDF. Upload-only docs skip the
+              template — the intern just uploads the existing document.
             </p>
           </div>
           <button

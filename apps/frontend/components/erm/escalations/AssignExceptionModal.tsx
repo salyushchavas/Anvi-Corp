@@ -56,9 +56,6 @@ export default function AssignExceptionModal({
               placeholder="User ID"
               className="mt-1 block w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
             />
-            <span className="mt-0.5 block text-[11px] text-slate-500">
-              Defaults to current ERM for self-assignment.
-            </span>
           </label>
           {err && (
             <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">

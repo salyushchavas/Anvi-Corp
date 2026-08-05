@@ -137,11 +137,11 @@ export default function AssignAdditionalDocumentModal({
               Send additional document
             </h3>
             <p className="text-xs text-slate-500">
-              {internName ?? 'Intern'} · adds to the existing packet without rebuilding it.
+              {internName ?? 'Intern'}
             </p>
             <p className="mt-1 text-[11px] text-slate-500">
-              A doc that&rsquo;s already on the packet is re-notified in place; a
-              closed doc (accepted / waived) is reopened for the intern to
+              Adds to the existing packet. Docs already on the packet are
+              re-notified; closed docs (accepted / waived) are reopened for
               re-upload.
             </p>
           </div>

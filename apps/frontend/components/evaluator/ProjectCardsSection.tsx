@@ -167,10 +167,6 @@ export default function ProjectCardsSection({ lifecycleId }: Props) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-slate-900">Projects</h2>
-          <p className="mt-0.5 text-[11px] text-slate-500">
-            One card per project. Trainer Q&amp;A, recording, and
-            evaluation actions live inside each card.
-          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {data && (

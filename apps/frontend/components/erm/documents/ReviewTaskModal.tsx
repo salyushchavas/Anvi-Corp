@@ -249,7 +249,7 @@ export default function ReviewTaskModal({ taskId, onClose, onReviewed }: Props) 
                   </label>
                   <label className="block">
                     <span className="text-xs font-semibold uppercase text-slate-500">
-                      Comments to intern (verbatim, min 20 chars)
+                      Comments to intern (min 20 chars, shown verbatim)
                     </span>
                     <textarea
                       value={ermComments}

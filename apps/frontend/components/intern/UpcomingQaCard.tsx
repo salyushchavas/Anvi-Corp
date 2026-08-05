@@ -60,7 +60,6 @@ export default function UpcomingQaCard() {
         {qa.scheduledByName
           ? `${qa.scheduledByName}, your Evaluator,`
           : 'Your Evaluator'} scheduled your Q&amp;A (viva) session.
-        This is the final step before completion.
       </p>
       <dl className="mt-3 grid gap-2 text-xs text-slate-700 sm:grid-cols-2">
         <div>

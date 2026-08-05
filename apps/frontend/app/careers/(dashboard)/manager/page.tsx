@@ -53,11 +53,6 @@ export default function ManagerHomePage() {
         </div>
         <p className="mt-1 text-sm text-slate-600">
           Portfolio-wide read of the applicant funnel and intern lifecycle.
-          Numbers reconcile with ERM&apos;s view — same{' '}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">
-            users.lifecycle_status
-          </code>{' '}
-          source of truth.
           {data?.caller && (
             <span className="ml-2 text-slate-500">
               Signed in as {data.caller.fullName}
@@ -105,7 +100,7 @@ export default function ManagerHomePage() {
                 icon={<BadgeCheck className="h-4 w-4" />}
                 label="Prospective new hires"
                 value={data.buckets.prospectiveNewHires}
-                hint="OFFER_SIGNED → ONBOARDING_ACCEPTED"
+                hint="Signed offers through activation"
               />
               <CountCard
                 href="/careers/manager/active-interns"
@@ -162,55 +157,40 @@ export default function ManagerHomePage() {
                 icon={<Users className="h-4 w-4" />}
                 title="Applicant Pipeline"
                 body="Filterable list of post-shortlist records with interview state, ERM owner, and expected start date."
-                phase={1}
               />
               <SectionCard
                 href="/careers/manager/onboarding-health"
                 icon={<BadgeCheck className="h-4 w-4" />}
                 title="Onboarding Health"
                 body="Signed offers, document verification, start-date countdowns, activation status."
-                phase={2}
               />
               <SectionCard
                 href="/careers/manager/active-interns"
                 icon={<GraduationCap className="h-4 w-4" />}
                 title="Active Interns"
                 body="Project assignment, weekly meetings, evaluation cadence, project progress."
-                phase={3}
               />
               <SectionCard
                 href="/careers/manager/timesheet-approvals"
                 icon={<ClipboardList className="h-4 w-4" />}
                 title="Timesheet Approvals"
                 body="Submitted / approved / rejected hours across all interns in your span of control."
-                phase={3}
               />
               <SectionCard
                 href="/careers/manager/risk-center"
                 icon={<ShieldAlert className="h-4 w-4" />}
                 title="Risk Center"
-                body="Cross-cutting exceptions — overdue evaluations, missed meetings, work-auth expirations."
-                phase={4}
+                body="Overdue evaluations, missed meetings, work-auth expirations."
               />
               <SectionCard
                 href="/careers/manager/reports"
                 icon={<FileBarChart2 className="h-4 w-4" />}
                 title="Reports"
                 body="Monthly roll-ups + CSV exports for HR / leadership reviews."
-                phase={4}
               />
             </div>
           </section>
 
-          <section className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-[11px] text-slate-600">
-            <p className="font-semibold text-slate-700">Note</p>
-            <p className="mt-1">
-              Operational KPIs (project progress, meeting cadence, evaluation
-              SLA, timesheet posture) ship in Phases 3 and 4 alongside their
-              underlying data. Phase 1 surfaces the pipeline funnel + lifecycle
-              roll-up only; no fake numbers.
-            </p>
-          </section>
         </>
       )}
     </div>
@@ -315,26 +295,22 @@ function KpiCard({
 }
 
 function SectionCard({
-  href, icon, title, body, phase,
+  href, icon, title, body,
 }: {
   href: string;
   icon: React.ReactNode;
   title: string;
   body: string;
-  phase: number;
 }) {
   return (
     <Link
       href={href}
       className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm hover:border-brand-300 hover:shadow"
     >
-      <div className="flex items-center justify-between">
-        <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-brand-700">
-          {icon}
-          {title}
-        </p>
-        <span className="text-[10px] text-slate-400">P{phase}</span>
-      </div>
+      <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-brand-700">
+        {icon}
+        {title}
+      </p>
       <p className="mt-2 text-xs text-slate-700">{body}</p>
     </Link>
   );

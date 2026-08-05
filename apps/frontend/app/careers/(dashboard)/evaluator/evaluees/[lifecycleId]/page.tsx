@@ -382,9 +382,6 @@ function MonitorTrainerContext({ detail }: { detail: EvalueeDetail }) {
         <Users className="h-3.5 w-3.5" />
         Trainer Context
       </h3>
-      <p className="mt-2 text-xs text-slate-500">
-        Read-only cross-role awareness.
-      </p>
       {!t || (!t.currentProjectTitle && !t.lastMeetingScheduledFor) ? (
         <p className="mt-3 text-sm text-slate-500">
           No active project or recent meeting from Trainer.

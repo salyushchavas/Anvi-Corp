@@ -104,8 +104,7 @@ export default function CloseCaseDialog({
           Close E-Verify Case
         </h2>
         <p className="mt-2 text-sm text-gray-600">
-          Final action — this closes the case in our records. The closure will
-          be permanently logged in the audit history.
+          Permanently logged in the audit history.
         </p>
 
         <div className="mt-4">
