@@ -21,6 +21,7 @@
         <java.version>17</java.version>
         <jjwt.version>0.12.6</jjwt.version>
         <awssdk.version>2.28.0</awssdk.version>
+        <openhtmltopdf.version>1.0.10</openhtmltopdf.version>
     </properties>
 
     <dependencyManagement>
@@ -111,6 +112,18 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>url-connection-client</artifactId>
+        </dependency>
+
+        <!-- IDMS Phase 2 — openhtmltopdf renders the executed PDF from the
+             filled canonical HTML. openhtmltopdf-pdfbox is the recommended
+             backend; -core is a transitive dependency of it. Pulls PDFBox
+             + a small XHTML parser. Operator note: JAVA_TOOL_OPTIONS
+             MaxRAMPercentage=75 recommended so PDF renders don't OOM on the
+             Railway boxes. -->
+        <dependency>
+            <groupId>com.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-pdfbox</artifactId>
+            <version>${openhtmltopdf.version}</version>
         </dependency>
 
         <dependency>

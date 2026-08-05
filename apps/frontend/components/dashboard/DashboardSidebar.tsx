@@ -72,6 +72,7 @@ const STAFF_ROLE_LINKS: Record<UserRole, StaffLink[]> = {
     { icon: ListChecks,     label: 'My Applications',   href: '/careers/intern/applications', moduleKey: 'myApplications' },
     { icon: Video,          label: 'Interview Center',  href: '/careers/intern/interviews',  moduleKey: 'interviewCenter' },
     { icon: FileSignature,  label: 'Offer Letter',      href: '/careers/intern/offer',       moduleKey: 'offerLetter' },
+    { icon: FileText,       label: 'Agreements',        href: '/careers/intern/agreements' },
     { icon: FolderArchive,  label: 'My Projects',       href: '/careers/intern/projects',    moduleKey: 'myProjects' },
     { icon: Hammer,         label: 'Timesheets',        href: '/careers/intern/timesheets',  moduleKey: 'timesheets' },
     { icon: Star,           label: 'Evaluations',       href: '/careers/intern/evaluations', moduleKey: 'evaluations' },
