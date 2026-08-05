@@ -28,13 +28,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -76,11 +73,11 @@ public class OfferIdmsSigningService {
     private final ObjectMapper objectMapper;
     private final InternLifecycleService internLifecycleService;
     private final ApplicationEventPublisher eventPublisher;
-    private final JdbcTemplate jdbcTemplate;
     private final com.anvicorp.api.erm.CommunicationTemplateService templateService;
     private final com.anvicorp.api.notification.EmailProvider emailProvider;
     private final ReportingStructureAutoLinker reportingStructureAutoLinker;
     private final com.anvicorp.api.service.EngagementService engagementService;
+    private final com.anvicorp.api.service.EmployeeIdGenerator employeeIdGenerator;
     private final com.anvicorp.api.config.BrandConfig brand;
 
     @Value("${app.frontend.base-url:https://www.anvicorp.com}")
@@ -450,11 +447,7 @@ public class OfferIdmsSigningService {
     // ── Internals ───────────────────────────────────────────────────────────
 
     private String nextEmployeeId() {
-        Long n = jdbcTemplate.queryForObject(
-                "SELECT nextval('skyzen_employee_seq')", Long.class);
-        long val = n == null ? 1000 : n;
-        int year = LocalDate.now(ZoneOffset.UTC).getYear();
-        return String.format("ANVI-EMP-%d-%06d", year, val);
+        return employeeIdGenerator.nextEmployeeId();
     }
 
     private Offer mustOwnAsApplicant(UUID offerId, User caller) {

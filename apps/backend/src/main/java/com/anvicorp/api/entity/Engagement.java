@@ -28,10 +28,13 @@ import java.util.UUID;
 @Entity
 @Table(
         name = "engagements",
-        uniqueConstraints = {
-                @UniqueConstraint(name = "uk_engagement_application", columnNames = "application_id"),
-                @UniqueConstraint(name = "uk_engagement_offer", columnNames = "offer_id")
-        },
+        // Direct-Onboarding: application_id + offer_id are now NULLABLE
+        // for direct-hire rows (pre-platform employees have no application
+        // or offer). Uniqueness on those columns is enforced by PARTIAL
+        // indexes (uk_engagement_application_active /
+        // uk_engagement_offer_active, WHERE <col> IS NOT NULL) created by
+        // SchemaFixupRunner — an unconditional @UniqueConstraint here would
+        // fold every direct-hire row into a NULL-collision.
         indexes = {
                 @Index(name = "idx_engagement_candidate", columnList = "candidate_id"),
                 @Index(name = "idx_engagement_status", columnList = "status"),
@@ -51,8 +54,15 @@ public class Engagement {
     @GeneratedValue
     private UUID id;
 
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "application_id", nullable = false, unique = true)
+    /**
+     * The Application this engagement was born from. NULLABLE — direct-hire
+     * rows (pre-platform employees onboarded via {@code
+     * DirectOnboardingService}) have no application. Uniqueness on
+     * populated values is enforced by the partial index
+     * {@code uk_engagement_application_active}.
+     */
+    @OneToOne(fetch = FetchType.LAZY, optional = true)
+    @JoinColumn(name = "application_id", nullable = true)
     private Application application;
 
     /** Denormalised from {@link #application}.candidate for direct querying. */
@@ -60,8 +70,13 @@ public class Engagement {
     @JoinColumn(name = "candidate_id", nullable = false)
     private Candidate candidate;
 
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "offer_id", nullable = false, unique = true)
+    /**
+     * The signed Offer for this engagement. NULLABLE — direct-hire rows
+     * have no offer. Uniqueness on populated values is enforced by the
+     * partial index {@code uk_engagement_offer_active}.
+     */
+    @OneToOne(fetch = FetchType.LAZY, optional = true)
+    @JoinColumn(name = "offer_id", nullable = true)
     private Offer offer;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
