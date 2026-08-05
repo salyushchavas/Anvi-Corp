@@ -16,6 +16,7 @@ import {
   ArrowLeft,
   Bookmark,
   CheckCircle2,
+  ChevronDown,
   Edit3,
   Eye,
   Info,
@@ -213,6 +214,23 @@ function PageContent() {
   }, [template]);
 
   // ── Track admin selections inside the canvas ─────────────────────
+  //
+  // Containment: canvasRef points at the outer .doc-canvas wrapper, which
+  // is the parent of EVERY docx-preview page section — so a `contains()`
+  // check works for any selection on any page of a multi-page render.
+  //
+  // Toolbar position: absolute inside the (non-scrolling) `<div
+  // className="relative">` that WRAPS the scrollable canvas. Because the
+  // canvas element sits at (0,0) inside that relative parent, the correct
+  // toolbar top is simply `rect.top - canvasRect.top - toolbarHeight` —
+  // NO `canvas.scrollTop` addition. Adding scrollTop was the multi-page
+  // bug: for a selection on page 3 with scrollTop ~2000px, the toolbar
+  // was pushed ~2000px below its correct spot, off-screen.
+  //
+  // Empty rects: underscore runs and whitespace-only spans are legit
+  // selections (signature lines land on them). If the primary rect is
+  // degenerate, fall back to the first non-empty client rect, then to
+  // the start container's parent element rect.
   useEffect(() => {
     function updateSelection() {
       const canvas = canvasRef.current;
@@ -224,14 +242,16 @@ function PageContent() {
         return;
       }
       const range = sel.getRangeAt(0);
-      // Only surface the toolbar if the selection is fully inside the canvas.
       if (!canvas.contains(range.commonAncestorContainer)) {
         setSelectionPresent(false);
         setSelectionRect(null);
         return;
       }
-      const rect = range.getBoundingClientRect();
-      if (rect.width === 0 && rect.height === 0) {
+      const anchor = anchorRectForRange(range);
+      if (!anchor) {
+        // No usable anchor point — keep toolbar hidden but don't block
+        // the make-field action; user can still trigger it if they know
+        // what they've selected.
         setSelectionPresent(false);
         setSelectionRect(null);
         return;
@@ -239,10 +259,8 @@ function PageContent() {
       const canvasRect = canvas.getBoundingClientRect();
       setSelectionPresent(true);
       setSelectionRect({
-        // Position the toolbar just above the selection, relative to the
-        // canvas wrapper (which is position:relative).
-        top: rect.top - canvasRect.top - 40 + canvas.scrollTop,
-        left: Math.max(0, rect.left - canvasRect.left + rect.width / 2),
+        top: anchor.top - canvasRect.top - 40,
+        left: Math.max(0, anchor.left - canvasRect.left + anchor.width / 2),
       });
     }
     document.addEventListener('selectionchange', updateSelection);
@@ -276,7 +294,18 @@ function PageContent() {
   }, [fields, previewMode, rendered]);
 
   // ── Wrap the current selection into a doc-field span ─────────────
-  function makeFieldFromSelection() {
+  //
+  // Multi-anchor model: the canonical HTML is the source of truth. A
+  // field owns EVERY <span data-field-id="X"> whose id matches its own,
+  // so "one field, two places" just means two spans sharing an id. The
+  // FieldEntry schema stays flat (no anchor array); anchor count is
+  // derived from the DOM. When Phase 2 fills a field, every anchor is
+  // filled — the existing ownership-tint / preview-mode loops already
+  // iterate every .doc-field span, so this works by construction.
+  //
+  // `existingFieldId=null` mints a fresh field; passing an id links the
+  // new selection as an additional anchor of that field.
+  function wrapSelection(existingFieldId: string | null) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const sel = window.getSelection();
@@ -284,17 +313,18 @@ function PageContent() {
     const range = sel.getRangeAt(0);
     if (!canvas.contains(range.commonAncestorContainer)) return;
 
-    const id = generateUuid();
+    const id = existingFieldId ?? generateUuid();
+    const assignee: FieldAssignee =
+      existingFieldId
+        ? (fields.find((f) => f.id === existingFieldId)?.assignee ?? 'ERM')
+        : 'ERM';
     const span = document.createElement('span');
     span.setAttribute('data-field-id', id);
-    span.className = `${DOC_FIELD_CLASS} doc-field--erm`;
-    // If the selection spans multiple nodes we surround; if it's inside
-    // a single text node the surroundContents is fine.
+    span.className = `${DOC_FIELD_CLASS} doc-field--${assignee.toLowerCase()}`;
     try {
       range.surroundContents(span);
     } catch {
-      // surroundContents fails on partial nodes across boundaries — fall
-      // back to extract + insert.
+      // surroundContents fails on partial nodes across boundaries.
       const frag = range.extractContents();
       span.appendChild(frag);
       range.insertNode(span);
@@ -302,6 +332,18 @@ function PageContent() {
     sel.removeAllRanges();
     setSelectionPresent(false);
     setSelectionRect(null);
+
+    if (existingFieldId) {
+      // Linking to an existing field — no schema entry to add. Re-apply
+      // tints so the new span picks up the field's colour immediately,
+      // and nudge the fields array reference so useAnchorCounts re-runs
+      // and the sidebar shows the new "N places" chip.
+      applyOwnershipTints(canvas, fields);
+      applyPreviewMode(canvas, previewMode, fields);
+      setFields((prev) => [...prev]);
+      setInspecting(existingFieldId);
+      return;
+    }
 
     const entry: FieldEntry = {
       id,
@@ -319,34 +361,73 @@ function PageContent() {
     setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
   }
 
+  // Unwrap ALL anchors of a field (may be more than one after linking).
   function deleteField(id: string) {
     const canvas = canvasRef.current;
     if (canvas) {
-      const el = canvas.querySelector(`[data-field-id="${id}"]`);
-      if (el) {
-        // Unwrap — move the children out of the span, then remove it.
-        const parent = el.parentNode;
-        if (parent) {
-          while (el.firstChild) parent.insertBefore(el.firstChild, el);
-          parent.removeChild(el);
-        }
-      }
+      canvas.querySelectorAll(`[data-field-id="${id}"]`).forEach((el) => {
+        unwrapSpan(el);
+      });
     }
     setFields((prev) => prev.filter((f) => f.id !== id));
     if (inspecting === id) setInspecting(null);
   }
 
+  // Unwrap a single anchor. If it was the last remaining anchor of its
+  // field, the field entry is removed too — a field with zero anchors
+  // has nothing to fill.
+  function deleteAnchor(fieldId: string, anchorIndex: number) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const anchors = canvas.querySelectorAll(`[data-field-id="${fieldId}"]`);
+    const el = anchors[anchorIndex];
+    if (!el) return;
+    unwrapSpan(el);
+    if (anchors.length <= 1) {
+      setFields((prev) => prev.filter((f) => f.id !== fieldId));
+      if (inspecting === fieldId) setInspecting(null);
+    } else {
+      // Re-render sidebar counts by nudging the fields array reference.
+      setFields((prev) => [...prev]);
+    }
+  }
+
+  // Cycle through a field's anchors on successive clicks — 1 → 2 → 1 …
+  const cycleIndexRef = useRef<Map<string, number>>(new Map());
   function jumpToField(id: string) {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const el = canvas.querySelector(`[data-field-id="${id}"]`) as HTMLElement | null;
-    if (!el) return;
+    const anchors = Array.from(
+      canvas.querySelectorAll(`[data-field-id="${id}"]`),
+    ) as HTMLElement[];
+    if (anchors.length === 0) return;
+    const nextIdx = ((cycleIndexRef.current.get(id) ?? -1) + 1) % anchors.length;
+    cycleIndexRef.current.set(id, nextIdx);
+    const el = anchors[nextIdx];
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setInspecting(id);
-    // Brief highlight pulse.
     el.classList.add('doc-field--flash');
     window.setTimeout(() => el.classList.remove('doc-field--flash'), 900);
   }
+
+  function jumpToAnchor(fieldId: string, anchorIndex: number) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const anchors = Array.from(
+      canvas.querySelectorAll(`[data-field-id="${fieldId}"]`),
+    ) as HTMLElement[];
+    const el = anchors[anchorIndex];
+    if (!el) return;
+    cycleIndexRef.current.set(fieldId, anchorIndex);
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setInspecting(fieldId);
+    el.classList.add('doc-field--flash');
+    window.setTimeout(() => el.classList.remove('doc-field--flash'), 900);
+  }
+
+  // Recompute anchor counts whenever fields change; the canvas DOM is
+  // the source of truth so this reads directly from it.
+  const anchorCounts = useAnchorCounts(canvasRef, fields, rendered);
 
   // ── Save ─────────────────────────────────────────────────────────
   const validation = useMemo(() => validateFields(fields), [fields]);
@@ -518,26 +599,13 @@ function PageContent() {
               </div>
             )}
             {previewMode === 'edit' && selectionPresent && selectionRect && (
-              <div
-                className="pointer-events-auto absolute z-10 -translate-x-1/2 rounded-md bg-slate-900 shadow-lg"
-                style={{ top: selectionRect.top, left: selectionRect.left }}
-              >
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    // MouseDown fires before selectionchange clears the range
-                    // when a click lands outside the selection. Prevent the
-                    // default focus-shift so the selection survives to the
-                    // onClick.
-                    e.preventDefault();
-                  }}
-                  onClick={makeFieldFromSelection}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white"
-                >
-                  <Bookmark className="h-3.5 w-3.5" />
-                  Make field
-                </button>
-              </div>
+              <SelectionToolbar
+                top={selectionRect.top}
+                left={selectionRect.left}
+                fields={fields}
+                onNewField={() => wrapSelection(null)}
+                onLinkExisting={(id) => wrapSelection(id)}
+              />
             )}
           </div>
         </section>
@@ -546,6 +614,7 @@ function PageContent() {
         <aside className="space-y-4">
           <FieldsSidebar
             fields={fields}
+            anchorCounts={anchorCounts}
             inspecting={inspecting}
             onSelect={jumpToField}
             onDelete={deleteField}
@@ -553,8 +622,11 @@ function PageContent() {
           {inspecting && (
             <FieldInspector
               field={fields.find((f) => f.id === inspecting) ?? null}
+              anchorCount={anchorCounts.get(inspecting) ?? 0}
               onChange={(patch) => updateField(inspecting, patch)}
               onClose={() => setInspecting(null)}
+              onJumpAnchor={(idx) => jumpToAnchor(inspecting, idx)}
+              onDeleteAnchor={(idx) => deleteAnchor(inspecting, idx)}
             />
           )}
         </aside>
@@ -711,11 +783,13 @@ function OwnershipLegend() {
 
 function FieldsSidebar({
   fields,
+  anchorCounts,
   inspecting,
   onSelect,
   onDelete,
 }: {
   fields: FieldEntry[];
+  anchorCounts: Map<string, number>;
   inspecting: string | null;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
@@ -730,12 +804,13 @@ function FieldsSidebar({
       </header>
       {fields.length === 0 ? (
         <p className="text-xs text-slate-500">
-          Select text in the document and click <span className="font-medium">Make field</span>.
+          Select text in the document and click <span className="font-medium">New field</span>.
         </p>
       ) : (
         <ul className="space-y-1.5">
           {fields.map((f) => {
             const isActive = inspecting === f.id;
+            const count = anchorCounts.get(f.id) ?? 0;
             return (
               <li
                 key={f.id}
@@ -747,8 +822,16 @@ function FieldsSidebar({
                   type="button"
                   onClick={() => onSelect(f.id)}
                   className="flex-1 text-left"
+                  title={count > 1 ? `Click to cycle through ${count} places` : 'Jump to field'}
                 >
-                  <p className="truncate font-medium text-slate-900">{f.name || 'Untitled field'}</p>
+                  <p className="truncate font-medium text-slate-900">
+                    {f.name || 'Untitled field'}
+                    {count > 1 && (
+                      <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+                        {count} places
+                      </span>
+                    )}
+                  </p>
                   <p className="mt-0.5 text-xs text-slate-500">
                     <span className={`mr-1.5 rounded border px-1.5 py-0.5 text-[10px] font-medium ${assigneeTone(f.assignee)}`}>
                       {f.assignee}
@@ -761,7 +844,8 @@ function FieldsSidebar({
                   type="button"
                   onClick={() => onDelete(f.id)}
                   className="opacity-0 transition group-hover:opacity-100 focus:opacity-100"
-                  aria-label={`Delete ${f.name}`}
+                  aria-label={`Delete ${f.name || 'field'}`}
+                  title={count > 1 ? `Delete field and unwrap all ${count} places` : 'Delete field'}
                 >
                   <Trash2 className="h-4 w-4 text-slate-400 hover:text-red-600" />
                 </button>
@@ -778,12 +862,18 @@ function FieldsSidebar({
 
 function FieldInspector({
   field,
+  anchorCount,
   onChange,
   onClose,
+  onJumpAnchor,
+  onDeleteAnchor,
 }: {
   field: FieldEntry | null;
+  anchorCount: number;
   onChange: (patch: Partial<FieldEntry>) => void;
   onClose: () => void;
+  onJumpAnchor: (idx: number) => void;
+  onDeleteAnchor: (idx: number) => void;
 }) {
   if (!field) return null;
   return (
@@ -861,12 +951,129 @@ function FieldInspector({
           />
           Required
         </label>
+
+        <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-700">
+            Anchors{anchorCount > 0 && <span className="text-slate-500"> · {anchorCount} {anchorCount === 1 ? 'place' : 'places'}</span>}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Every anchor of this field is filled with the same value.
+            Select more text in the document and choose <span className="font-medium">Use existing field</span> to add another anchor.
+          </p>
+          {anchorCount > 0 && (
+            <ul className="mt-2 space-y-1">
+              {Array.from({ length: anchorCount }, (_, idx) => (
+                <li key={idx} className="flex items-center justify-between rounded border border-slate-200 bg-white px-2 py-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => onJumpAnchor(idx)}
+                    className="flex-1 text-left font-medium text-slate-700 hover:text-slate-900"
+                  >
+                    Anchor {idx + 1}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteAnchor(idx)}
+                    className="text-slate-400 hover:text-red-600"
+                    aria-label={`Remove anchor ${idx + 1}`}
+                    title={anchorCount === 1
+                      ? 'Remove this anchor (also removes the field)'
+                      : 'Remove this anchor'}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         <p className="text-xs text-slate-500">
           <Info className="mr-1 inline-block h-3 w-3" />
           Field values are collected when this template is used — Phase 2.
         </p>
       </div>
     </section>
+  );
+}
+
+// ── Selection toolbar (with "Use existing" picker) ────────────────────
+
+function SelectionToolbar({
+  top,
+  left,
+  fields,
+  onNewField,
+  onLinkExisting,
+}: {
+  top: number;
+  left: number;
+  fields: FieldEntry[];
+  onNewField: () => void;
+  onLinkExisting: (id: string) => void;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  return (
+    <div
+      className="pointer-events-auto absolute z-10 -translate-x-1/2 rounded-md bg-slate-900 shadow-lg"
+      style={{ top, left }}
+      onMouseDown={(e) => {
+        // Prevent focus shift so the underlying selection isn't cleared
+        // when the admin clicks toolbar controls.
+        e.preventDefault();
+      }}
+    >
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={onNewField}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+        >
+          <Bookmark className="h-3.5 w-3.5" />
+          New field
+        </button>
+        {fields.length > 0 && (
+          <div className="relative border-l border-slate-700">
+            <button
+              type="button"
+              onClick={() => setPickerOpen((v) => !v)}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-100 hover:bg-slate-800"
+              aria-expanded={pickerOpen}
+              aria-haspopup="listbox"
+            >
+              Use existing field
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {pickerOpen && (
+              <div
+                role="listbox"
+                className="absolute left-0 top-full z-20 mt-1 max-h-56 w-56 overflow-y-auto rounded-md border border-slate-200 bg-white py-1 text-xs shadow-xl"
+              >
+                {fields.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    role="option"
+                    onClick={() => {
+                      setPickerOpen(false);
+                      onLinkExisting(f.id);
+                    }}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-slate-50"
+                  >
+                    <span className="truncate font-medium text-slate-800">
+                      {f.name || 'Untitled field'}
+                    </span>
+                    <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium ${assigneeTone(f.assignee)}`}>
+                      {f.assignee}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -987,6 +1194,65 @@ function generateUuid(): string {
     return crypto.randomUUID();
   }
   return `f-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Pick a usable rectangle for the selection toolbar. Some ranges (pure
+// underscores, whitespace, decorative-underline empty spans) yield a
+// (0, 0) getBoundingClientRect even though the selection is real; walk
+// the client-rects list first, then fall back to the start container's
+// element rect. Returns null only when nothing usable exists.
+function anchorRectForRange(range: Range): DOMRect | null {
+  const primary = range.getBoundingClientRect();
+  if (primary.width > 0 || primary.height > 0) return primary;
+  const rects = Array.from(range.getClientRects());
+  const nonEmpty = rects.find((r) => r.width > 0 || r.height > 0);
+  if (nonEmpty) return nonEmpty;
+  const node = range.startContainer;
+  const el =
+    node.nodeType === Node.ELEMENT_NODE
+      ? (node as Element)
+      : node.parentElement;
+  if (el) {
+    const elRect = el.getBoundingClientRect();
+    if (elRect.width > 0 || elRect.height > 0) return elRect;
+  }
+  return null;
+}
+
+// Unwrap a doc-field span: move every child up to the parent, then remove
+// the span. Used by delete-field and delete-anchor.
+function unwrapSpan(el: Element) {
+  const parent = el.parentNode;
+  if (!parent) return;
+  while (el.firstChild) parent.insertBefore(el.firstChild, el);
+  parent.removeChild(el);
+}
+
+// Count anchors (data-field-id spans) per field id. Re-runs whenever the
+// fields list changes or the canvas re-renders, so counts stay honest as
+// the admin adds/removes anchors.
+function useAnchorCounts(
+  canvasRef: React.RefObject<HTMLDivElement | null>,
+  fields: FieldEntry[],
+  rendered: boolean,
+): Map<string, number> {
+  const [counts, setCounts] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !rendered) {
+      setCounts(new Map());
+      return;
+    }
+    const next = new Map<string, number>();
+    for (const f of fields) {
+      next.set(
+        f.id,
+        canvas.querySelectorAll(`[data-field-id="${f.id}"]`).length,
+      );
+    }
+    setCounts(next);
+  }, [canvasRef, fields, rendered]);
+  return counts;
 }
 
 function defaultFieldName(seq: number): string {
