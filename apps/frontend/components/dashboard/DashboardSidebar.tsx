@@ -9,6 +9,7 @@ import {
   Briefcase,
   ChevronRight,
   ClipboardCheck,
+  Edit3,
   FileSignature,
   FileText,
   FolderArchive,
@@ -129,6 +130,7 @@ const STAFF_ROLE_LINKS: Record<UserRole, StaffLink[]> = {
     { icon: Briefcase,       label: 'Job Postings',          href: '/careers/admin/postings' },
     { icon: Package,         label: 'Entities',              href: '/careers/admin/entities' },
     { icon: FileText,        label: 'Onboarding Documents',  href: '/careers/admin/onboarding-documents' },
+    { icon: Edit3,           label: 'Document Templates',    href: '/careers/admin/document-templates' },
     { icon: ShieldCheck,     label: 'Audit Log',             href: '/careers/admin/audit-log' },
   ],
 };
