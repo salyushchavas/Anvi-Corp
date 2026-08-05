@@ -249,12 +249,22 @@ public class TrainerReportsService {
                         java.sql.Timestamp.from(to),
                         trainerParam));
 
+        // Window on submitted_at so a past-month report shows the
+        // pending-review count that BELONGED to that month, not today's
+        // live "still pending right now" number. Current-month reports
+        // remain equivalent because from/to = this month's boundaries and
+        // any submission not yet reviewed still falls inside them.
         int pendingBacklog = (int) safeCount(
                 "SELECT COUNT(*) FROM project_submissions s "
                         + "  JOIN projects p ON p.id = s.project_id "
                         + "  JOIN intern_lifecycles il ON il.id = p.intern_lifecycle_id "
-                        + " WHERE s.trainer_decision IS NULL " + trainerClause,
-                trainerParam.toArray());
+                        + " WHERE s.trainer_decision IS NULL "
+                        + "   AND s.submitted_at >= ? AND s.submitted_at < ? "
+                        + trainerClause,
+                paramsArrayPrepend(
+                        java.sql.Timestamp.from(from),
+                        java.sql.Timestamp.from(to),
+                        trainerParam));
 
         Double avgHours = null;
         try {
@@ -354,12 +364,17 @@ public class TrainerReportsService {
                             + "   AND wm.scheduled_for >= ? AND wm.scheduled_for < ? "
                             + "   AND wm.status = 'NO_SHOW'",
                     lcId, java.sql.Timestamp.from(from), java.sql.Timestamp.from(to));
+            // Per-intern pending count also windows on submitted_at —
+            // otherwise a historical report shows today's live pending
+            // count against the past-month rollup.
             int pendingReview = (int) safeCount(
                     "SELECT COUNT(*) FROM project_submissions s "
                             + "  JOIN projects p ON p.id = s.project_id "
                             + " WHERE p.intern_lifecycle_id = ? "
-                            + "   AND s.trainer_decision IS NULL",
-                    lcId);
+                            + "   AND s.trainer_decision IS NULL "
+                            + "   AND s.submitted_at >= ? AND s.submitted_at < ?",
+                    lcId,
+                    java.sql.Timestamp.from(from), java.sql.Timestamp.from(to));
             Double avgHours = null;
             try {
                 avgHours = jdbc.queryForObject(

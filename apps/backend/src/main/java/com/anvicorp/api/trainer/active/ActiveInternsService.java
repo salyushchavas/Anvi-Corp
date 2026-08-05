@@ -255,7 +255,8 @@ public class ActiveInternsService {
         String monthYear = period.toString();
         CurrentMonthProjectsBlock projects = loadMonthProjects(
                 basic.internLifecycleId(), monthYear);
-        MeetingStateBlock meeting = loadMeetingState(basic.internLifecycleId());
+        MeetingStateBlock meeting = loadMonthMeetingState(
+                basic.internLifecycleId(), period);
         EvaluationStateBlock evaluation = loadMonthEvaluationState(
                 basic.internLifecycleId(), period, projects);
         TimesheetStateBlock timesheet = loadMonthTimesheetState(basic, period);
@@ -521,6 +522,56 @@ public class ActiveInternsService {
             nextAt = instantOf((java.sql.Timestamp) r.get("next_at"));
         } catch (Exception e) {
             log.debug("[ActiveInterns] meeting state load failed: {}", e.getMessage());
+        }
+        return new MeetingStateBlock(
+                lastAt, lastStatus, nextAt,
+                meetingDocState(lastAt, lastStatus, nextAt));
+    }
+
+    /**
+     * Month-aware meeting cell: current-month delegates to the live
+     * NOW()-bounded {@link #loadMeetingState(UUID)} so the current-month
+     * roster stays byte-identical. Past months bound {@code scheduled_for}
+     * to the picked month so the cell reflects "what happened IN that
+     * month," not today's cursor state.
+     */
+    private MeetingStateBlock loadMonthMeetingState(UUID lifecycleId, YearMonth period) {
+        if (lifecycleId == null) return new MeetingStateBlock(null, null, null, "NONE");
+        if (period == null || period.equals(YearMonth.now(ZONE))) {
+            return loadMeetingState(lifecycleId);
+        }
+        java.sql.Timestamp start = java.sql.Timestamp.from(
+                period.atDay(1).atStartOfDay(ZONE).toInstant());
+        java.sql.Timestamp end = java.sql.Timestamp.from(
+                period.plusMonths(1).atDay(1).atStartOfDay(ZONE).toInstant());
+        Instant lastAt = null;
+        String lastStatus = null;
+        Instant nextAt = null;
+        try {
+            Map<String, Object> r = jdbc.queryForMap(
+                    "SELECT "
+                            + "  (SELECT scheduled_for FROM weekly_meetings "
+                            + "     WHERE intern_lifecycle_id = ? "
+                            + "       AND scheduled_for >= ? AND scheduled_for < ? "
+                            + "     ORDER BY scheduled_for DESC LIMIT 1) AS last_at, "
+                            + "  (SELECT status FROM weekly_meetings "
+                            + "     WHERE intern_lifecycle_id = ? "
+                            + "       AND scheduled_for >= ? AND scheduled_for < ? "
+                            + "     ORDER BY scheduled_for DESC LIMIT 1) AS last_status, "
+                            + "  (SELECT scheduled_for FROM weekly_meetings "
+                            + "     WHERE intern_lifecycle_id = ? "
+                            + "       AND scheduled_for >= ? AND scheduled_for < ? "
+                            + "       AND status = 'SCHEDULED' "
+                            + "     ORDER BY scheduled_for ASC LIMIT 1) AS next_at",
+                    lifecycleId, start, end,
+                    lifecycleId, start, end,
+                    lifecycleId, start, end);
+            lastAt = instantOf((java.sql.Timestamp) r.get("last_at"));
+            lastStatus = (String) r.get("last_status");
+            nextAt = instantOf((java.sql.Timestamp) r.get("next_at"));
+        } catch (Exception e) {
+            log.debug("[ActiveInterns] month meeting state load failed: {}",
+                    e.getMessage());
         }
         return new MeetingStateBlock(
                 lastAt, lastStatus, nextAt,

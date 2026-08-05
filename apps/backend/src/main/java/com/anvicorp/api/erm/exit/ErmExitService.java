@@ -142,6 +142,13 @@ public class ErmExitService {
         List<Object> pageParams = new ArrayList<>(params);
         pageParams.add(ps);
         pageParams.add(p * ps);
+        // On a past-month view rows live in exit_date's month; sort by
+        // exit_date so the paging cursor matches the WHERE window.
+        // Current-month keeps the created_at sort (recency of the ERM
+        // action, matches the existing UX contract).
+        String orderBy = monthScope.isCurrent()
+                ? " ORDER BY er.created_at DESC "
+                : " ORDER BY er.exit_date DESC, er.id DESC ";
         List<ErmExitDtos.ErmExitRow> rows;
         try {
             rows = jdbc.query(
@@ -153,7 +160,7 @@ public class ErmExitService {
                             + "  JOIN intern_lifecycles il ON il.id = er.intern_lifecycle_id "
                             + "  JOIN users u ON u.id = er.intern_id "
                             + where
-                            + " ORDER BY er.created_at DESC "
+                            + orderBy
                             + " LIMIT ? OFFSET ?",
                     pageParams.toArray(),
                     (rs, n) -> mapRow(rs));
@@ -238,34 +245,18 @@ public class ErmExitService {
         MonthRange monthScope = range != null ? range : MonthRange.parse(null);
         int ps = Math.min(100, Math.max(1, pageSize));
         int p = Math.max(0, page);
+        // Ready-to-Exit is a NOW-only concept: the detector reads live
+        // lifecycle signals (project count, timesheet gaps, active status)
+        // and returns "interns who look ready TODAY." Past months have no
+        // meaningful semantics here — a June snapshot would still show
+        // "ready right now" state, and the previous hired_at proxy just
+        // misplaced rows in the hire month rather than the ready month.
+        // Return an empty page for any non-current pick.
+        if (!monthScope.isCurrent()) {
+            return new ErmExitDtos.ReadyToExitListPage(List.of(), p, ps, 0L, 0);
+        }
         List<ReadyToExitDetector.Row> all = readyDetector.detect(
                 scope, caller != null ? caller.getId() : null, 500);
-        // Past-month window: "ready" is a live-computed detector state, so
-        // for past months we filter by the underlying lifecycle's hired_at
-        // falling inside the month — i.e. interns hired that month who now
-        // appear as ready-to-exit. Lifecycle rows are looked up in bulk to
-        // avoid an N+1.
-        if (!monthScope.isCurrent() && !all.isEmpty()) {
-            java.time.Instant winStart = monthScope.startInclusive();
-            java.time.Instant winEnd = monthScope.endExclusive();
-            List<UUID> ids = new ArrayList<>();
-            for (var r : all) ids.add(r.internLifecycleId());
-            Map<UUID, InternLifecycle> byId = new java.util.HashMap<>();
-            try {
-                for (InternLifecycle lc : lifecycleRepository.findAllById(ids)) {
-                    if (lc != null) byId.put(lc.getId(), lc);
-                }
-            } catch (Exception ignored) {}
-            List<ReadyToExitDetector.Row> filtered = new ArrayList<>();
-            for (var r : all) {
-                InternLifecycle lc = byId.get(r.internLifecycleId());
-                if (lc == null) continue;
-                Instant when = lc.getHiredAt() != null ? lc.getHiredAt() : lc.getStartedAt();
-                if (when == null) continue;
-                if (!when.isBefore(winStart) && when.isBefore(winEnd)) filtered.add(r);
-            }
-            all = filtered;
-        }
         long total = all.size();
         int from = Math.min((int) total, p * ps);
         int to = Math.min((int) total, from + ps);

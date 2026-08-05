@@ -39,8 +39,26 @@ public class GroupSessionController {
 
     @GetMapping("/api/v1/trainer/group-sessions")
     @PreAuthorize("hasAnyRole('TRAINER', 'SUPER_ADMIN')")
-    public List<TrainerGroupSessionResponse> list(@AuthenticationPrincipal User caller) {
-        return service.listForTrainer(caller);
+    public List<TrainerGroupSessionResponse> list(
+            @RequestParam(required = false) String fromDate,
+            @RequestParam(required = false) String toDate,
+            @AuthenticationPrincipal User caller) {
+        // Sticky-month pass-through: when the trainer picks a past month,
+        // the frontend sends fromDate/toDate bounded to that month so the
+        // list scopes to sessions SCHEDULED in that window. Missing params
+        // = current month = byte-identical to the pre-scoping call.
+        return service.listForTrainer(caller).stream()
+                .filter(r -> fromDate == null || fromDate.isBlank()
+                        || r.scheduledAt() == null
+                        || !r.scheduledAt().isBefore(
+                                java.time.LocalDate.parse(fromDate)
+                                        .atStartOfDay(java.time.ZoneOffset.UTC).toInstant()))
+                .filter(r -> toDate == null || toDate.isBlank()
+                        || r.scheduledAt() == null
+                        || r.scheduledAt().isBefore(
+                                java.time.LocalDate.parse(toDate).plusDays(1)
+                                        .atStartOfDay(java.time.ZoneOffset.UTC).toInstant()))
+                .toList();
     }
 
     @GetMapping("/api/v1/trainer/group-sessions/{id}")

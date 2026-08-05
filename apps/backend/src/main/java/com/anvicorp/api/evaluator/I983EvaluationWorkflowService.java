@@ -95,11 +95,16 @@ public class I983EvaluationWorkflowService {
             evalParams.add(evaluatorId);
         }
         if (!isCurrent) {
-            evalSql.append("  AND COALESCE(ie.published_at, ie.created_at) >= ?::timestamp "
-                    + "  AND COALESCE(ie.published_at, ie.created_at) <  ?::timestamp ");
+            // Belongs-to-month for an I-983 row is: PUBLISHED month first
+            // (that's the "acted on" event); if not yet published, the
+            // SCHEDULED_FOR month is the true meeting month. `created_at`
+            // stays as the last resort so rows without either timestamp
+            // are still bucketable rather than lost.
+            evalSql.append("  AND COALESCE(ie.published_at, ie.scheduled_for, ie.created_at) >= ?::timestamp "
+                    + "  AND COALESCE(ie.published_at, ie.scheduled_for, ie.created_at) <  ?::timestamp ");
             evalParams.add(scope.startDateString()); evalParams.add(scope.endDateString());
         }
-        evalSql.append("ORDER BY COALESCE(ie.published_at, ie.created_at) DESC");
+        evalSql.append("ORDER BY COALESCE(ie.published_at, ie.scheduled_for, ie.created_at) DESC");
         List<I983WorkflowDtos.I983ListRow> evalRows = new ArrayList<>();
         try {
             evalRows = jdbc.query(evalSql.toString(),

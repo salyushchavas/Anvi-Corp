@@ -23,8 +23,28 @@ public class TrainerDoubtController {
     @PreAuthorize("hasAnyRole('TRAINER', 'SUPER_ADMIN')")
     public List<DoubtDtos.DoubtResponse> list(
             @RequestParam(value = "open", defaultValue = "true") boolean openOnly,
+            @RequestParam(value = "fromDate", required = false) String fromDate,
+            @RequestParam(value = "toDate", required = false) String toDate,
             @AuthenticationPrincipal User caller) {
-        return doubtRequestService.listForTrainer(caller, openOnly);
+        // Sticky-month pass-through: past-month view bounds the doubt's
+        // createdAt to that month's window; current-month leaves both
+        // params absent (byte-identical to the pre-scoping call).
+        java.time.Instant fromInstant = (fromDate == null || fromDate.isBlank())
+                ? null
+                : java.time.LocalDate.parse(fromDate)
+                        .atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        java.time.Instant toInstant = (toDate == null || toDate.isBlank())
+                ? null
+                : java.time.LocalDate.parse(toDate).plusDays(1)
+                        .atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        return doubtRequestService.listForTrainer(caller, openOnly).stream()
+                .filter(r -> fromInstant == null
+                        || r.createdAt() == null
+                        || !r.createdAt().isBefore(fromInstant))
+                .filter(r -> toInstant == null
+                        || r.createdAt() == null
+                        || r.createdAt().isBefore(toInstant))
+                .toList();
     }
 
     @GetMapping("/{id}")
