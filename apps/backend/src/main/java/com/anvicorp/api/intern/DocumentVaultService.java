@@ -66,6 +66,13 @@ public class DocumentVaultService {
             // template), so NORMAL sensitivity keeps it out of the
             // encrypted-envelope path.
             Map.entry("EDITABLE_TEMPLATE_SOURCE",  "NORMAL"),
+            // IDMS Phase 2 — the executed PDF and signature images
+            // ARE PII (they carry the intern's typed name, address
+            // fields, and their signature bitmap). Route both through
+            // the AES-256-GCM envelope on write, same class as
+            // SIGNED_OFFER.
+            Map.entry("EDITABLE_DOC_INSTANCE_PDF", "PII"),
+            Map.entry("SIGNATURE_IMAGE",           "PII"),
             Map.entry("OTHER",                     "NORMAL")
     );
 

@@ -150,6 +150,25 @@ public class SchemaFixupRunner implements CommandLineRunner {
                     + "until resolved): {}", e.getMessage(), e);
         }
 
+        // IDMS Phase 2 — the living document workflow. Creates
+        // document_instances (per-intern instantiations of an
+        // EditableTemplate), document_instance_field_values (one row
+        // per filled field id), and document_instance_review_logs
+        // (ERM's return / verify / revoke actions with reason codes).
+        // Snapshots the template's canonical_html + field_schema onto
+        // the instance at create so template edits never mutate
+        // in-flight docs. Partial UNIQUE (intern_lifecycle_id,
+        // template_id) WHERE status NOT IN ('VOIDED','SUPERSEDED',
+        // 'REVOKED') keeps the ERM from stacking multiple live copies
+        // of the same template for the same intern.
+        try {
+            ensureDocumentInstancesSchema();
+        } catch (Exception e) {
+            log.error("[SchemaFixupRunner] document_instances schema ensure threw "
+                    + "(non-fatal, IDMS Phase 2 writes will 42P01 until "
+                    + "resolved): {}", e.getMessage(), e);
+        }
+
         // Recording gallery month-folder fix — backfill period_start on
         // intern_evaluations rows where it never got stamped (POST_PROJECT
         // auto-drafts, legacy rows). Without a period_start the gallery
@@ -4653,6 +4672,216 @@ public class SchemaFixupRunner implements CommandLineRunner {
                             : "BROKEN — editable-templates writes will fail until resolved");
         } catch (Exception e) {
             log.warn("[SchemaFixupRunner] editable_templates verify failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * IDMS Phase 2 — the living document workflow tables:
+     * <ul>
+     *   <li>{@code document_instances} — per-intern instantiations of an
+     *       EditableTemplate. Snapshots {@code canonical_html} +
+     *       {@code field_schema} from the template AT CREATE so template
+     *       edits never mutate in-flight documents. {@code supersedes_id}
+     *       self-reference lets an ERM replace an old completed doc
+     *       with a new one while keeping both in history.</li>
+     *   <li>{@code document_instance_field_values} — one row per filled
+     *       field id (per instance). {@code signature_document_id} FK
+     *       to the vault when the field is a signature.</li>
+     *   <li>{@code document_instance_review_logs} — every ERM action
+     *       (VERIFY, RETURN, REVOKE, FINALIZE) with reason code +
+     *       comments. Mirrors {@code document_task_review_logs} shape
+     *       from the packet review flow.</li>
+     * </ul>
+     *
+     * <p>Partial UNIQUE {@code uk_di_lifecycle_template_open} on
+     * {@code (intern_lifecycle_id, template_id)} WHERE status NOT IN
+     * ('VOIDED','SUPERSEDED','REVOKED') so ERM can't stack two live
+     * copies of the same template for the same intern — but historical
+     * rows remain visible forever.</p>
+     *
+     * <p>All statements idempotent (CREATE TABLE IF NOT EXISTS, per-column
+     * ALTER TABLE ADD COLUMN IF NOT EXISTS). Non-fatal per the runner
+     * convention. Verify log line surfaces table presence + column set +
+     * partial-unique index presence.</p>
+     */
+    private void ensureDocumentInstancesSchema() {
+        // 1) document_instances — the main row.
+        try {
+            jdbcTemplate.execute(
+                    "CREATE TABLE IF NOT EXISTS document_instances ("
+                            + "  id UUID PRIMARY KEY,"
+                            + "  template_id UUID NOT NULL,"
+                            + "  intern_lifecycle_id UUID NOT NULL,"
+                            + "  intern_user_id UUID NOT NULL,"
+                            + "  created_by_erm_id UUID NOT NULL,"
+                            + "  status VARCHAR(24) NOT NULL DEFAULT 'DRAFT',"
+                            + "  version INTEGER NOT NULL DEFAULT 1,"
+                            + "  intern_locked BOOLEAN NOT NULL DEFAULT FALSE,"
+                            // Snapshotted from the template at create — template
+                            // edits never drift in-flight docs. survey §A3.
+                            + "  template_title VARCHAR(200) NOT NULL,"
+                            + "  template_key VARCHAR(100) NOT NULL,"
+                            + "  snapshot_canonical_html TEXT NOT NULL,"
+                            + "  snapshot_field_schema JSONB NOT NULL,"
+                            // Supersede — self-reference to the prior FINALIZED
+                            // instance the ERM chose to replace. Nullable.
+                            + "  supersedes_id UUID,"
+                            // The FINALIZED PDF Document row (vault, PII-class).
+                            + "  final_pdf_document_id UUID,"
+                            // Return correction loop.
+                            + "  return_reason_code VARCHAR(80),"
+                            + "  return_comments TEXT,"
+                            // Revocation.
+                            + "  revoke_reason_code VARCHAR(80),"
+                            + "  revoke_comments TEXT,"
+                            + "  revoked_at TIMESTAMP,"
+                            + "  revoked_by_id UUID,"
+                            // Per-transition timestamps for the ERM cockpit
+                            // 'last activity' column + the intern history.
+                            + "  sent_at TIMESTAMP,"
+                            + "  intern_submitted_at TIMESTAMP,"
+                            + "  returned_at TIMESTAMP,"
+                            + "  verified_at TIMESTAMP,"
+                            + "  finalized_at TIMESTAMP,"
+                            + "  superseded_at TIMESTAMP,"
+                            + "  last_erm_viewed_at TIMESTAMP,"
+                            + "  created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+                            + "  updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
+                            + ")");
+            log.info("[SchemaFixupRunner] document_instances CREATE TABLE IF NOT EXISTS — done");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] document_instances create failed (non-fatal): {}",
+                    e.getMessage());
+        }
+
+        // 1a) Belt-and-brace ALTER ADD COLUMNs for partial-deployment recovery.
+        String[] instAlters = {
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS intern_user_id UUID",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS intern_locked BOOLEAN NOT NULL DEFAULT FALSE",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS template_title VARCHAR(200)",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS template_key VARCHAR(100)",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS snapshot_canonical_html TEXT",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS snapshot_field_schema JSONB",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS supersedes_id UUID",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS final_pdf_document_id UUID",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS return_reason_code VARCHAR(80)",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS return_comments TEXT",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS revoke_reason_code VARCHAR(80)",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS revoke_comments TEXT",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS revoked_by_id UUID",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS intern_submitted_at TIMESTAMP",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMP",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMP",
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS last_erm_viewed_at TIMESTAMP"
+        };
+        for (String sql : instAlters) {
+            try { jdbcTemplate.execute(sql); }
+            catch (Exception e) {
+                log.warn("[SchemaFixupRunner] document_instances ALTER skipped "
+                        + "(non-fatal): {} — {}", sql, e.getMessage());
+            }
+        }
+
+        // 1b) Indexes — including the partial UNIQUE that enforces one live
+        //     instance per (lifecycle, template).
+        String[] instIdxs = {
+                "CREATE INDEX IF NOT EXISTS idx_di_lifecycle_status "
+                        + "ON document_instances (intern_lifecycle_id, status)",
+                "CREATE INDEX IF NOT EXISTS idx_di_template "
+                        + "ON document_instances (template_id)",
+                "CREATE INDEX IF NOT EXISTS idx_di_intern_user "
+                        + "ON document_instances (intern_user_id)",
+                "CREATE INDEX IF NOT EXISTS idx_di_status_updated "
+                        + "ON document_instances (status, updated_at)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uk_di_lifecycle_template_open "
+                        + "ON document_instances (intern_lifecycle_id, template_id) "
+                        + "WHERE status NOT IN ('VOIDED','SUPERSEDED','REVOKED')"
+        };
+        for (String sql : instIdxs) {
+            try { jdbcTemplate.execute(sql); }
+            catch (Exception e) {
+                log.warn("[SchemaFixupRunner] document_instances index skipped "
+                        + "(non-fatal): {} — {}", sql, e.getMessage());
+            }
+        }
+
+        // 2) document_instance_field_values — one row per filled field id.
+        try {
+            jdbcTemplate.execute(
+                    "CREATE TABLE IF NOT EXISTS document_instance_field_values ("
+                            + "  id UUID PRIMARY KEY,"
+                            + "  instance_id UUID NOT NULL,"
+                            + "  field_id VARCHAR(64) NOT NULL,"
+                            + "  field_name VARCHAR(200),"
+                            + "  value_text TEXT,"
+                            // Signature-type fields carry a vault Document id;
+                            // value_text stays NULL for those.
+                            + "  signature_document_id UUID,"
+                            + "  filled_by_user_id UUID,"
+                            + "  filled_by_role VARCHAR(16)," // ERM | INTERN | AUTO
+                            + "  filled_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+                            + "  updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
+                            + ")");
+            jdbcTemplate.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uk_di_field_values_field "
+                            + "ON document_instance_field_values (instance_id, field_id)");
+            log.info("[SchemaFixupRunner] document_instance_field_values CREATE — done");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] document_instance_field_values create failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+
+        // 3) document_instance_review_logs — VERIFY / RETURN / REVOKE / FINALIZE.
+        try {
+            jdbcTemplate.execute(
+                    "CREATE TABLE IF NOT EXISTS document_instance_review_logs ("
+                            + "  id UUID PRIMARY KEY,"
+                            + "  instance_id UUID NOT NULL,"
+                            + "  action VARCHAR(24) NOT NULL," // VERIFY|RETURN|REVOKE|FINALIZE|SEND|INTERN_SUBMIT|SUPERSEDE
+                            + "  reason_code VARCHAR(80),"
+                            + "  comments TEXT,"
+                            + "  actor_user_id UUID NOT NULL,"
+                            + "  actor_role VARCHAR(16),"
+                            + "  created_at TIMESTAMP NOT NULL DEFAULT NOW()"
+                            + ")");
+            jdbcTemplate.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_di_review_logs_instance "
+                            + "ON document_instance_review_logs (instance_id, created_at)");
+            log.info("[SchemaFixupRunner] document_instance_review_logs CREATE — done");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] document_instance_review_logs create failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+
+        // 4) Verify — one summary line the ops surface can grep for.
+        try {
+            Integer tPresent = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                            + "WHERE table_name IN ('document_instances',"
+                            + " 'document_instance_field_values',"
+                            + " 'document_instance_review_logs')",
+                    Integer.class);
+            Integer partialUnique = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM pg_indexes "
+                            + "WHERE tablename = 'document_instances' "
+                            + "  AND indexname = 'uk_di_lifecycle_template_open'",
+                    Integer.class);
+            boolean allTables = tPresent != null && tPresent == 3;
+            boolean idxOk = partialUnique != null && partialUnique > 0;
+            log.info("[SchemaFixupRunner] document_instances verify: tablesPresent={} "
+                            + "(expected 3), partialUniqueIndex={} — {}",
+                    tPresent, idxOk,
+                    (allTables && idxOk)
+                            ? "HEALTHY — IDMS Phase 2 can create instances + enforce one-live-per-lifecycle-template"
+                            : "BROKEN — IDMS Phase 2 writes will fail until resolved");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] document_instances verify failed "
                     + "(non-fatal): {}", e.getMessage());
         }
     }

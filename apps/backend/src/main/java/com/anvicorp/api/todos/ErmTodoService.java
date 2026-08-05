@@ -77,6 +77,9 @@ public class ErmTodoService {
         buckets.add(applicationsPendingReview(callerId, orgWide, dismissed));
         buckets.add(interviewsToday(callerId, orgWide));
         buckets.add(offersPendingSignature(callerId, orgWide, dismissed));
+        // IDMS Phase 2 — the living-document to-dos.
+        buckets.add(idmsDocsAwaitingVerification(callerId, orgWide, dismissed));
+        buckets.add(idmsOffersAwaitingSend(callerId, orgWide, dismissed));
         buckets.add(awaitingDocumentPacket(callerId, orgWide));
         buckets.add(onboardingOverdue(callerId, orgWide));
         buckets.add(i9EverifyDue(callerId, orgWide));
@@ -206,6 +209,131 @@ public class ErmTodoService {
                 count,
                 actionUrl,
                 severity(count, 5, 1),
+                items);
+    }
+
+    /**
+     * IDMS Phase 2 — instances the ERM has to verify (intern signed and
+     * submitted; ERM's turn). Rows drain the moment ERM verifies or
+     * returns, per the drop-on-write guarantee.
+     */
+    private TodoBucket idmsDocsAwaitingVerification(UUID callerId, boolean orgWide,
+                                                    Set<String> dismissed) {
+        String actionUrl = "/careers/erm/offers?tab=verifying";
+        String scope = orgWide ? "" : " AND created_by_erm_id = ? ";
+        Object[] countParams = orgWide ? new Object[0] : new Object[]{callerId};
+        long count = countOrZero(
+                "SELECT COUNT(*) FROM document_instances "
+                        + " WHERE status = 'INTERN_SUBMITTED' " + scope,
+                countParams);
+        List<TodoItem> items = new ArrayList<>();
+        if (count > 0) {
+            Object[] listParams = orgWide ? new Object[]{TOP_N}
+                    : new Object[]{callerId, TOP_N};
+            for (Map<String, Object> r : safeQueryForList(
+                    "SELECT di.id AS d_id, di.template_title, di.intern_submitted_at, "
+                            + "       u.full_name "
+                            + "  FROM document_instances di "
+                            + "  JOIN users u ON u.id = di.intern_user_id "
+                            + " WHERE di.status = 'INTERN_SUBMITTED' "
+                            + (orgWide ? "" : " AND di.created_by_erm_id = ? ")
+                            + " ORDER BY di.intern_submitted_at ASC NULLS LAST "
+                            + " LIMIT ?", listParams)) {
+                UUID did = uuid(r.get("d_id"));
+                String key = "ERM_IDMS_VERIFY:" + did;
+                items.add(new TodoItem(
+                        key,
+                        strOrDash(r.get("full_name")),
+                        strOrDash(r.get("template_title")),
+                        actionUrl,
+                        instantOf(r.get("intern_submitted_at")),
+                        dismissed.contains(key)));
+            }
+        }
+        return new TodoBucket(
+                "ERM_IDMS_VERIFY",
+                "Documents awaiting verification",
+                "file-check",
+                count,
+                actionUrl,
+                severity(count, 5, 1),
+                items);
+    }
+
+    /**
+     * IDMS Phase 2 — interns who cleared interviews but have no offer
+     * document sent yet. Same predicate as the legacy Awaiting-Offer
+     * queue so the KPI stays in lock-step with the cockpit page.
+     */
+    private TodoBucket idmsOffersAwaitingSend(UUID callerId, boolean orgWide,
+                                              Set<String> dismissed) {
+        String actionUrl = "/careers/erm/offers?tab=awaiting";
+        String scope = orgWide ? "" : " AND (a.erm_owner_id IS NULL OR a.erm_owner_id = ?) ";
+        Object[] countParams = orgWide ? new Object[0] : new Object[]{callerId};
+        long count = countOrZero(
+                "SELECT COUNT(*) FROM applications a "
+                        + " WHERE a.status = 'INTERVIEWED' "
+                        + "   AND EXISTS ( "
+                        + "        SELECT 1 FROM interviews iv "
+                        + "         WHERE iv.application_id = a.id "
+                        + "           AND UPPER(COALESCE(iv.decision,'')) = 'SELECTED' ) "
+                        + "   AND NOT EXISTS ( "
+                        + "        SELECT 1 FROM offers o "
+                        + "         WHERE o.application_id = a.id "
+                        + "           AND o.status IN ('SENT','SIGNED') ) "
+                        + "   AND NOT EXISTS ( "
+                        + "        SELECT 1 FROM document_instances di "
+                        + "         WHERE di.intern_user_id = ( "
+                        + "               SELECT c.user_id FROM candidates c "
+                        + "                WHERE c.id = a.candidate_id LIMIT 1) "
+                        + "           AND di.status NOT IN ('REVOKED','SUPERSEDED','VOIDED') ) "
+                        + scope,
+                countParams);
+        List<TodoItem> items = new ArrayList<>();
+        if (count > 0) {
+            Object[] listParams = orgWide ? new Object[]{TOP_N}
+                    : new Object[]{callerId, TOP_N};
+            for (Map<String, Object> r : safeQueryForList(
+                    "SELECT a.id AS a_id, u.full_name, "
+                            + "       COALESCE(jp.title,'General') AS job_title "
+                            + "  FROM applications a "
+                            + "  JOIN candidates c ON c.id = a.candidate_id "
+                            + "  JOIN users u ON u.id = c.user_id "
+                            + "  LEFT JOIN job_postings jp ON jp.id = a.job_posting_id "
+                            + " WHERE a.status = 'INTERVIEWED' "
+                            + "   AND EXISTS ( "
+                            + "        SELECT 1 FROM interviews iv "
+                            + "         WHERE iv.application_id = a.id "
+                            + "           AND UPPER(COALESCE(iv.decision,'')) = 'SELECTED' ) "
+                            + "   AND NOT EXISTS ( "
+                            + "        SELECT 1 FROM offers o "
+                            + "         WHERE o.application_id = a.id "
+                            + "           AND o.status IN ('SENT','SIGNED') ) "
+                            + "   AND NOT EXISTS ( "
+                            + "        SELECT 1 FROM document_instances di "
+                            + "         WHERE di.intern_user_id = c.user_id "
+                            + "           AND di.status NOT IN ('REVOKED','SUPERSEDED','VOIDED') ) "
+                            + (orgWide ? "" : " AND (a.erm_owner_id IS NULL OR a.erm_owner_id = ?) ")
+                            + " ORDER BY a.applied_at ASC NULLS LAST "
+                            + " LIMIT ?", listParams)) {
+                UUID aid = uuid(r.get("a_id"));
+                String key = "ERM_IDMS_AWAITING_SEND:" + aid;
+                items.add(new TodoItem(
+                        key,
+                        strOrDash(r.get("full_name")),
+                        strOrDash(r.get("job_title")),
+                        actionUrl,
+                        null,
+                        dismissed.contains(key)));
+            }
+        }
+        return new TodoBucket(
+                "ERM_IDMS_AWAITING_SEND",
+                "Offers awaiting send",
+                "file-plus",
+                count,
+                actionUrl,
+                severity(count, 10, 3),
                 items);
     }
 
