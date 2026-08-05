@@ -85,7 +85,7 @@ function ActiveEvalueesInner() {
         </p>
         <h1 className="mt-1 text-xl font-semibold text-slate-900">Active Evaluees</h1>
         <p className="text-xs text-slate-500">
-          Interns assigned to you (auto-linked via DEFAULT_EVALUATOR_EMAIL at offer sign).
+          Interns assigned to you.
         </p>
       </div>
 

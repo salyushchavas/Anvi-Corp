@@ -84,8 +84,7 @@ function PageContent() {
           </h1>
           <p className="mt-1 text-sm text-slate-600">
             Upload a Word document, mark the fields each party fills in, and
-            save a reusable template. Phase 1 — the studio for authoring
-            templates.
+            save a reusable template.
           </p>
         </div>
         <Link

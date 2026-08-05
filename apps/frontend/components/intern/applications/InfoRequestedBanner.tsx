@@ -38,7 +38,7 @@ export default function InfoRequestedBanner({
         <div className="flex-1">
           <p className="font-semibold">Information requested by ERM</p>
           <p className="mt-1 text-[13px]">
-            Please provide the following before we can continue your review:
+            Provide the following to continue your review:
           </p>
           <ul className="mt-2 list-inside list-disc text-[13px]">
             {fields.length === 0 ? (

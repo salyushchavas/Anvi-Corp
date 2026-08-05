@@ -167,7 +167,7 @@ export default function EvaluatorRightSidePanel() {
               >
                 Active Evaluee
               </Link>{' '}
-              to see that intern's evaluation history + Trainer context here.
+              to see their history and Trainer context.
             </p>
           </div>
         )}

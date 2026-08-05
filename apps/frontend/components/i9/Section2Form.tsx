@@ -273,7 +273,7 @@ export default function Section2Form({ form, onSaved }: Props) {
         htmlFor="i9-firstDayOfEmployment"
         required
         error={errors.firstDayOfEmployment}
-        helper="The candidate's actual first day of work. Section 2 must be completed within 3 business days of this date."
+        helper="Section 2 must be completed within 3 business days of this date."
       >
         <input
           id="i9-firstDayOfEmployment"

@@ -200,8 +200,7 @@ export default function CompleteInterviewModal({
             Submit interview scorecard
           </h2>
           <p className="mt-1 text-xs text-slate-600">
-            Submit your scores, recommendation, and applicant-visible notes.
-            A Manager will review and make the final hiring decision.
+            Your scores and notes go to the Manager for the final hire decision.
           </p>
 
           <div className="mt-4 space-y-4">
@@ -243,8 +242,7 @@ export default function CompleteInterviewModal({
                 <option value="HOLD">Hold</option>
               </select>
               <p className="mt-1 text-[11px] text-slate-500">
-                Shown to the Manager when they decide. Advisory only —
-                the binding Hire/Reject/Hold decision is the Manager&rsquo;s.
+                Advisory only — the Manager makes the binding decision.
               </p>
             </div>
 

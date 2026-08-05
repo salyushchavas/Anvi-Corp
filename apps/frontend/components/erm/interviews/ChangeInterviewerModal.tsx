@@ -73,8 +73,7 @@ export default function ChangeInterviewerModal({
       <div className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl">
         <h2 className="text-lg font-semibold text-slate-900">Change interviewer</h2>
         <p className="mt-2 text-xs text-slate-500">
-          The Zoom meeting will be deleted and recreated with the new host, and
-          the applicant will be notified.
+          Zoom meeting is recreated with the new host; applicant is notified.
         </p>
 
         <div className="mt-4">

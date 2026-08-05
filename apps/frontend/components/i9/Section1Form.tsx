@@ -327,7 +327,7 @@ export default function Section1Form({ form, onSaved }: Props) {
         <FormField
           label="Other last names used"
           htmlFor="i9-otherLastNamesUsed"
-          helper="If applicable. Leave blank if N/A."
+          helper="Optional"
         >
           <input
             id="i9-otherLastNamesUsed"
@@ -401,7 +401,7 @@ export default function Section1Form({ form, onSaved }: Props) {
         <FormField
           label="Apt / unit number"
           htmlFor="i9-addressAptNumber"
-          helper="If applicable"
+          helper="Optional"
         >
           <input
             id="i9-addressAptNumber"
