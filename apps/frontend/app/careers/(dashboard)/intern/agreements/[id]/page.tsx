@@ -7,6 +7,8 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  Cloud,
+  CloudOff,
   Download,
   Loader2,
   MessageSquareWarning,
@@ -17,6 +19,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import InstanceRenderer from '@/components/idms/InstanceRenderer';
+import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
 import SignaturePad, { type SignaturePadHandle } from '@/components/idms/SignaturePad';
 import {
   RETURN_REASONS,
@@ -27,9 +30,8 @@ import {
   type InstanceDetail,
 } from '@/lib/careers/idms';
 
-/** Intern-side fill + sign page. ERM-completed content is locked; their
- *  fields are inputs; SignaturePad slides in when an intern signature
- *  anchor is clicked. Submit → confirm modal → INTERN_SUBMITTED. */
+/** Intern-side fill + sign page. Same split-view + auto-save contract as
+ *  the ERM fill page with roles inverted. */
 export default function InternAgreementFillPage() {
   return (
     <ProtectedRoute requiredRoles={['INTERN']}>
@@ -39,6 +41,15 @@ export default function InternAgreementFillPage() {
     </ProtectedRoute>
   );
 }
+
+const AUTO_SAVE_DEBOUNCE_MS = 800;
+
+type SaveState =
+  | { kind: 'idle' }
+  | { kind: 'dirty' }
+  | { kind: 'saving' }
+  | { kind: 'saved'; at: Date }
+  | { kind: 'error'; message: string };
 
 function PageContent() {
   const params = useParams<{ id: string }>();
@@ -50,9 +61,15 @@ function PageContent() {
   const [textValues, setTextValues] = useState<Record<string, string>>({});
   const [activeSignature, setActiveSignature] = useState<string | null>(null);
   const [typedName, setTypedName] = useState('');
+  const [focusedField, setFocusedField] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
+
   const signaturePadRef = useRef<SignaturePadHandle | null>(null);
+  const fieldFormRef = useRef<FieldFormHandle | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipNextAutoSaveRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -64,7 +81,9 @@ function PageContent() {
       for (const [k, v] of Object.entries(res.data.values ?? {})) {
         if (v.valueText != null && v.type !== 'signature') seed[k] = v.valueText;
       }
+      skipNextAutoSaveRef.current = true;
       setTextValues(seed);
+      setSaveState({ kind: 'idle' });
       setErr(null);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -99,23 +118,58 @@ function PageContent() {
   const isRevoked = detail?.status === 'REVOKED';
   const isFinalized = detail?.status === 'FINALIZED';
 
-  async function saveText() {
+  // ── Auto-save (only when the intern is allowed to edit) ─────────────
+  const persistText = useCallback(async (values: Record<string, string>) => {
     if (!detail) return;
     const payload: Record<string, string> = {};
     for (const f of internFields) {
-      if (f.type !== 'signature') payload[f.id] = textValues[f.id] ?? '';
+      if (f.type !== 'signature') payload[f.id] = values[f.id] ?? '';
     }
-    if (Object.keys(payload).length === 0) return;
+    if (Object.keys(payload).length === 0) {
+      setSaveState({ kind: 'idle' });
+      return;
+    }
+    setSaveState({ kind: 'saving' });
     try {
       const res = await api.post<InstanceDetail>(
         `/api/v1/intern/agreements/${detail.id}/fill`, { values: payload });
       setDetail(res.data);
-      toast.success('Saved.');
+      setSaveState({ kind: 'saved', at: new Date() });
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
-      toast.error(ax.response?.data?.error ?? 'Save failed');
+      setSaveState({
+        kind: 'error',
+        message: ax.response?.data?.error ?? 'Save failed',
+      });
     }
-  }
+  }, [detail, internFields]);
+
+  useEffect(() => {
+    if (!detail || !canEdit) return;
+    if (skipNextAutoSaveRef.current) {
+      skipNextAutoSaveRef.current = false;
+      return;
+    }
+    setSaveState({ kind: 'dirty' });
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      void persistText(textValues);
+    }, AUTO_SAVE_DEBOUNCE_MS);
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, [textValues, detail, canEdit, persistText]);
+
+  useEffect(() => {
+    function beforeUnload(e: BeforeUnloadEvent) {
+      if (saveState.kind === 'dirty' || saveState.kind === 'saving') {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    }
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, [saveState]);
 
   async function saveSignature() {
     if (!detail || !activeSignature) return;
@@ -133,7 +187,6 @@ function PageContent() {
       signaturePadRef.current?.clear();
       setActiveSignature(null);
       setTypedName('');
-      toast.success('Signed.');
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
       toast.error(ax.response?.data?.error ?? 'Signature save failed');
@@ -148,14 +201,8 @@ function PageContent() {
     }
     setSubmitting(true);
     try {
-      // Persist any pending text edits before submitting.
-      const payload: Record<string, string> = {};
-      for (const f of internFields) {
-        if (f.type !== 'signature') payload[f.id] = textValues[f.id] ?? '';
-      }
-      if (Object.keys(payload).length > 0) {
-        await api.post(`/api/v1/intern/agreements/${detail.id}/fill`, { values: payload });
-      }
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      await persistText(textValues);
       const res = await api.post<InstanceDetail>(
         `/api/v1/intern/agreements/${detail.id}/submit`);
       setDetail(res.data);
@@ -169,6 +216,20 @@ function PageContent() {
     }
   }
 
+  function onFieldClickInPreview(fieldId: string) {
+    const f = fields.find((x) => x.id === fieldId);
+    if (!f) return;
+    if (!canEdit) return;
+    if (f.assignee === 'INTERN' && f.type === 'signature') {
+      setActiveSignature(fieldId);
+      return;
+    }
+    if (f.assignee === 'INTERN') {
+      fieldFormRef.current?.focusField(fieldId);
+      setFocusedField(fieldId);
+    }
+  }
+
   if (loading) {
     return <div className="mx-auto max-w-4xl p-6"><div className="h-64 animate-pulse rounded-lg bg-slate-100" /></div>;
   }
@@ -179,6 +240,9 @@ function PageContent() {
       </div>
     );
   }
+
+  const submitDisabled = submitting || missing.length > 0
+    || saveState.kind === 'saving' || saveState.kind === 'dirty';
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -200,27 +264,32 @@ function PageContent() {
             </span>
           </p>
         </div>
-        {isFinalized && detail.finalPdfUrl && (
-          <a
-            href={detail.finalPdfUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-900"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Download executed copy
-          </a>
-        )}
-        {canEdit && (
-          <button
-            type="button"
-            onClick={() => setConfirmOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800"
-          >
-            <Send className="h-4 w-4" />
-            Submit
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {canEdit && <SaveIndicator state={saveState} />}
+          {isFinalized && detail.finalPdfUrl && (
+            <a
+              href={detail.finalPdfUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-900"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download executed copy
+            </a>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(true)}
+              disabled={submitDisabled}
+              title={submitReasonWhenDisabled(submitDisabled, missing, saveState)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
+            >
+              <Send className="h-4 w-4" />
+              Submit
+            </button>
+          )}
+        </div>
       </header>
 
       {detail.status === 'RETURNED' && detail.returnReasonCode && (
@@ -252,22 +321,48 @@ function PageContent() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm p-2">
-          <div className="max-h-[70vh] overflow-y-auto p-2">
+      {canEdit && missing.length > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            Submit is disabled until you complete:{' '}
+            <span className="font-medium">{missing.join(', ')}</span>
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="max-h-[calc(100vh-260px)] overflow-y-auto p-2">
             <InstanceRenderer
               detail={detail}
               fields={fields}
               editRole={canEdit ? 'INTERN' : null}
               textValues={textValues}
-              onTextChange={(id, v) => setTextValues((p) => ({ ...p, [id]: v }))}
+              focusedFieldId={focusedField}
+              onFieldClick={canEdit ? onFieldClickInPreview : undefined}
               activeSignatureFieldId={activeSignature}
-              onOpenSignature={(fid) => setActiveSignature(fid)}
             />
           </div>
         </section>
 
         <aside className="space-y-4">
+          {canEdit && (
+            <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <FieldForm
+                ref={fieldFormRef}
+                detail={detail}
+                fields={fields}
+                role="INTERN"
+                textValues={textValues}
+                onTextChange={(id, v) => setTextValues((p) => ({ ...p, [id]: v }))}
+                onOpenSignature={(fid) => setActiveSignature(fid)}
+                activeSignatureFieldId={activeSignature}
+                focusedFieldId={focusedField}
+                onFocusField={setFocusedField}
+              />
+            </section>
+          )}
           {canEdit && activeSignature && (
             <section className="rounded-lg border border-brand-300 bg-white p-4 shadow-sm">
               <h3 className="text-sm font-semibold text-slate-900">Your signature</h3>
@@ -305,41 +400,6 @@ function PageContent() {
               </div>
             </section>
           )}
-          {canEdit && !activeSignature && (
-            <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-semibold text-slate-900">Your checklist</h3>
-              <ul className="mt-3 space-y-1.5 text-sm">
-                {internFields.map((f) => {
-                  const done = f.type === 'signature'
-                    ? Boolean(detail.values[f.id]?.signatureUrl)
-                    : Boolean((textValues[f.id] ?? '').trim());
-                  return (
-                    <li key={f.id} className="flex items-start gap-2">
-                      <span className={`mt-0.5 inline-block h-3 w-3 rounded-full ${done ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                      <span className={done ? 'text-slate-700 line-through' : 'text-slate-800'}>
-                        {f.name}{f.required && <span className="text-red-500"> *</span>}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              <div className="mt-4 flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={saveText}
-                  className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  Save progress
-                </button>
-                {missing.length > 0 && (
-                  <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
-                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>Complete required items before submitting.</span>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
         </aside>
       </div>
 
@@ -362,8 +422,8 @@ function ConfirmSubmitDialog({
       <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
         <h2 className="text-base font-semibold text-slate-900">Submit for verification?</h2>
         <p className="mt-2 text-sm text-slate-600">
-          Your ERM will get a notification to verify what you’ve signed.
-          You can’t edit the document after submitting unless it comes back
+          Your ERM will get a notification to verify what you've signed.
+          You can't edit the document after submitting unless it comes back
           with corrections.
         </p>
         <div className="mt-6 flex justify-end gap-2">
@@ -388,6 +448,54 @@ function ConfirmSubmitDialog({
       </div>
     </div>
   );
+}
+
+function SaveIndicator({ state }: { state: SaveState }) {
+  if (state.kind === 'saving') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Saving…
+      </span>
+    );
+  }
+  if (state.kind === 'dirty') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+        <Cloud className="h-3.5 w-3.5" />
+        Unsaved changes
+      </span>
+    );
+  }
+  if (state.kind === 'saved') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700">
+        <Cloud className="h-3.5 w-3.5" />
+        Saved
+      </span>
+    );
+  }
+  if (state.kind === 'error') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-red-700" title={state.message}>
+        <CloudOff className="h-3.5 w-3.5" />
+        Not saved
+      </span>
+    );
+  }
+  return null;
+}
+
+function submitReasonWhenDisabled(
+  disabled: boolean,
+  missing: string[],
+  state: SaveState,
+): string {
+  if (!disabled) return 'Submit';
+  if (state.kind === 'saving') return 'Saving your changes — Submit unlocks in a moment.';
+  if (state.kind === 'dirty') return 'Saving your changes — Submit unlocks in a moment.';
+  if (missing.length > 0) return 'Complete ' + missing.join(', ') + ' before submitting.';
+  return 'Submit';
 }
 
 function externalStage(status: string): string {

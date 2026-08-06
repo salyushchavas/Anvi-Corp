@@ -114,8 +114,14 @@ function PageContent() {
 
   function openRow(row: QueueRow) {
     if (row.instanceId) {
-      // In-flight or terminal instance → go to detail (Verify/History).
-      router.push(`/careers/erm/offers/idms/${row.instanceId}`);
+      // DRAFT rows go back to the fill page (that's where their editing
+      // state lives — routing to /detail here was the exact reason ERM
+      // couldn't resume editing after leaving mid-fill). Everything past
+      // DRAFT goes to the detail page (verify / revoke / history).
+      const path = row.statusRaw === 'DRAFT'
+        ? `/careers/erm/offers/idms/${row.instanceId}/fill`
+        : `/careers/erm/offers/idms/${row.instanceId}`;
+      router.push(path);
     } else {
       // Awaiting-offer row → template picker to start a new instance.
       setPickerOpen(row);

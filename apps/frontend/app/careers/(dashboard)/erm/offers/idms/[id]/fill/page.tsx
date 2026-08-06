@@ -7,9 +7,9 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
-  Info,
+  Cloud,
+  CloudOff,
   Loader2,
-  Save,
   Send,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -17,6 +17,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import InstanceRenderer from '@/components/idms/InstanceRenderer';
+import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
 import SignaturePad, { type SignaturePadHandle } from '@/components/idms/SignaturePad';
 import {
   humanDate,
@@ -26,11 +27,9 @@ import {
 } from '@/lib/careers/idms';
 
 /**
- * ERM fill page — the docx-preview canonical HTML is re-rendered with the
- * ERM's fields as inputs (in-place), INTERN placeholders shown as amber
- * "awaits", AUTO fields pre-filled + locked. Signature fields open the
- * SignaturePad in the right rail. Save persists the current field values;
- * Send transitions DRAFT → SENT_TO_INTERN.
+ * ERM fill page — LEFT: live document preview (read-only, click any anchor
+ * to focus its field in the panel). RIGHT: field panel with guided checklist,
+ * completion count, auto-save. Send transitions DRAFT → SENT_TO_INTERN.
  */
 export default function ErmFillPage() {
   return (
@@ -42,6 +41,15 @@ export default function ErmFillPage() {
   );
 }
 
+const AUTO_SAVE_DEBOUNCE_MS = 800;
+
+type SaveState =
+  | { kind: 'idle' }
+  | { kind: 'dirty' }
+  | { kind: 'saving' }
+  | { kind: 'saved'; at: Date }
+  | { kind: 'error'; message: string };
+
 function PageContent() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
@@ -50,12 +58,18 @@ function PageContent() {
   const [detail, setDetail] = useState<InstanceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
+
   const [textValues, setTextValues] = useState<Record<string, string>>({});
   const [activeSignature, setActiveSignature] = useState<string | null>(null);
   const [typedName, setTypedName] = useState('');
+  const [focusedField, setFocusedField] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
+
   const signaturePadRef = useRef<SignaturePadHandle | null>(null);
+  const fieldFormRef = useRef<FieldFormHandle | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipNextAutoSaveRef = useRef(false); // seeds don't count as dirty
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -63,13 +77,13 @@ function PageContent() {
     try {
       const res = await api.get<InstanceDetail>(`/api/v1/erm/idms/${id}`);
       setDetail(res.data);
-      // Seed textValues from persisted values so the inputs show the last
-      // saved state on re-open.
       const seed: Record<string, string> = {};
       for (const [k, v] of Object.entries(res.data.values ?? {})) {
         if (v.valueText != null && v.type !== 'signature') seed[k] = v.valueText;
       }
+      skipNextAutoSaveRef.current = true;
       setTextValues(seed);
+      setSaveState({ kind: 'idle' });
       setErr(null);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -84,7 +98,6 @@ function PageContent() {
     () => detail ? parseFieldSchema(detail.fieldSchemaJson) : [],
     [detail],
   );
-
   const ermFields = useMemo(() => fields.filter((f) => f.assignee === 'ERM'), [fields]);
   const ermRequiredMissing = useMemo(() => {
     if (!detail) return [] as string[];
@@ -100,26 +113,61 @@ function PageContent() {
     return miss;
   }, [detail, ermFields, textValues]);
 
-  async function save() {
+  // ── Auto-save on textValues change (debounced) ─────────────────────
+  const persistText = useCallback(async (values: Record<string, string>) => {
     if (!detail) return;
     const payload: Record<string, string> = {};
     for (const f of ermFields) {
-      if (f.type !== 'signature') payload[f.id] = textValues[f.id] ?? '';
+      if (f.type !== 'signature') payload[f.id] = values[f.id] ?? '';
     }
-    if (Object.keys(payload).length === 0) return;
-    setSaving(true);
+    if (Object.keys(payload).length === 0) {
+      setSaveState({ kind: 'idle' });
+      return;
+    }
+    setSaveState({ kind: 'saving' });
     try {
       const res = await api.post<InstanceDetail>(
         `/api/v1/erm/idms/${detail.id}/fill`, { values: payload });
+      // Refresh persisted values from server without stomping on the
+      // user's in-flight typing (we do NOT reseed textValues).
       setDetail(res.data);
-      toast.success('Saved.');
+      setSaveState({ kind: 'saved', at: new Date() });
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
-      toast.error(ax.response?.data?.error ?? 'Save failed');
-    } finally {
-      setSaving(false);
+      setSaveState({
+        kind: 'error',
+        message: ax.response?.data?.error ?? 'Save failed',
+      });
     }
-  }
+  }, [detail, ermFields]);
+
+  useEffect(() => {
+    if (!detail) return;
+    if (skipNextAutoSaveRef.current) {
+      skipNextAutoSaveRef.current = false;
+      return;
+    }
+    setSaveState({ kind: 'dirty' });
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      void persistText(textValues);
+    }, AUTO_SAVE_DEBOUNCE_MS);
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, [textValues, detail, persistText]);
+
+  // Prompt if the user tries to close/navigate mid-debounce.
+  useEffect(() => {
+    function beforeUnload(e: BeforeUnloadEvent) {
+      if (saveState.kind === 'dirty' || saveState.kind === 'saving') {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    }
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, [saveState]);
 
   async function submitSignature() {
     if (!detail || !activeSignature) return;
@@ -137,7 +185,6 @@ function PageContent() {
       signaturePadRef.current?.clear();
       setActiveSignature(null);
       setTypedName('');
-      toast.success('Signature captured.');
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
       toast.error(ax.response?.data?.error ?? 'Signature save failed');
@@ -147,20 +194,16 @@ function PageContent() {
   async function send() {
     if (!detail) return;
     if (ermRequiredMissing.length > 0) {
-      toast.error('Please complete: ' + ermRequiredMissing.join(', '));
+      toast.error('Complete required fields first: ' + ermRequiredMissing.join(', '));
       return;
     }
     if (!confirm('Send this document to the intern? They’ll be notified to fill and sign.')) return;
     setSending(true);
     try {
-      // Persist any pending edits before sending.
-      const payload: Record<string, string> = {};
-      for (const f of ermFields) {
-        if (f.type !== 'signature') payload[f.id] = textValues[f.id] ?? '';
-      }
-      if (Object.keys(payload).length > 0) {
-        await api.post(`/api/v1/erm/idms/${detail.id}/fill`, { values: payload });
-      }
+      // Cancel any pending debounced save, flush the final state
+      // synchronously so the server has everything before SEND.
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      await persistText(textValues);
       await api.post(`/api/v1/erm/idms/${detail.id}/send`);
       toast.success('Sent to intern.');
       router.push(`/careers/erm/offers/idms/${detail.id}`);
@@ -168,6 +211,19 @@ function PageContent() {
       const ax = e as { response?: { data?: { error?: string } } };
       toast.error(ax.response?.data?.error ?? 'Send failed');
       setSending(false);
+    }
+  }
+
+  function onFieldClickInPreview(fieldId: string) {
+    const f = fields.find((x) => x.id === fieldId);
+    if (!f) return;
+    if (f.assignee === 'ERM' && f.type === 'signature') {
+      setActiveSignature(fieldId);
+      return;
+    }
+    if (f.assignee === 'ERM') {
+      fieldFormRef.current?.focusField(fieldId);
+      setFocusedField(fieldId);
     }
   }
 
@@ -195,12 +251,15 @@ function PageContent() {
           Back to document
         </Link>
         <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <p className="font-medium">This document isn’t in draft anymore.</p>
+          <p className="font-medium">This document isn't in draft anymore.</p>
           <p className="mt-1 text-xs">Open the detail page to verify, revoke, or view its history.</p>
         </div>
       </div>
     );
   }
+
+  const sendDisabled = sending || ermRequiredMissing.length > 0
+    || saveState.kind === 'saving' || saveState.kind === 'dirty';
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -220,24 +279,14 @@ function PageContent() {
             For {detail.internName} · {detail.internEmail}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={save}
-            disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-            Save
-          </button>
+        <div className="flex items-center gap-3">
+          <SaveIndicator state={saveState} />
           <button
             type="button"
             onClick={send}
-            disabled={sending}
+            disabled={sendDisabled}
+            title={sendReasonWhenDisabled(sendDisabled, ermRequiredMissing, saveState)}
             className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
-            title={ermRequiredMissing.length > 0
-              ? 'Complete ' + ermRequiredMissing.join(', ')
-              : 'Send to intern'}
           >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             Send to intern
@@ -245,28 +294,51 @@ function PageContent() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm p-2">
-          <div className="border-b border-slate-100 px-3 py-2 text-xs text-slate-500 flex items-center gap-2">
-            <Info className="h-3.5 w-3.5" />
-            Your fields are highlighted blue. The intern’s fields (amber) stay
-            empty until they open the document.
-          </div>
-          <div className="max-h-[70vh] overflow-y-auto p-2">
+      {ermRequiredMissing.length > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            Send is disabled until you complete:{' '}
+            <span className="font-medium">{ermRequiredMissing.join(', ')}</span>
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="max-h-[calc(100vh-220px)] overflow-y-auto p-2">
             <InstanceRenderer
               detail={detail}
               fields={fields}
               editRole="ERM"
               textValues={textValues}
-              onTextChange={(id, v) => setTextValues((p) => ({ ...p, [id]: v }))}
+              focusedFieldId={focusedField}
+              onFieldClick={onFieldClickInPreview}
               activeSignatureFieldId={activeSignature}
-              onOpenSignature={(fid) => setActiveSignature(fid)}
             />
           </div>
         </section>
 
         <aside className="space-y-4">
-          {activeSignature ? (
+          <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <FieldForm
+              ref={fieldFormRef}
+              detail={detail}
+              fields={fields}
+              role="ERM"
+              textValues={textValues}
+              onTextChange={(id, v) => setTextValues((p) => ({ ...p, [id]: v }))}
+              onOpenSignature={(fid) => setActiveSignature(fid)}
+              activeSignatureFieldId={activeSignature}
+              focusedFieldId={focusedField}
+              onFocusField={setFocusedField}
+            />
+            <p className="mt-4 text-[11px] text-slate-400">
+              Draft started {humanDate(detail.createdAt)} · autosaves as you type
+            </p>
+          </section>
+
+          {activeSignature && (
             <section className="rounded-lg border border-brand-300 bg-white p-4 shadow-sm">
               <h3 className="text-sm font-semibold text-slate-900">Signature</h3>
               <p className="mt-1 text-xs text-slate-500">
@@ -302,37 +374,57 @@ function PageContent() {
                 </button>
               </div>
             </section>
-          ) : (
-            <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-semibold text-slate-900">Your checklist</h3>
-              <ul className="mt-3 space-y-1.5 text-sm">
-                {ermFields.map((f) => {
-                  const done = f.type === 'signature'
-                    ? Boolean(detail.values[f.id]?.signatureUrl)
-                    : Boolean((textValues[f.id] ?? '').trim());
-                  return (
-                    <li key={f.id} className="flex items-start gap-2">
-                      <span className={`mt-0.5 inline-block h-3 w-3 rounded-full ${done ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                      <span className={done ? 'text-slate-700 line-through' : 'text-slate-800'}>
-                        {f.name}{f.required && <span className="text-red-500"> *</span>}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              {ermRequiredMissing.length > 0 && (
-                <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
-                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>Complete required items before sending.</span>
-                </div>
-              )}
-              <p className="mt-4 text-xs text-slate-500">
-                Created {humanDate(detail.createdAt)}
-              </p>
-            </section>
           )}
         </aside>
       </div>
     </div>
   );
+}
+
+function SaveIndicator({ state }: { state: SaveState }) {
+  if (state.kind === 'saving') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Saving…
+      </span>
+    );
+  }
+  if (state.kind === 'dirty') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+        <Cloud className="h-3.5 w-3.5" />
+        Unsaved changes
+      </span>
+    );
+  }
+  if (state.kind === 'saved') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700">
+        <Cloud className="h-3.5 w-3.5" />
+        Saved
+      </span>
+    );
+  }
+  if (state.kind === 'error') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-red-700" title={state.message}>
+        <CloudOff className="h-3.5 w-3.5" />
+        Not saved
+      </span>
+    );
+  }
+  return null;
+}
+
+function sendReasonWhenDisabled(
+  disabled: boolean,
+  missing: string[],
+  state: SaveState,
+): string {
+  if (!disabled) return 'Send to intern';
+  if (state.kind === 'saving') return 'Saving your changes — the Send button unlocks in a moment.';
+  if (state.kind === 'dirty') return 'Saving your changes — the Send button unlocks in a moment.';
+  if (missing.length > 0) return 'Complete ' + missing.join(', ') + ' before sending.';
+  return 'Send to intern';
 }
