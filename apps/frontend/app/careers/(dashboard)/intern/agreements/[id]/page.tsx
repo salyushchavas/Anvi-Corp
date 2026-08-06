@@ -21,6 +21,7 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import InstanceRenderer from '@/components/idms/InstanceRenderer';
 import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
 import SignatureCapture from '@/components/idms/SignatureCapture';
+import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
 import { useAuth } from '@/lib/careers/auth-context';
 import {
   RETURN_REASONS,
@@ -99,6 +100,7 @@ function PageContent() {
   const fields: FieldSchemaEntry[] = useMemo(
     () => detail ? parseFieldSchema(detail.fieldSchemaJson) : [],
     [detail]);
+  const signatureBlobs = useSignatureBlobs(detail);
   const internFields = useMemo(
     () => fields.filter((f) => f.assignee === 'INTERN'),
     [fields]);
@@ -340,6 +342,7 @@ function PageContent() {
               fields={fields}
               editRole={canEdit ? 'INTERN' : null}
               textValues={textValues}
+              signatureBlobs={signatureBlobs}
               focusedFieldId={focusedField}
               onFieldClick={canEdit ? onFieldClickInPreview : undefined}
               activeSignatureFieldId={activeSignature}
@@ -361,6 +364,7 @@ function PageContent() {
                 activeSignatureFieldId={activeSignature}
                 focusedFieldId={focusedField}
                 onFocusField={setFocusedField}
+                signatureBlobs={signatureBlobs}
               />
             </section>
           )}

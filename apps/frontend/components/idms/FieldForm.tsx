@@ -36,6 +36,10 @@ export interface FieldFormProps {
   activeSignatureFieldId?: string | null;
   focusedFieldId?: string | null;
   onFocusField?: (fieldId: string | null) => void;
+  /** Signature object URLs keyed by fieldId (see {@link
+   *  useSignatureBlobs}). Used for the signature-row thumbnail so the
+   *  panel doesn't try to render the raw PII-encrypted URL directly. */
+  signatureBlobs?: Record<string, string>;
   disabled?: boolean;
 }
 
@@ -44,7 +48,7 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(
     const {
       detail, fields, role, textValues, onTextChange,
       onOpenSignature, activeSignatureFieldId,
-      focusedFieldId, onFocusField, disabled,
+      focusedFieldId, onFocusField, signatureBlobs, disabled,
     } = props;
 
     // A ref map keyed by fieldId so the parent can focus programmatically
@@ -103,6 +107,7 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(
                 activeSignatureFieldId={activeSignatureFieldId}
                 focusedFieldId={focusedFieldId}
                 onFocusField={onFocusField}
+                signatureBlobs={signatureBlobs}
                 disabled={disabled}
                 registerRef={(el) => { inputRefs.current[f.id] = el; }}
               />
@@ -171,13 +176,14 @@ interface FieldRowProps {
   activeSignatureFieldId?: string | null;
   focusedFieldId?: string | null;
   onFocusField?: (id: string | null) => void;
+  signatureBlobs?: Record<string, string>;
   disabled?: boolean;
   registerRef: (el: HTMLElement | null) => void;
 }
 
 function FieldRow({
   field, detail, textValues, onTextChange, onOpenSignature,
-  activeSignatureFieldId, focusedFieldId, onFocusField,
+  activeSignatureFieldId, focusedFieldId, onFocusField, signatureBlobs,
   disabled, registerRef,
 }: FieldRowProps) {
   const persisted = detail.values[field.id];
@@ -234,8 +240,12 @@ function FieldRow({
                 ? 'Signature saved — click to re-sign'
                 : active ? 'Signing…' : 'Draw signature'}
             </span>
-            {signed && persisted?.signatureUrl && (
-              <img src={persisted.signatureUrl} alt="Signature" className="h-6" />
+            {signed && signatureBlobs?.[field.id] && (
+              <img
+                src={signatureBlobs[field.id]}
+                alt="Signature"
+                className="h-6"
+              />
             )}
           </button>
         </div>

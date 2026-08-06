@@ -19,6 +19,7 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import InstanceRenderer from '@/components/idms/InstanceRenderer';
 import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
 import SignatureCapture from '@/components/idms/SignatureCapture';
+import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
 import { useAuth } from '@/lib/careers/auth-context';
 import {
   humanDate,
@@ -100,6 +101,7 @@ function PageContent() {
     () => detail ? parseFieldSchema(detail.fieldSchemaJson) : [],
     [detail],
   );
+  const signatureBlobs = useSignatureBlobs(detail);
   const ermFields = useMemo(() => fields.filter((f) => f.assignee === 'ERM'), [fields]);
   const ermRequiredMissing = useMemo(() => {
     if (!detail) return [] as string[];
@@ -313,6 +315,7 @@ function PageContent() {
               fields={fields}
               editRole="ERM"
               textValues={textValues}
+              signatureBlobs={signatureBlobs}
               focusedFieldId={focusedField}
               onFieldClick={onFieldClickInPreview}
               activeSignatureFieldId={activeSignature}
@@ -333,6 +336,7 @@ function PageContent() {
               activeSignatureFieldId={activeSignature}
               focusedFieldId={focusedField}
               onFocusField={setFocusedField}
+              signatureBlobs={signatureBlobs}
             />
             <p className="mt-4 text-[11px] text-slate-400">
               Draft started {humanDate(detail.createdAt)} · autosaves as you type
