@@ -78,6 +78,37 @@ public class WorkAuthorizationRecord {
     @Column(name = "dso_phone", length = 30)
     private String dsoPhone;
 
+    // ── Direct-onboarding per-type fields ──────────────────────────────
+    // Populated by the DirectOnboarding wizard and echoed back on the
+    // compliance card. Each field is intentionally optional at the DB
+    // layer — the DirectOnboardingService enforces the per-type "which
+    // fields are required" matrix so a US_CITIZEN row never carries a
+    // stray SEVIS number and an F-1 CPT row cannot omit one.
+
+    /** SEVIS ID for F-1 CPT students. AES-256-GCM at rest — same
+     *  treatment as {@link #eadCardNumber}. */
+    @Column(name = "sevis_number", columnDefinition = "TEXT")
+    @Convert(converter = AesGcmCryptoConverter.class)
+    private String sevisNumber;
+
+    /** CPT authorization end date (F-1 CPT). */
+    @Column(name = "cpt_expiration")
+    private LocalDate cptExpiration;
+
+    /** USCIS receipt number for H-1B (I-797 receipt). AES-256-GCM at
+     *  rest — same treatment as {@link #eadCardNumber} / {@link #sevisNumber}. */
+    @Column(name = "h1_receipt_number", columnDefinition = "TEXT")
+    @Convert(converter = AesGcmCryptoConverter.class)
+    private String h1ReceiptNumber;
+
+    /** H-1 receipt validity start. */
+    @Column(name = "h1_receipt_start")
+    private LocalDate h1ReceiptStart;
+
+    /** H-1 receipt validity end. */
+    @Column(name = "h1_receipt_end")
+    private LocalDate h1ReceiptEnd;
+
     /** ERM-only — never returned to INTERN. */
     @Column(name = "erm_notes", columnDefinition = "TEXT")
     private String ermNotes;

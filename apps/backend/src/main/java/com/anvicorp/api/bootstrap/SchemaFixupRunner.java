@@ -280,6 +280,14 @@ public class SchemaFixupRunner implements CommandLineRunner {
         backfillOnboardingDocumentTypes();
         rebuildOnboardingDocumentTypeCheck();
 
+        // Direct-onboarding precision: per work-auth type the wizard
+        // captures SEVIS + CPT expiration (F-1 CPT), H-1 receipt
+        // triple (H-1B), and reuses EAD fields for the rest. The
+        // columns are added ONLY when missing so the fixup is safe on
+        // repeat boots + on fresh installs where JPA's ddl-auto has
+        // already emitted the entity's columns.
+        ensureWorkAuthPerTypeColumns();
+
         // ── 8-role finalize: rename HR_COMPLIANCE → HR and
         //                    TECHNICAL_SUPERVISOR → TECHNICAL_EVALUATOR.
         //
@@ -3051,6 +3059,47 @@ public class SchemaFixupRunner implements CommandLineRunner {
      * existing rows — admin-uploaded files and admin-added custom rows
      * are never disturbed, and re-runs are a no-op.
      */
+    /**
+     * Direct Onboarding — per work-auth type columns on
+     * {@code work_authorization_records}:
+     * <ul>
+     *   <li>{@code sevis_number TEXT} — SEVIS ID for F-1 CPT students
+     *       (AES-GCM-encrypted via the entity converter).</li>
+     *   <li>{@code cpt_expiration DATE} — CPT authorization end date.</li>
+     *   <li>{@code h1_receipt_number TEXT} — USCIS receipt number for
+     *       H-1B (encrypted).</li>
+     *   <li>{@code h1_receipt_start DATE} — H-1 receipt validity start.</li>
+     *   <li>{@code h1_receipt_end DATE} — H-1 receipt validity end.</li>
+     * </ul>
+     * Every {@code ADD COLUMN} uses {@code IF NOT EXISTS} so the fixup is
+     * idempotent — a boot on a schema that already ran ddl-auto with the
+     * updated entity is a no-op.
+     */
+    private void ensureWorkAuthPerTypeColumns() {
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE work_authorization_records "
+                            + "ADD COLUMN IF NOT EXISTS sevis_number TEXT");
+            jdbcTemplate.execute(
+                    "ALTER TABLE work_authorization_records "
+                            + "ADD COLUMN IF NOT EXISTS cpt_expiration DATE");
+            jdbcTemplate.execute(
+                    "ALTER TABLE work_authorization_records "
+                            + "ADD COLUMN IF NOT EXISTS h1_receipt_number TEXT");
+            jdbcTemplate.execute(
+                    "ALTER TABLE work_authorization_records "
+                            + "ADD COLUMN IF NOT EXISTS h1_receipt_start DATE");
+            jdbcTemplate.execute(
+                    "ALTER TABLE work_authorization_records "
+                            + "ADD COLUMN IF NOT EXISTS h1_receipt_end DATE");
+            log.info("[SchemaFixupRunner] work_authorization_records per-type columns ensured "
+                    + "(sevis_number, cpt_expiration, h1_receipt_number, h1_receipt_start, h1_receipt_end)");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] ensureWorkAuthPerTypeColumns failed (non-fatal): {} — root: {}",
+                    e.getMessage(), rootMessage(e));
+        }
+    }
+
     private void seedOnboardingTemplatesFromEnum() {
         try {
             int seeded = 0;
