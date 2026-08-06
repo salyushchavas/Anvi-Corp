@@ -705,6 +705,62 @@ public class AdminUserService {
     }
 
     /**
+     * Purge an account that never verified its email address. Strict
+     * guard: refuses (409) any account with {@code email_verified=true}
+     * so a mis-clicked "unverified purge" can't nuke a real user by
+     * accident. Piggy-backs on the same {@link #hardPurge} sweep so any
+     * FK the standard delete now handles is handled here too.
+     *
+     * <p>Rationale — the admin/users page shows unverified rows behind
+     * a toggle; before this action, cleaning them up required routing
+     * through the same DELETE button that ran the two-tier logic on
+     * a REGISTERED-status account with an intern_lifecycle row (there
+     * isn't one for unverified users, so it worked but felt vague).
+     * A distinct action makes the intent obvious and audit-logs it
+     * separately.</p>
+     */
+    @Transactional
+    public Map<String, Object> deleteUnverifiedUser(UUID id, User caller) {
+        User target = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + id));
+        if (caller != null && caller.getId().equals(target.getId())) {
+            throw new ConflictException("You cannot delete your own account");
+        }
+        if (Boolean.TRUE.equals(target.getEmailVerified())) {
+            throw new ConflictException(
+                    "This account has already verified its email — use the standard "
+                            + "delete action to remove it.");
+        }
+        // Reuse the full FK sweep. An unverified account should have zero
+        // downstream rows (they never activated), but the sweep is safe
+        // to run on any row-set and future-proofs against half-completed
+        // signups that got as far as, e.g., an application draft.
+        Map<String, Object> out = hardPurge(target, caller);
+        // Overwrite the outcome tag so audits + the API response show the
+        // distinct action, while the per-table breakdown from hardPurge
+        // is preserved intact.
+        LinkedHashMap<String, Object> tagged = new LinkedHashMap<>();
+        tagged.put("_outcome", "unverified-purge");
+        tagged.put("_message", "Unverified account " + target.getEmail() + " was deleted.");
+        for (Map.Entry<String, Object> e : out.entrySet()) {
+            if (!"_outcome".equals(e.getKey()) && !"_message".equals(e.getKey())) {
+                tagged.put(e.getKey(), e.getValue());
+            }
+        }
+        // Distinct audit action so the log line is greppable separately
+        // from routine hard-deletes.
+        try {
+            writeAudit("USER_UNVERIFIED_PURGE", target, caller,
+                    Map.of("email", target.getEmail(),
+                            "totalRowsDeleted", tagged.getOrDefault("totalRowsDeleted", 0)));
+        } catch (Exception e) {
+            log.warn("[AdminUserService] unverified-purge audit write failed: {}",
+                    e.getMessage());
+        }
+        return tagged;
+    }
+
+    /**
      * Soft path — the user ever actually started an internship, so the
      * ten retention-protected tables get their rows tombstoned instead
      * of removed, and the user row is deactivated (blocks login). No
@@ -1207,6 +1263,51 @@ public class AdminUserService {
         del(deleted, "staff interviews (as interviewer)",
                 "DELETE FROM interviews WHERE interviewer_id = ?", userId);
 
+        // Phase 12d — staff-side FK sweep for the *nullable* @ManyToOne
+        // User columns that a staff hard-delete would otherwise trip on.
+        // Every one of these was diagnosed as a Skyzen FK-violation blocker
+        // (interviews.interviewer_id was the first; timesheets + ~10 more
+        // followed the same shape). For nullable columns we NULL out the
+        // reference on other users' rows so the staff row can go while
+        // preserving the intern-scoped history. The columns are all
+        // @JoinColumn User @ManyToOne with no `nullable=false`, so the
+        // UPDATE is FK-safe.
+        //
+        // For NOT-NULL staff-referring FKs (projects.assigned_by,
+        // work_assignments.assigned_by, evaluations.evaluator_id) we do
+        // NOT delete — that would wipe other users' work. They surface as
+        // pre-flight blockers via findBlockers below with a clean 409.
+        nullOut(deleted, "candidates.assigned_evaluator_id",
+                "UPDATE candidates SET assigned_evaluator_id = NULL "
+                        + "WHERE assigned_evaluator_id = ?", userId);
+        nullOut(deleted, "engagements.reporting_manager_id",
+                "UPDATE engagements SET reporting_manager_id = NULL "
+                        + "WHERE reporting_manager_id = ?", userId);
+        nullOut(deleted, "evaluation_sessions.evaluator_id",
+                "UPDATE evaluation_sessions SET evaluator_id = NULL "
+                        + "WHERE evaluator_id = ?", userId);
+        nullOut(deleted, "projects.reviewed_by",
+                "UPDATE projects SET reviewed_by = NULL "
+                        + "WHERE reviewed_by = ?", userId);
+        nullOut(deleted, "qa_sessions.scheduled_by",
+                "UPDATE qa_sessions SET scheduled_by = NULL "
+                        + "WHERE scheduled_by = ?", userId);
+        nullOut(deleted, "qa_sessions.conducted_by",
+                "UPDATE qa_sessions SET conducted_by = NULL "
+                        + "WHERE conducted_by = ?", userId);
+        nullOut(deleted, "timesheets.approved_by",
+                "UPDATE timesheets SET approved_by = NULL "
+                        + "WHERE approved_by = ?", userId);
+        nullOut(deleted, "timesheets.verified_by",
+                "UPDATE timesheets SET verified_by = NULL "
+                        + "WHERE verified_by = ?", userId);
+        nullOut(deleted, "weekly_reports.reviewed_by",
+                "UPDATE weekly_reports SET reviewed_by = NULL "
+                        + "WHERE reviewed_by = ?", userId);
+        nullOut(deleted, "weekly_reports.verified_by",
+                "UPDATE weekly_reports SET verified_by = NULL "
+                        + "WHERE verified_by = ?", userId);
+
         // Audit the delete BEFORE we drop the user row — caller is the
         // actor; target is the subject. Both audit columns are plain
         // UUIDs (no FK), so the row survives the user delete and stays
@@ -1313,6 +1414,45 @@ public class AdminUserService {
         return n;
     }
 
+    /**
+     * Null-out variant of {@link #del}. Used for staff-side FKs where
+     * we want to clear the reference on OTHER users' rows so the target
+     * user's DELETE succeeds without wiping the row itself (an intern's
+     * timesheet keeps its history; only its approved_by cursor drops).
+     */
+    private void nullOut(Map<String, Long> deleted, String tableName,
+                         String sql, Object... args) {
+        String savepoint = "spn_" + tableName.replaceAll("[^a-zA-Z0-9_]", "_");
+        try {
+            jdbcTemplate.execute("SAVEPOINT " + savepoint);
+        } catch (Exception spErr) {
+            try {
+                long n = jdbcTemplate.update(sql, args);
+                deleted.put(tableName, n);
+            } catch (Exception e) {
+                log.warn("[AdminUserService] null-out {} FAILED (no savepoint, fallback): {}",
+                        tableName, e.getMessage());
+                deleted.put(tableName, -1L);
+            }
+            return;
+        }
+        try {
+            long n = jdbcTemplate.update(sql, args);
+            jdbcTemplate.execute("RELEASE SAVEPOINT " + savepoint);
+            deleted.put(tableName, n);
+        } catch (Exception e) {
+            try {
+                jdbcTemplate.execute("ROLLBACK TO SAVEPOINT " + savepoint);
+                jdbcTemplate.execute("RELEASE SAVEPOINT " + savepoint);
+            } catch (Exception rbErr) {
+                log.warn("[AdminUserService] rollback to {} failed: {}",
+                        savepoint, rbErr.getMessage());
+            }
+            log.warn("[AdminUserService] null-out {} FAILED: {}", tableName, e.getMessage());
+            deleted.put(tableName, -1L);
+        }
+    }
+
     private void del(Map<String, Long> deleted, String tableName, String sql, Object... args) {
         String savepoint = "sp_" + tableName.replaceAll("[^a-zA-Z0-9_]", "_");
         try {
@@ -1387,6 +1527,18 @@ public class AdminUserService {
         // the pre-flight ConflictException instead of as a raw 23503.
         probes.put("interviews (as interviewer)",
                 "SELECT COUNT(*) FROM interviews WHERE interviewer_id = ?");
+        // Phase 12d — probe the three NOT-NULL staff-side FKs that the
+        // nullable-column sweep can't clear. When any of these fire the
+        // operator gets a clean 409 explaining what's blocking, instead
+        // of a raw FK-violation 500. Fix in prod: reassign the rows to
+        // another staff member (or delete them explicitly) before
+        // retrying the user-purge.
+        probes.put("projects (as assigner)",
+                "SELECT COUNT(*) FROM projects WHERE assigned_by = ?");
+        probes.put("work_assignments (as assigner)",
+                "SELECT COUNT(*) FROM work_assignments WHERE assigned_by = ?");
+        probes.put("evaluations (as evaluator)",
+                "SELECT COUNT(*) FROM evaluations WHERE evaluator_id = ?");
 
         for (Map.Entry<String, String> e : probes.entrySet()) {
             String savepoint = "probe_" + e.getKey().replaceAll("[^a-zA-Z0-9_]", "_");

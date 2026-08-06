@@ -112,4 +112,16 @@ public class AdminUserController {
                                        @AuthenticationPrincipal User caller) {
         return adminUserService.deleteUser(id, caller);
     }
+
+    /**
+     * Purge an unverified account. Strict guard — verified accounts return
+     * 409; only the standard delete handles them. Runs the same FK sweep
+     * as the standard delete and audits as {@code USER_UNVERIFIED_PURGE}.
+     */
+    @DeleteMapping("/{id}/unverified")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public Map<String, Object> deleteUnverified(@PathVariable UUID id,
+                                                 @AuthenticationPrincipal User caller) {
+        return adminUserService.deleteUnverifiedUser(id, caller);
+    }
 }

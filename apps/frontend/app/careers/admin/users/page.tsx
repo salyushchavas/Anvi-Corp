@@ -140,6 +140,8 @@ function UsersTable() {
   // Hard-delete is restricted to candidate users (roles == {INTERN}) and
   // gated behind a typed-confirm modal — much higher stakes than the
   // reversible Deactivate flow.
+  const [confirmingPurgeFor, setConfirmingPurgeFor] =
+    useState<AdminUserResponse | null>(null);
   const [confirmingDeleteFor, setConfirmingDeleteFor] =
     useState<AdminUserResponse | null>(null);
   // Surfaces the last-active-SUPER_ADMIN refusal as a persistent banner the
@@ -225,6 +227,10 @@ function UsersTable() {
     setMenuFor(null);
     setConfirmingDeleteFor(u);
   };
+  const askPurgeUnverified = (u: AdminUserResponse) => {
+    setMenuFor(null);
+    setConfirmingPurgeFor(u);
+  };
   const deleteUser = useCallback(async (u: AdminUserResponse) => {
     try {
       await api.delete(`/api/v1/admin/users/${u.id}`);
@@ -240,6 +246,17 @@ function UsersTable() {
       } else {
         setToast(msg);
       }
+    }
+  }, []);
+  const purgeUnverifiedUser = useCallback(async (u: AdminUserResponse) => {
+    try {
+      await api.delete(`/api/v1/admin/users/${u.id}/unverified`);
+      setUsers((curr) => (curr ? curr.filter((x) => x.id !== u.id) : curr));
+      setToast(`Purged unverified account ${u.email}.`);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+        ?? 'Could not purge unverified account.';
+      setToast(msg);
     }
   }, []);
 
@@ -428,7 +445,18 @@ function UsersTable() {
                           >
                             {u.active ? 'Deactivate' : 'Activate'}
                           </button>
-                          {!isSelf && (
+                          {!isSelf && u.emailVerified === false && (
+                            <button
+                              type="button"
+                              onClick={() => askPurgeUnverified(u)}
+                              className="flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+                              title="Delete this unverified account and everything scoped to it."
+                            >
+                              <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                              Purge unverified account
+                            </button>
+                          )}
+                          {!isSelf && u.emailVerified !== false && (
                             <button
                               type="button"
                               onClick={() => askDelete(u)}
@@ -508,6 +536,18 @@ function UsersTable() {
             const u = confirmingDeleteFor;
             setConfirmingDeleteFor(null);
             await deleteUser(u);
+          }}
+        />
+      )}
+
+      {confirmingPurgeFor && (
+        <ConfirmPurgeUnverifiedModal
+          target={confirmingPurgeFor}
+          onCancel={() => setConfirmingPurgeFor(null)}
+          onConfirm={async () => {
+            const u = confirmingPurgeFor;
+            setConfirmingPurgeFor(null);
+            await purgeUnverifiedUser(u);
           }}
         />
       )}
@@ -1177,6 +1217,75 @@ function ConfirmDeleteModal({
             className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {submitting ? 'Deleting…' : 'Delete permanently'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Purge-unverified confirmation. Simpler than the standard delete modal
+ * — no typed-DELETE gate because an unverified account by definition has
+ * no downstream history to protect (they never clicked the verify link,
+ * so no application, no lifecycle, no timesheets, no offers). One
+ * explicit confirmation click is enough.
+ */
+function ConfirmPurgeUnverifiedModal({
+  target,
+  onCancel,
+  onConfirm,
+}: {
+  target: AdminUserResponse;
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+        <div className="mb-3 flex items-start gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-700">
+            <Trash2 className="h-5 w-5" strokeWidth={2} />
+          </span>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-900">
+              Purge unverified account
+            </h3>
+            <p className="mt-1 text-sm text-gray-600">
+              {target.name} <span className="text-gray-400">·</span> {target.email}
+            </p>
+          </div>
+        </div>
+        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+          <p className="font-semibold">This cannot be undone.</p>
+          <p className="mt-1">
+            The account never verified its email — it has no application, no
+            lifecycle, and no timesheets. Purging removes the row and any
+            leftover signup artifacts so it stops appearing in the unverified
+            list. If the person later signs up again they&apos;ll get a fresh
+            account.
+          </p>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              setSubmitting(true);
+              await onConfirm();
+            }}
+            disabled={submitting}
+            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+          >
+            {submitting ? 'Purging…' : 'Purge account'}
           </button>
         </div>
       </div>
