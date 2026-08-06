@@ -176,3 +176,24 @@ export function humanDate(iso: string | null | undefined): string {
     return iso;
   }
 }
+
+/**
+ * Format an ISO date (or datetime) as MM/DD/YYYY (US letter convention).
+ *
+ * <p>Used for every document-interpolated date — both the live preview and
+ * the backend-rendered PDF must produce the identical string. The backend
+ * peer is {@code IdmsDateFormat.formatIsoDate(String)} in the pdf renderer;
+ * both are locale-independent (year/month/day pulled from the ISO literal
+ * so browser locale can't drift).</p>
+ *
+ * <p>Falls back to the input verbatim when the string isn't ISO-shaped
+ * (safer than hiding a mis-stored value from the reader).</p>
+ */
+export function formatIsoDateMdy(v: string | null | undefined): string {
+  if (!v) return '';
+  // Accept both bare YYYY-MM-DD and full ISO timestamps.
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v.trim());
+  if (!m) return v;
+  const [, y, mo, d] = m;
+  return `${mo}/${d}/${y}`;
+}

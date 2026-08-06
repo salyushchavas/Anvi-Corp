@@ -497,8 +497,13 @@ public class DocumentInstanceService {
                             + instance.getStatus());
         }
 
-        // Build the text + signature-url maps for the renderer.
+        // Build the text + signature-url maps for the renderer. Date-type
+        // fields get normalised to MM/DD/YYYY here so the PDF matches the
+        // live preview exactly (both use IdmsDateFormat / formatIsoDateMdy).
         List<DocumentInstanceFieldValue> vals = valueRepo.findByInstanceId(instance.getId());
+        List<FieldSchemaEntry> schemaForRender = parseSchema(instance.getSnapshotFieldSchemaJson());
+        Map<String, String> typeByFieldId = new HashMap<>();
+        for (FieldSchemaEntry f : schemaForRender) typeByFieldId.put(f.id(), f.type());
         Map<String, String> textByField = new HashMap<>();
         Map<String, String> sigByField = new HashMap<>();
         for (DocumentInstanceFieldValue v : vals) {
@@ -507,7 +512,11 @@ public class DocumentInstanceService {
                 sigByField.put(v.getFieldId(),
                         "data:image/png;base64," + Base64.getEncoder().encodeToString(png));
             } else if (v.getValueText() != null) {
-                textByField.put(v.getFieldId(), v.getValueText());
+                String raw = v.getValueText();
+                String type = typeByFieldId.get(v.getFieldId());
+                String rendered = "date".equalsIgnoreCase(type)
+                        ? IdmsDateFormat.formatIsoDateString(raw) : raw;
+                textByField.put(v.getFieldId(), rendered);
             }
         }
         byte[] pdfBytes = pdfRenderer.renderToPdf(
@@ -909,7 +918,9 @@ public class DocumentInstanceService {
                         ? c.getLegalName() : intern.getFullName();
             }
             case "intern.position": return null; // no canonical field yet
-            case "today":            return LocalDate.now().toString();
+            // Match the frontend formatIsoDateMdy contract — document-
+            // interpolated dates render as MM/DD/YYYY in both preview + PDF.
+            case "today":           return IdmsDateFormat.formatLocalDate(LocalDate.now());
             default:
                 return null;
         }
