@@ -311,21 +311,16 @@ function TemplatePickerModal({
   }, [row.internLifecycleId]);
 
   async function proceed(templateId: string, supersedesInstanceId: string | null) {
-    if (!row.internLifecycleId) {
-      // Awaiting-offer row — needs a live lifecycle first. Show clean copy.
-      setErr(
-        'This person doesn’t have an active hire record yet. Complete the initial hire step from the Applications flow, then come back.',
-      );
-      return;
-    }
+    // Two payload shapes accepted by the server: existing-lifecycle path
+    // stays byte-identical; awaiting-offer rows send applicationId and
+    // let the server find-or-create the lifecycle inline.
+    const payload = row.internLifecycleId
+      ? { templateId, internLifecycleId: row.internLifecycleId, supersedesInstanceId }
+      : { templateId, applicationId: row.applicationId, supersedesInstanceId };
     setCreating(true);
     setErr(null);
     try {
-      const res = await api.post<{ id: string }>('/api/v1/erm/idms', {
-        templateId,
-        internLifecycleId: row.internLifecycleId,
-        supersedesInstanceId,
-      });
+      const res = await api.post<{ id: string }>('/api/v1/erm/idms', payload);
       onCreated(res.data.id);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };

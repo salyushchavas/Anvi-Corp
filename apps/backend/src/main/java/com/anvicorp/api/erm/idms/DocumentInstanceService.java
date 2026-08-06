@@ -5,10 +5,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.anvicorp.api.admin.editabletemplates.EditableTemplate;
 import com.anvicorp.api.admin.editabletemplates.EditableTemplateRepository;
 import com.anvicorp.api.entity.AuditLog;
+import com.anvicorp.api.entity.Application;
 import com.anvicorp.api.entity.Candidate;
 import com.anvicorp.api.entity.Document;
 import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.entity.User;
+import com.anvicorp.api.enums.ApplicationStatus;
+import com.anvicorp.api.enums.InternLifecycleStatus;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ConflictException;
@@ -16,12 +19,15 @@ import com.anvicorp.api.exception.ForbiddenException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.integration.s3.S3StorageService;
 import com.anvicorp.api.intern.DocumentVaultService;
+import com.anvicorp.api.intern.ReportingStructureAutoLinker;
 import com.anvicorp.api.notification.UserNotificationDispatcher;
+import com.anvicorp.api.repository.ApplicationRepository;
 import com.anvicorp.api.repository.AuditLogRepository;
 import com.anvicorp.api.repository.CandidateRepository;
 import com.anvicorp.api.repository.DocumentRepository;
 import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.UserRepository;
+import com.anvicorp.api.service.EmployeeIdGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -80,6 +86,7 @@ public class DocumentInstanceService {
     private final InternLifecycleRepository lifecycleRepo;
     private final UserRepository userRepo;
     private final CandidateRepository candidateRepo;
+    private final ApplicationRepository applicationRepo;
     private final DocumentRepository documentRepo;
     private final DocumentVaultService vault;
     private final S3StorageService s3;
@@ -87,6 +94,12 @@ public class DocumentInstanceService {
     private final AuditLogRepository auditLogRepo;
     private final ObjectMapper objectMapper;
     private final UserNotificationDispatcher dispatcher;
+    // Find-or-create-lifecycle plumbing — added for the IDMS send fix so
+    // ERM can send a document to an interview-completed candidate without
+    // the pipeline first requiring the legacy offer-signing to have run.
+    private final EmployeeIdGenerator employeeIdGenerator;
+    private final ReportingStructureAutoLinker reportingStructureAutoLinker;
+    private final com.anvicorp.api.intern.InternLifecycleService internLifecycleService;
 
     // ── Create + supersede + list ────────────────────────────────────
 
@@ -103,8 +116,11 @@ public class DocumentInstanceService {
     public DocumentInstanceDtos.InstanceDetail create(
             DocumentInstanceDtos.CreateInstanceRequest req, User caller) {
         requireErmOrAdmin(caller);
-        if (req == null || req.templateId() == null || req.internLifecycleId() == null) {
-            throw new BadRequestException("templateId + internLifecycleId required");
+        if (req == null || req.templateId() == null) {
+            throw new BadRequestException("templateId required");
+        }
+        if (req.internLifecycleId() == null && req.applicationId() == null) {
+            throw new BadRequestException("internLifecycleId or applicationId required");
         }
         EditableTemplate template = templateRepo.findById(req.templateId())
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -116,9 +132,10 @@ public class DocumentInstanceService {
             throw new BadRequestException(
                     "Template hasn't been saved with fields yet. Complete authoring in the studio first.");
         }
-        InternLifecycle lc = lifecycleRepo.findById(req.internLifecycleId())
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "Intern lifecycle not found: " + req.internLifecycleId()));
+        // Resolve the lifecycle. Preferred: an explicit id (existing behavior
+        // — byte-identical to the pre-fix path). Fallback: applicationId, in
+        // which case we find-or-create the lifecycle inline before continuing.
+        InternLifecycle lc = resolveOrCreateLifecycle(req, caller);
         User intern = userRepo.findById(lc.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Intern user not found: " + lc.getUserId()));
@@ -619,6 +636,144 @@ public class DocumentInstanceService {
     @Transactional(readOnly = true)
     public List<DocumentInstance> listForIntern(UUID userId) {
         return instanceRepo.findVisibleForIntern(userId);
+    }
+
+    // ── Helpers: lifecycle find-or-create ────────────────────────────
+
+    /**
+     * IDMS send-fix — resolve the {@link InternLifecycle} for a new
+     * {@link DocumentInstance}. Two paths:
+     * <ul>
+     *   <li><b>Explicit lifecycle id</b> (the pre-fix path — byte-identical
+     *       behavior): fetch by id, 404 if absent. Covers re-sends,
+     *       paid-after-unpaid, ACTIVE interns getting an additional
+     *       document.</li>
+     *   <li><b>Application id fallback</b>: for interview-completed
+     *       candidates the legacy sign path never ran on. Resolves
+     *       application → candidate → user, then reuses the user's
+     *       existing lifecycle if one already exists (idempotent — this
+     *       is what makes "candidate got a doc, ERM revoked, ERM sent a
+     *       new one" reuse the same PROSPECTIVE row). Otherwise creates
+     *       one inline, mirroring
+     *       {@code OfferIdmsSigningService.finalizeIdmsSigning}:
+     *         mint employeeId (via {@link EmployeeIdGenerator});
+     *         existsByUserId + findByEmployeeId 409 guards (clean copy);
+     *         set ermId = caller, activeStatus = "PROSPECTIVE",
+     *         hiredAt = now; run
+     *         {@link ReportingStructureAutoLinker#apply};
+     *         advance {@code users.lifecycle_status} from wherever it is
+     *         up to {@code EMPLOYEE_ID_CREATED}; stamp employeeId on the
+     *         user; advance the Application to
+     *         {@link ApplicationStatus#ACCEPTED} for parity with the
+     *         legacy sign path; write an {@code IDMS_HIRE_INITIATED}
+     *         audit distinguishing this from a legacy sign-time hire.
+     *       No engagement row is created — see report §Engagement.
+     * </ul>
+     * Runs inside the caller's transaction so the instance-create + the
+     * lifecycle-create commit as one unit; a failure downstream rolls
+     * the freshly-minted lifecycle back too.
+     */
+    private InternLifecycle resolveOrCreateLifecycle(
+            DocumentInstanceDtos.CreateInstanceRequest req, User caller) {
+        if (req.internLifecycleId() != null) {
+            return lifecycleRepo.findById(req.internLifecycleId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Intern lifecycle not found: " + req.internLifecycleId()));
+        }
+        // applicationId path
+        Application application = applicationRepo.findById(req.applicationId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Application not found: " + req.applicationId()));
+        Candidate candidate = application.getCandidate();
+        if (candidate == null || candidate.getUser() == null) {
+            throw new BadRequestException(
+                    "This application is missing its candidate or user link — "
+                            + "can't create a document for it.");
+        }
+        User intern = candidate.getUser();
+
+        // Reuse the existing lifecycle if the user already has one. Covers
+        // the "revoked + resend to the same candidate" case cleanly — the
+        // freshly-created lifecycle from the first send is still PROSPECTIVE
+        // and reusable. Also handles the future case of a candidate who
+        // already went through legacy sign but somehow only has an
+        // applicationId in the request.
+        InternLifecycle existing = lifecycleRepo.findByUserId(intern.getId()).orElse(null);
+        if (existing != null) return existing;
+
+        // Create fresh — this is the IDMS-initiated hire path.
+        Instant now = Instant.now();
+        String employeeId = employeeIdGenerator.nextEmployeeId();
+
+        // Guards mirror OfferIdmsSigningService: userId + employeeId uniqueness.
+        if (lifecycleRepo.existsByUserId(intern.getId())) {
+            throw new ConflictException(
+                    "This person already has a hire record — refresh the queue and try again.");
+        }
+        if (lifecycleRepo.findByEmployeeId(employeeId).isPresent()) {
+            throw new ConflictException(
+                    "Generated employee id " + employeeId
+                            + " collides with an existing hire record.");
+        }
+
+        // Advance the user's lifecycle_status walk to EMPLOYEE_ID_CREATED,
+        // matching the legacy sign path. advance() is strictly forward-only,
+        // so REGISTERED / VERIFIED / SELECTED / OFFER_SIGNED all step up to
+        // EMPLOYEE_ID_CREATED cleanly; anything already past that (rare on
+        // this path) is a no-op.
+        intern.setEmployeeId(employeeId);
+        userRepo.save(intern);
+        internLifecycleService.advance(intern,
+                InternLifecycleStatus.EMPLOYEE_ID_CREATED, caller.getId());
+
+        InternLifecycle lc = InternLifecycle.builder()
+                .userId(intern.getId())
+                .employeeId(employeeId)
+                .ermId(caller.getId())
+                .activeStatus("PROSPECTIVE")
+                .hiredAt(now)
+                .build();
+        // Auto-link the org-wide default Trainer + Evaluator — same call
+        // the legacy path makes. Manager stays null and is assigned inline
+        // from the New Hire detail page.
+        reportingStructureAutoLinker.apply(lc, caller.getId(), now);
+        lc = lifecycleRepo.save(lc);
+
+        // Parity with legacy sign path — the application transitions to
+        // ACCEPTED once we've committed to hiring the candidate.
+        if (application.getStatus() != ApplicationStatus.ACCEPTED) {
+            application.setStatus(ApplicationStatus.ACCEPTED);
+            application.setStatusUpdatedAt(now);
+            application.setStatusUpdatedBy(caller.getId());
+            applicationRepo.save(application);
+        }
+
+        // Audit — distinguishes IDMS-initiated hire from the legacy
+        // offer-sign path so the ops surface can tell which one created
+        // the lifecycle.
+        try {
+            Map<String, Object> after = new LinkedHashMap<>();
+            after.put("userId", intern.getId());
+            after.put("employeeId", employeeId);
+            after.put("lifecycleId", lc.getId());
+            after.put("applicationId", application.getId());
+            after.put("origin", "IDMS_SEND");
+            AuditLog entry = AuditLog.builder()
+                    .entityType("InternLifecycle")
+                    .entityId(lc.getId())
+                    .action("IDMS_HIRE_INITIATED")
+                    .userId(caller.getId())
+                    .subjectUserId(intern.getId())
+                    .afterJson(objectMapper.writeValueAsString(after))
+                    .build();
+            auditLogRepo.save(entry);
+        } catch (Exception e) {
+            log.warn("[IDMS] IDMS_HIRE_INITIATED audit write failed (non-fatal): {}",
+                    e.getMessage());
+        }
+        log.info("[IDMS] initiated hire from IDMS send: user={} employeeId={} lifecycle={} application={}",
+                intern.getId(), employeeId, lc.getId(), application.getId());
+        return lc;
     }
 
     // ── Helpers: guards ──────────────────────────────────────────────

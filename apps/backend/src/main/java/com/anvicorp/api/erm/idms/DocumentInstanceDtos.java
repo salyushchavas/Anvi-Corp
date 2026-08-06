@@ -138,7 +138,27 @@ public final class DocumentInstanceDtos {
 
     public record CreateInstanceRequest(
             UUID templateId,
+            /**
+             * The intern's existing lifecycle. Preferred path — supply this
+             * when the candidate is already onboarded (paid-after-unpaid,
+             * re-sends, ACTIVE interns) so the send is byte-identical to
+             * the pre-fix behavior.
+             */
             UUID internLifecycleId,
+            /**
+             * Fallback path for interview-completed candidates who have not
+             * yet been signed into a lifecycle. When supplied AND
+             * {@code internLifecycleId} is null, the service resolves the
+             * application → candidate → user, then find-or-creates the
+             * lifecycle inline (mirrors {@code
+             * OfferIdmsSigningService.finalizeIdmsSigning}): mints
+             * employeeId, seeds {@code ermId = caller}, {@code
+             * activeStatus = "PROSPECTIVE"}, runs the reporting-structure
+             * auto-linker, advances {@code users.lifecycle_status} to
+             * {@code EMPLOYEE_ID_CREATED}, and stamps the application to
+             * {@code ACCEPTED}.
+             */
+            UUID applicationId,
             /** When set, the newly created instance will mark the referenced
              *  prior FINALIZED instance as SUPERSEDED as soon as this new one
              *  itself hits FINALIZED. */
