@@ -73,6 +73,14 @@ function PageContent() {
   const fieldFormRef = useRef<FieldFormHandle | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextAutoSaveRef = useRef(false); // seeds don't count as dirty
+  // Auto-save uses refs for detail + fields so its effect can depend ONLY
+  // on textValues — otherwise every server response setDetail cycles
+  // detail/persistText identity and restarts the debounce (the exemplar
+  // "Send stuck disabled" bug the audit found). lastSavedKeyRef guards
+  // against re-saving an unchanged payload if the effect ever does re-fire.
+  const detailRef = useRef<InstanceDetail | null>(null);
+  const ermFieldsRef = useRef<FieldSchemaEntry[]>([]);
+  const lastSavedKeyRef = useRef<string>('');
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -86,6 +94,13 @@ function PageContent() {
       }
       skipNextAutoSaveRef.current = true;
       setTextValues(seed);
+      // Seed lastSaved so an auto-save fired with the exact just-loaded
+      // values (rare, but possible via HMR / re-mount) is a no-op.
+      const seedPayload: Record<string, string> = {};
+      const ermFieldsInSeed = parseFieldSchema(res.data.fieldSchemaJson)
+        .filter((f) => f.assignee === 'ERM' && f.type !== 'signature');
+      for (const f of ermFieldsInSeed) seedPayload[f.id] = seed[f.id] ?? '';
+      lastSavedKeyRef.current = JSON.stringify(seedPayload);
       setSaveState({ kind: 'idle' });
       setErr(null);
     } catch (e) {
@@ -103,6 +118,10 @@ function PageContent() {
   );
   const signatureBlobs = useSignatureBlobs(detail);
   const ermFields = useMemo(() => fields.filter((f) => f.assignee === 'ERM'), [fields]);
+  // Keep refs mirrored so the auto-save effect (deps: [textValues]) can
+  // read the latest detail + fields without re-arming on their change.
+  useEffect(() => { detailRef.current = detail; }, [detail]);
+  useEffect(() => { ermFieldsRef.current = ermFields; }, [ermFields]);
   const ermRequiredMissing = useMemo(() => {
     if (!detail) return [] as string[];
     const miss: string[] = [];
@@ -118,39 +137,70 @@ function PageContent() {
   }, [detail, ermFields, textValues]);
 
   // ── Auto-save on textValues change (debounced) ─────────────────────
-  const persistText = useCallback(async (values: Record<string, string>) => {
-    if (!detail) return;
+  // Reads detail + ermFields from refs so its identity is STABLE across
+  // renders. Returns true iff the round-trip persisted the current
+  // payload — send() awaits and refuses to proceed on false so a silent
+  // failed save can never let stale bytes ship.
+  const persistText = useCallback(async (
+    values: Record<string, string>,
+  ): Promise<boolean> => {
+    const currentDetail = detailRef.current;
+    const currentErmFields = ermFieldsRef.current;
+    if (!currentDetail) return false;
     const payload: Record<string, string> = {};
-    for (const f of ermFields) {
+    for (const f of currentErmFields) {
       if (f.type !== 'signature') payload[f.id] = values[f.id] ?? '';
     }
     if (Object.keys(payload).length === 0) {
       setSaveState({ kind: 'idle' });
-      return;
+      lastSavedKeyRef.current = '';
+      return true;
+    }
+    const key = JSON.stringify(payload);
+    if (key === lastSavedKeyRef.current) {
+      // Content-identical to the last successful save — no-op. This is
+      // the second layer of protection against the auto-save loop; the
+      // primary is the effect deps.
+      setSaveState({ kind: 'saved', at: new Date() });
+      return true;
     }
     setSaveState({ kind: 'saving' });
     try {
       const res = await api.post<InstanceDetail>(
-        `/api/v1/erm/idms/${detail.id}/fill`, { values: payload });
+        `/api/v1/erm/idms/${currentDetail.id}/fill`, { values: payload });
       // Refresh persisted values from server without stomping on the
       // user's in-flight typing (we do NOT reseed textValues).
       setDetail(res.data);
+      lastSavedKeyRef.current = key;
       setSaveState({ kind: 'saved', at: new Date() });
+      return true;
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
       setSaveState({
         kind: 'error',
         message: ax.response?.data?.error ?? 'Save failed',
       });
+      return false;
     }
-  }, [detail, ermFields]);
+  }, []);
 
+  // Effect deps: ONLY textValues. detail/persistText changes never
+  // restart the debounce, so a server response can't re-arm the timer.
   useEffect(() => {
-    if (!detail) return;
+    if (!detailRef.current) return;
     if (skipNextAutoSaveRef.current) {
       skipNextAutoSaveRef.current = false;
       return;
     }
+    // Fast-path: if textValues match the last-saved payload, skip.
+    // This handles the case where the effect fires for any reason
+    // (mount, HMR, etc.) but the user hasn't actually changed anything.
+    const currentErmFields = ermFieldsRef.current;
+    const payload: Record<string, string> = {};
+    for (const f of currentErmFields) {
+      if (f.type !== 'signature') payload[f.id] = textValues[f.id] ?? '';
+    }
+    if (JSON.stringify(payload) === lastSavedKeyRef.current) return;
     setSaveState({ kind: 'dirty' });
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
@@ -159,7 +209,7 @@ function PageContent() {
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
-  }, [textValues, detail, persistText]);
+  }, [textValues, persistText]);
 
   // Prompt if the user tries to close/navigate mid-debounce.
   useEffect(() => {
@@ -204,9 +254,16 @@ function PageContent() {
     setSending(true);
     try {
       // Cancel any pending debounced save, flush the final state
-      // synchronously so the server has everything before SEND.
+      // synchronously so the server has everything before SEND. If the
+      // flush fails, REFUSE to proceed — otherwise the intern would get
+      // a doc missing the latest bytes.
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      await persistText(textValues);
+      const saved = await persistText(textValues);
+      if (!saved) {
+        toast.error("Couldn't save your latest changes — please try again in a moment.");
+        setSending(false);
+        return;
+      }
       await api.post(`/api/v1/erm/idms/${detail.id}/send`);
       toast.success('Sent to intern.');
       router.push(`/careers/erm/offers/idms/${detail.id}`);

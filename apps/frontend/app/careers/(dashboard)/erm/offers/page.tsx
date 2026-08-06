@@ -92,6 +92,17 @@ function PageContent() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  // Refetch when the tab regains focus — an ERM working the cockpit in
+  // one window and a detail page in another sees the queue stay fresh
+  // without a manual Refresh click.
+  useEffect(() => {
+    function onVisibility() {
+      if (document.visibilityState === 'visible') void load();
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [load]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const tabFilter = TABS.find((t) => t.key === tab)?.match ?? (() => true);
@@ -291,7 +302,7 @@ function TemplatePickerModal({
     prior: { id: string; title: string };
     templateId: string;
   } | null>(null);
-  const [prior, setPrior] = useState<{ id: string; title: string; status: string }[]>([]);
+  const [prior, setPrior] = useState<{ id: string; title: string; status: string; key: string }[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -300,10 +311,10 @@ function TemplatePickerModal({
         const [tplRes, historyRes] = await Promise.all([
           api.get<{ items: PickableTemplate[] }>('/api/v1/erm/idms/templates'),
           row.internLifecycleId
-            ? api.get<{ items: { id: string; title: string; status: string }[] }>(
+            ? api.get<{ items: { id: string; title: string; status: string; key: string }[] }>(
                 `/api/v1/erm/idms/lifecycle/${row.internLifecycleId}/history`,
               )
-            : Promise.resolve({ data: { items: [] } as { items: { id: string; title: string; status: string }[] } }),
+            : Promise.resolve({ data: { items: [] } as { items: { id: string; title: string; status: string; key: string }[] } }),
         ]);
         setTemplates(tplRes.data.items ?? []);
         setPrior(historyRes.data.items ?? []);
@@ -337,10 +348,19 @@ function TemplatePickerModal({
 
   function onSend() {
     if (!pickId) return;
-    // Supersede ask — one clean question if a prior executed doc exists.
-    const executed = prior.find((p) => p.status === 'FINALIZED');
-    if (executed) {
-      setSupersedeAsk({ prior: { id: executed.id, title: executed.title }, templateId: pickId });
+    // Supersede ask — scoped to the SAME template. Asking "should this new
+    // Offer Letter replace the finalized NDA?" was misleading + could
+    // silently mark the wrong doc SUPERSEDED. Only ask when a prior
+    // FINALIZED instance of the SAME template exists.
+    const pickedTemplate = templates.find((t) => t.id === pickId);
+    const executedSame = pickedTemplate
+      ? prior.find((p) => p.status === 'FINALIZED' && p.key === pickedTemplate.key)
+      : null;
+    if (executedSame) {
+      setSupersedeAsk({
+        prior: { id: executedSame.id, title: executedSame.title },
+        templateId: pickId,
+      });
       return;
     }
     void proceed(pickId, null);
