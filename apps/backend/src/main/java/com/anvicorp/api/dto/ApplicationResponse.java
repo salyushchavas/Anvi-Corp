@@ -35,8 +35,32 @@ public class ApplicationResponse {
     /**
      * ERM Phase 2 — CSV of field keys (resume,workAuth,education,other) the
      * intern must provide when stage is INFO_REQUESTED. Drives the amber
-     * banner + ProvideInfoModal on the intern detail page. NEVER carries
-     * ERM-only fields like internal_notes / last_decision_reason_text.
+     * banner + ProvideInfoModal on the intern detail page.
      */
     private String infoRequestedFieldsCsv;
+
+    /** When the ERM flipped the application to INFO_REQUESTED. */
+    private Instant infoRequestedAt;
+
+    /**
+     * Human label of the reason code the ERM picked (e.g. "Updated resume",
+     * "Other (specify)"). Applicant-safe by design — the label copy on
+     * ReasonCode is the same string ERM sees in the picker and is not a
+     * private note. Null when no reason code was captured.
+     */
+    private String infoRequestedReasonLabel;
+
+    /**
+     * ERM's free-text specifics on the request — shown to the applicant
+     * verbatim so they know exactly what's being asked. Only populated when
+     * the reason code required free text (e.g. REQUEST_INFO_OTHER, or when
+     * the ERM opted to add context on the pre-filled reason codes).
+     */
+    private String infoRequestedMessage;
+
+    /** Free-text response the applicant typed when closing INFO_REQUESTED. */
+    private String infoProvidedResponse;
+
+    /** When the applicant submitted their response. */
+    private Instant infoProvidedAt;
 }

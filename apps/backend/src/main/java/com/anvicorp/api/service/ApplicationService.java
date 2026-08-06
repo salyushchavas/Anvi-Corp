@@ -28,6 +28,8 @@ import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.notification.NotificationService;
 import com.anvicorp.api.notification.NotificationStub;
 import com.anvicorp.api.event.SelectionAcknowledgedEvent;
+import com.anvicorp.api.entity.ApplicationDecisionLog;
+import com.anvicorp.api.repository.ApplicationDecisionLogRepository;
 import com.anvicorp.api.repository.ApplicationRepository;
 import com.anvicorp.api.repository.ApplicationSpecifications;
 import com.anvicorp.api.repository.AuditLogRepository;
@@ -61,6 +63,7 @@ import java.util.UUID;
 public class ApplicationService {
 
     private final ApplicationRepository applicationRepository;
+    private final ApplicationDecisionLogRepository decisionLogRepository;
     private final JobPostingRepository jobPostingRepository;
     private final ResumeRepository resumeRepository;
     private final CandidateRepository candidateRepository;
@@ -657,6 +660,30 @@ public class ApplicationService {
         User u = c != null ? c.getUser() : null;
         JobPosting jp = a.getJobPosting();
         Resume r = a.getResume();
+
+        // Reason label + message are applicant-safe only for INFO_REQUESTED.
+        // For HOLD/REJECT the reason_text remains ERM-internal (see the
+        // Application entity comment); leaking it here would break the
+        // ERM-only contract those decisions rely on.
+        String reasonLabel = null;
+        String reasonMessage = null;
+        if (a.getStatus() == ApplicationStatus.INFO_REQUESTED) {
+            String code = a.getLastDecisionReasonCode();
+            if (code != null && !code.isBlank()) {
+                try {
+                    reasonLabel = com.anvicorp.api.erm.ReasonCode
+                            .valueOf(code).humanLabel();
+                } catch (IllegalArgumentException ignored) {
+                    // Unknown code — fall back to the raw string.
+                    reasonLabel = code;
+                }
+            }
+            String text = a.getLastDecisionReasonText();
+            if (text != null && !text.isBlank()) {
+                reasonMessage = text.trim();
+            }
+        }
+
         return ApplicationResponse.builder()
                 .id(a.getId())
                 .candidateName(u != null ? u.getFullName() : null)
@@ -673,6 +700,11 @@ public class ApplicationService {
                 .statementOfInterest(a.getStatementOfInterest())
                 .applicantVisibleFeedback(a.getApplicantVisibleFeedback())
                 .infoRequestedFieldsCsv(a.getInfoRequestedFieldsCsv())
+                .infoRequestedAt(a.getInfoRequestedAt())
+                .infoRequestedReasonLabel(reasonLabel)
+                .infoRequestedMessage(reasonMessage)
+                .infoProvidedResponse(a.getInfoProvidedResponse())
+                .infoProvidedAt(a.getInfoProvidedAt())
                 .build();
     }
 
@@ -727,19 +759,55 @@ public class ApplicationService {
         }
         if (req != null && req.resumeFileId() != null) {
             resumeRepository.findById(req.resumeFileId())
-                    .ifPresent(app::setResume);
+                    .ifPresent(newResume -> {
+                        // Owner check — the applicant may only swap in one of
+                        // THEIR own resumes; a UUID from someone else's vault
+                        // must not attach here.
+                        if (newResume.getCandidate() != null
+                                && newResume.getCandidate().getId() != null
+                                && newResume.getCandidate().getId()
+                                        .equals(app.getCandidate().getId())) {
+                            app.setResume(newResume);
+                        }
+                    });
         }
-        // workAuth/education/other are persisted into the decision log narrative
-        // for ERM review; we don't mutate candidate profile fields here to keep
-        // the change minimal and reversible (ERM can ask again).
+        // Compose the applicant response narrative — the free-text answer plus
+        // any structured workAuth/education snippets they filled in. We persist
+        // the whole thing on the application so the ERM sees the answer on
+        // detail (via decision history) and the applicant sees it echoed back
+        // as "your response" on their detail page.
+        String composedResponse = composeInfoResponse(req);
         ApplicationStatus previous = app.getStatus();
+        Instant now = Instant.now();
         app.setStatus(ApplicationStatus.APPLIED);
         app.setStatusUpdatedBy(caller.getId());
         app.setInfoRequestedFieldsCsv(null);
         app.setInfoRequestedAt(null);
+        if (composedResponse != null) {
+            app.setInfoProvidedResponse(composedResponse);
+            app.setInfoProvidedAt(now);
+        }
         applicationRepository.save(app);
 
-        // Fire the info-provided event for ERM owner dispatch.
+        // Immutable history row so both sides see the return leg on the
+        // decision timeline. Applicant-visible-message = the composed
+        // response so the ERM sees exactly what was answered.
+        try {
+            decisionLogRepository.save(ApplicationDecisionLog.builder()
+                    .applicationId(app.getId())
+                    .decidedById(caller.getId())
+                    .decision("INFO_PROVIDED")
+                    .previousStage(previous.name())
+                    .newStage(ApplicationStatus.APPLIED.name())
+                    .applicantVisibleMessage(composedResponse)
+                    .decidedAt(now)
+                    .build());
+        } catch (Exception e) {
+            log.warn("INFO_PROVIDED decision log write failed (non-fatal): {}",
+                    e.getMessage());
+        }
+
+        // Fire the info-provided event for ERM staff dispatch.
         try {
             eventPublisher.publishEvent(
                     new com.anvicorp.api.event.ApplicationInfoProvidedEvent(
@@ -751,11 +819,41 @@ public class ApplicationService {
                     e.getMessage());
         }
 
+        Map<String, Object> after = new LinkedHashMap<>();
+        after.put("status", app.getStatus().name());
+        if (req != null && req.resumeFileId() != null) {
+            after.put("resumeFileId", req.resumeFileId().toString());
+        }
+        if (composedResponse != null) {
+            after.put("responseLength", composedResponse.length());
+        }
         writeAudit("APPLICATION_INFO_PROVIDED", app.getId(),
                 Map.of("status", previous.name()),
-                Map.of("status", app.getStatus().name()), caller.getId());
+                after, caller.getId());
 
         return toResponse(app);
+    }
+
+    private static String composeInfoResponse(
+            com.anvicorp.api.erm.application.ErmApplicationDtos.ProvideInfoRequest req) {
+        if (req == null) return null;
+        StringBuilder sb = new StringBuilder();
+        if (req.freeTextResponse() != null && !req.freeTextResponse().isBlank()) {
+            sb.append(req.freeTextResponse().trim());
+        }
+        if (req.workAuthUpdate() != null && !req.workAuthUpdate().isEmpty()) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append("Work authorization: ").append(req.workAuthUpdate());
+        }
+        if (req.educationUpdate() != null && !req.educationUpdate().isEmpty()) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append("Education: ").append(req.educationUpdate());
+        }
+        if (req.resumeFileId() != null) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append("Uploaded a new resume.");
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     private void writeAudit(String action, UUID entityId,

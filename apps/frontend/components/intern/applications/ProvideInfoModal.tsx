@@ -1,11 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { Upload } from 'lucide-react';
 import api from '@/lib/careers/api';
+import type { ResumeResponse } from '@/types';
 
 interface Props {
   applicationId: string;
   fields: string[];
+  message?: string;
+  reasonLabel?: string;
   onClose: () => void;
   onProvided: () => void;
 }
@@ -13,10 +17,15 @@ interface Props {
 export default function ProvideInfoModal({
   applicationId,
   fields,
+  message,
+  reasonLabel,
   onClose,
   onProvided,
 }: Props) {
-  const [resumeFileId, setResumeFileId] = useState('');
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [uploadedResumeId, setUploadedResumeId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [workAuthType, setWorkAuthType] = useState('');
   const [workAuthValidUntil, setWorkAuthValidUntil] = useState('');
   const [educationSchool, setEducationSchool] = useState('');
@@ -27,10 +36,35 @@ export default function ProvideInfoModal({
 
   const need = (k: string) => fields.includes(k);
 
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setErr(null);
+    setResumeFile(file);
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await api.post<ResumeResponse>('/api/v1/resumes', form);
+      setUploadedResumeId(res.data.id);
+    } catch (ex) {
+      setResumeFile(null);
+      setUploadedResumeId(null);
+      const ax = ex as { response?: { data?: { error?: string } } };
+      setErr(
+        ax.response?.data?.error ??
+          (ex instanceof Error ? ex.message : 'Resume upload failed'),
+      );
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
   async function submit() {
     setErr(null);
-    if (need('resume') && !resumeFileId.trim()) {
-      setErr('Resume file id is required.');
+    if (need('resume') && !uploadedResumeId) {
+      setErr('Please upload a new resume before submitting.');
       return;
     }
     if (need('other') && !freeTextResponse.trim()) {
@@ -40,8 +74,8 @@ export default function ProvideInfoModal({
     setSubmitting(true);
     try {
       const body: Record<string, unknown> = {};
-      if (need('resume') && resumeFileId.trim()) {
-        body.resumeFileId = resumeFileId.trim();
+      if (uploadedResumeId) {
+        body.resumeFileId = uploadedResumeId;
       }
       if (need('workAuth')) {
         body.workAuthUpdate = {
@@ -55,7 +89,7 @@ export default function ProvideInfoModal({
           degree: educationDegree || null,
         };
       }
-      if (need('other')) {
+      if (freeTextResponse.trim()) {
         body.freeTextResponse = freeTextResponse.trim();
       }
       await api.post(
@@ -67,7 +101,7 @@ export default function ProvideInfoModal({
       const ax = e as { response?: { data?: { error?: string } } };
       setErr(
         ax.response?.data?.error ??
-          (e instanceof Error ? e.message : 'Failed to provide info'),
+          (e instanceof Error ? e.message : 'Failed to submit information'),
       );
     } finally {
       setSubmitting(false);
@@ -91,21 +125,56 @@ export default function ProvideInfoModal({
           </button>
         </div>
 
+        {(reasonLabel || message) && (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            {reasonLabel && (
+              <p className="font-medium">Reviewer note: {reasonLabel}</p>
+            )}
+            {message && (
+              <p className="mt-1 whitespace-pre-wrap">{message}</p>
+            )}
+          </div>
+        )}
+
         <div className="mt-4 space-y-4">
           {need('resume') && (
             <div>
               <label className="text-sm font-medium text-slate-800">
-                Resume file ID <span className="text-red-600">*</span>
+                Updated resume <span className="text-red-600">*</span>
               </label>
+              <div className="mt-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={uploading}
+                  className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  <Upload className="h-4 w-4" strokeWidth={2} />
+                  {uploading
+                    ? 'Uploading…'
+                    : resumeFile
+                    ? 'Replace file'
+                    : 'Choose file'}
+                </button>
+                <span className="text-xs text-slate-600">
+                  {resumeFile ? resumeFile.name : 'No file chosen'}
+                </span>
+              </div>
               <input
-                value={resumeFileId}
-                onChange={(e) => setResumeFileId(e.target.value)}
-                placeholder="UUID of an uploaded resume"
-                className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                ref={fileRef}
+                type="file"
+                accept=".pdf,.doc,.docx"
+                onChange={handleFileChange}
+                className="hidden"
               />
+              {uploadedResumeId && (
+                <p className="mt-1 text-[11px] text-green-700">
+                  Uploaded — ready to submit.
+                </p>
+              )}
               <p className="mt-1 text-[11px] text-slate-500">
-                Upload a new resume from your profile first, then paste its
-                ID here.
+                PDF or Word document. The new file replaces the resume on this
+                application; your previous resume stays in your profile.
               </p>
             </div>
           )}
@@ -159,19 +228,23 @@ export default function ProvideInfoModal({
               </div>
             </div>
           )}
-          {need('other') && (
-            <div>
-              <label className="text-sm font-medium text-slate-800">
-                Additional details <span className="text-red-600">*</span>
-              </label>
-              <textarea
-                value={freeTextResponse}
-                onChange={(e) => setFreeTextResponse(e.target.value)}
-                rows={4}
-                className="mt-1 w-full resize-y rounded-md border border-slate-200 px-3 py-2 text-sm"
-              />
-            </div>
-          )}
+          <div>
+            <label className="text-sm font-medium text-slate-800">
+              Message to the reviewer{' '}
+              {need('other') && <span className="text-red-600">*</span>}
+            </label>
+            <textarea
+              value={freeTextResponse}
+              onChange={(e) => setFreeTextResponse(e.target.value)}
+              rows={4}
+              placeholder={
+                need('other')
+                  ? 'Describe what you are providing'
+                  : 'Optional — add any context for the reviewer'
+              }
+              className="mt-1 w-full resize-y rounded-md border border-slate-200 px-3 py-2 text-sm"
+            />
+          </div>
 
           {err && (
             <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
@@ -191,7 +264,7 @@ export default function ProvideInfoModal({
           <button
             type="button"
             onClick={submit}
-            disabled={submitting}
+            disabled={submitting || uploading}
             className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
           >
             {submitting ? 'Submitting…' : 'Submit information'}
