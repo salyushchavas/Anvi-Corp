@@ -73,6 +73,12 @@ function PageContent() {
   const fieldFormRef = useRef<FieldFormHandle | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextAutoSaveRef = useRef(false);
+  // Auto-save-loop fix: refs so the effect can depend only on textValues.
+  // Also drives 409-refetch on stale canEdit after a concurrent revoke.
+  const detailRef = useRef<InstanceDetail | null>(null);
+  const internFieldsRef = useRef<FieldSchemaEntry[]>([]);
+  const canEditRef = useRef<boolean>(false);
+  const lastSavedKeyRef = useRef<string>('');
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -86,6 +92,12 @@ function PageContent() {
       }
       skipNextAutoSaveRef.current = true;
       setTextValues(seed);
+      // Seed lastSaved so a stray effect-fire doesn't re-POST identical bytes.
+      const seedPayload: Record<string, string> = {};
+      const internSeed = parseFieldSchema(res.data.fieldSchemaJson)
+        .filter((f) => f.assignee === 'INTERN' && f.type !== 'signature');
+      for (const f of internSeed) seedPayload[f.id] = seed[f.id] ?? '';
+      lastSavedKeyRef.current = JSON.stringify(seedPayload);
       setSaveState({ kind: 'idle' });
       setErr(null);
     } catch (e) {
@@ -118,42 +130,80 @@ function PageContent() {
     return m;
   }, [detail, internFields, textValues]);
 
-  const canEdit = detail && (detail.status === 'SENT_TO_INTERN' || detail.status === 'RETURNED');
+  const canEdit = Boolean(detail && (detail.status === 'SENT_TO_INTERN' || detail.status === 'RETURNED'));
   const isRevoked = detail?.status === 'REVOKED';
   const isFinalized = detail?.status === 'FINALIZED';
+  // Mirror refs — auto-save reads through these so its effect can
+  // depend on textValues only.
+  useEffect(() => { detailRef.current = detail; }, [detail]);
+  useEffect(() => { internFieldsRef.current = internFields; }, [internFields]);
+  useEffect(() => { canEditRef.current = canEdit; }, [canEdit]);
 
   // ── Auto-save (only when the intern is allowed to edit) ─────────────
-  const persistText = useCallback(async (values: Record<string, string>) => {
-    if (!detail) return;
+  // Reads detail/fields/canEdit through refs so the effect can depend on
+  // textValues only — otherwise every server response setDetail cycles
+  // the identity and restarts the debounce (the audit's exemplar loop).
+  const persistText = useCallback(async (
+    values: Record<string, string>,
+  ): Promise<boolean> => {
+    const currentDetail = detailRef.current;
+    const currentInternFields = internFieldsRef.current;
+    if (!currentDetail || !canEditRef.current) return false;
     const payload: Record<string, string> = {};
-    for (const f of internFields) {
+    for (const f of currentInternFields) {
       if (f.type !== 'signature') payload[f.id] = values[f.id] ?? '';
     }
     if (Object.keys(payload).length === 0) {
       setSaveState({ kind: 'idle' });
-      return;
+      lastSavedKeyRef.current = '';
+      return true;
+    }
+    const key = JSON.stringify(payload);
+    if (key === lastSavedKeyRef.current) {
+      setSaveState({ kind: 'saved', at: new Date() });
+      return true;
     }
     setSaveState({ kind: 'saving' });
     try {
       const res = await api.post<InstanceDetail>(
-        `/api/v1/intern/agreements/${detail.id}/fill`, { values: payload });
+        `/api/v1/intern/agreements/${currentDetail.id}/fill`, { values: payload });
       setDetail(res.data);
+      lastSavedKeyRef.current = key;
       setSaveState({ kind: 'saved', at: new Date() });
+      return true;
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } } };
+      const ax = e as {
+        response?: { status?: number; data?: { error?: string } };
+      };
+      // 409 during auto-save means the doc state moved out from under
+      // us (typically ERM revoked). Refetch — the load() re-renders
+      // with the terminal state banner, and the effect stops firing
+      // because canEditRef flips to false.
+      if (ax.response?.status === 409) {
+        setSaveState({ kind: 'idle' });
+        void load();
+        return false;
+      }
       setSaveState({
         kind: 'error',
         message: ax.response?.data?.error ?? 'Save failed',
       });
+      return false;
     }
-  }, [detail, internFields]);
+  }, [load]);
 
   useEffect(() => {
-    if (!detail || !canEdit) return;
+    if (!detailRef.current || !canEditRef.current) return;
     if (skipNextAutoSaveRef.current) {
       skipNextAutoSaveRef.current = false;
       return;
     }
+    const currentInternFields = internFieldsRef.current;
+    const payload: Record<string, string> = {};
+    for (const f of currentInternFields) {
+      if (f.type !== 'signature') payload[f.id] = textValues[f.id] ?? '';
+    }
+    if (JSON.stringify(payload) === lastSavedKeyRef.current) return;
     setSaveState({ kind: 'dirty' });
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
@@ -162,7 +212,7 @@ function PageContent() {
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
-  }, [textValues, detail, canEdit, persistText]);
+  }, [textValues, persistText]);
 
   useEffect(() => {
     function beforeUnload(e: BeforeUnloadEvent) {
@@ -205,15 +255,31 @@ function PageContent() {
     setSubmitting(true);
     try {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      await persistText(textValues);
+      const saved = await persistText(textValues);
+      if (!saved) {
+        toast.error("Couldn't save your latest changes — please try again in a moment.");
+        setSubmitting(false);
+        return;
+      }
       const res = await api.post<InstanceDetail>(
         `/api/v1/intern/agreements/${detail.id}/submit`);
       setDetail(res.data);
       setConfirmOpen(false);
       toast.success('Submitted to your ERM.');
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } } };
-      toast.error(ax.response?.data?.error ?? 'Submit failed');
+      const ax = e as {
+        response?: { status?: number; data?: { error?: string } };
+      };
+      // 409 from /submit means the ERM revoked or the state moved.
+      // Refetch + re-render so the intern sees the terminal state
+      // instead of a mystery error.
+      if (ax.response?.status === 409) {
+        toast.error("This document isn't awaiting your response anymore.");
+        void load();
+        setConfirmOpen(false);
+      } else {
+        toast.error(ax.response?.data?.error ?? 'Submit failed');
+      }
     } finally {
       setSubmitting(false);
     }

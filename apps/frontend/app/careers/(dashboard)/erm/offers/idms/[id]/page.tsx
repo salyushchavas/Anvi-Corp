@@ -84,16 +84,20 @@ function PageContent() {
     [detail]);
   const signatureBlobs = useSignatureBlobs(detail);
 
-  async function act(path: string, key: string, body?: unknown) {
-    if (!detail) return;
+  async function act(
+    path: string, key: string, body?: unknown,
+  ): Promise<boolean> {
+    if (!detail) return false;
     setBusy(key);
     try {
       const res = await api.post<InstanceDetail>(`/api/v1/erm/idms/${detail.id}/${path}`, body ?? {});
       setDetail(res.data);
       toast.success('Done.');
+      return true;
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
       toast.error(ax.response?.data?.error ?? 'Action failed');
+      return false;
     } finally {
       setBusy(null);
     }
@@ -258,8 +262,10 @@ function PageContent() {
           reasons={RETURN_REASONS}
           onCancel={() => setReturnOpen(false)}
           onSubmit={async (reasonCode, comments) => {
-            setReturnOpen(false);
-            await act('return', 'return', { reasonCode, comments });
+            // Close only on success — a failed action keeps the dialog +
+            // the ERM's typed reason so they don't have to retype.
+            const ok = await act('return', 'return', { reasonCode, comments });
+            if (ok) setReturnOpen(false);
           }}
           confirmLabel="Return"
           confirmTone="brand"
@@ -272,8 +278,8 @@ function PageContent() {
           reasons={REVOKE_REASONS}
           onCancel={() => setRevokeOpen(false)}
           onSubmit={async (reasonCode, comments) => {
-            setRevokeOpen(false);
-            await act('revoke', 'revoke', { reasonCode, comments });
+            const ok = await act('revoke', 'revoke', { reasonCode, comments });
+            if (ok) setRevokeOpen(false);
           }}
           confirmLabel="Revoke"
           confirmTone="danger"

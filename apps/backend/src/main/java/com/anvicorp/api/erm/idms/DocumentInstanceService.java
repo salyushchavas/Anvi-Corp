@@ -408,6 +408,13 @@ public class DocumentInstanceService {
         // Clear any prior return reason — the fresh submission overwrites.
         instance.setReturnReasonCode(null);
         instance.setReturnComments(null);
+        // "Viewed before verify" gate — reset in the SAME transaction as
+        // the resubmit so the stale stamp from a PREVIOUS submission
+        // never satisfies the verify() gate at :469-472. Without this,
+        // the ERM could VERIFY a resubmission after RETURN without
+        // opening the fixed doc, because lastErmViewedAt persisted from
+        // their first review.
+        instance.setLastErmViewedAt(null);
         instanceRepo.save(instance);
         writeReview(instance.getId(), "INTERN_SUBMIT", null, null, caller, "INTERN");
         writeAudit("INTERN_SUBMIT", instance, caller, Map.of("status", "INTERN_SUBMITTED"));
@@ -416,7 +423,9 @@ public class DocumentInstanceService {
                 "IDMS_DOC_INTERN_SUBMITTED",
                 "Signed document awaiting your verification",
                 "\"" + instance.getTemplateTitle() + "\" is ready to verify.",
-                "/careers/erm/offers?filter=verifying");
+                // Deep-link uses the cockpit's own tab= param, matching the
+                // key TABS.find((t) => t.key === tab) reads from the URL.
+                "/careers/erm/offers?tab=verifying");
         return toDetail(instance, caller);
     }
 
@@ -540,11 +549,18 @@ public class DocumentInstanceService {
         instanceRepo.save(instance);
 
         // Supersede: if this instance was created with a supersedesId, mark
-        // that prior FINALIZED doc SUPERSEDED. Only meaningful when the
-        // predecessor is actually still FINALIZED — a stale reference is a
-        // no-op with a log line so the ERM sees why nothing happened.
+        // that prior FINALIZED doc SUPERSEDED. Same-template match is
+        // enforced defensively — a UI regression sending the wrong prior
+        // id mustn't retire an unrelated document (e.g. finalizing an
+        // Offer Letter must never mark a prior NDA superseded).
         if (instance.getSupersedesId() != null) {
             instanceRepo.findByIdForUpdate(instance.getSupersedesId()).ifPresent(prior -> {
+                if (!java.util.Objects.equals(prior.getTemplateKey(), instance.getTemplateKey())) {
+                    log.warn("[IDMS] supersede target {} template mismatch "
+                                    + "(prior key={}, this key={}) — refusing to mark superseded",
+                            prior.getId(), prior.getTemplateKey(), instance.getTemplateKey());
+                    return;
+                }
                 if (prior.getStatus() == DocumentInstanceStatus.FINALIZED) {
                     prior.setStatus(DocumentInstanceStatus.SUPERSEDED);
                     prior.setSupersededAt(Instant.now());

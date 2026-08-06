@@ -56,6 +56,16 @@ function PageContent() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  // Refetch on tab-visibility so a doc the ERM sends while the intern's
+  // Agreements tab is open shows up without a manual refresh.
+  useEffect(() => {
+    function onVisibility() {
+      if (document.visibilityState === 'visible') void load();
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [load]);
+
   const actionRows = rows.filter((r) => r.status === 'SENT_TO_INTERN' || r.status === 'RETURNED');
   const otherRows  = rows.filter((r) => !(r.status === 'SENT_TO_INTERN' || r.status === 'RETURNED'));
 
