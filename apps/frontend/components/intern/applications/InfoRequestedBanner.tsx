@@ -7,6 +7,9 @@ import ProvideInfoModal from './ProvideInfoModal';
 interface Props {
   applicationId: string;
   infoRequestedFieldsCsv: string | null;
+  reasonLabel?: string;
+  message?: string;
+  requestedAt?: string;
   onProvided: () => void;
 }
 
@@ -20,6 +23,9 @@ const LABEL: Record<string, string> = {
 export default function InfoRequestedBanner({
   applicationId,
   infoRequestedFieldsCsv,
+  reasonLabel,
+  message,
+  requestedAt,
   onProvided,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -36,17 +42,32 @@ export default function InfoRequestedBanner({
           strokeWidth={2}
         />
         <div className="flex-1">
-          <p className="font-semibold">Information requested by ERM</p>
-          <p className="mt-1 text-[13px]">
+          <p className="font-semibold">Information requested by the reviewer</p>
+          {requestedAt && (
+            <p className="mt-0.5 text-[12px] text-amber-800">
+              Requested on {new Date(requestedAt).toLocaleString()}
+            </p>
+          )}
+          <p className="mt-2 text-[13px]">
             Provide the following to continue your review:
           </p>
-          <ul className="mt-2 list-inside list-disc text-[13px]">
+          <ul className="mt-1 list-inside list-disc text-[13px]">
             {fields.length === 0 ? (
               <li>Additional information</li>
             ) : (
               fields.map((f) => <li key={f}>{LABEL[f] ?? f}</li>)
             )}
           </ul>
+          {message && (
+            <div className="mt-3 rounded-md border border-amber-300 bg-white/70 p-3 text-[13px]">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-amber-700">
+                Reviewer note{reasonLabel ? ` — ${reasonLabel}` : ''}
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-amber-950">
+                {message}
+              </p>
+            </div>
+          )}
         </div>
         <button
           type="button"
@@ -60,6 +81,8 @@ export default function InfoRequestedBanner({
         <ProvideInfoModal
           applicationId={applicationId}
           fields={fields}
+          message={message}
+          reasonLabel={reasonLabel}
           onClose={() => setOpen(false)}
           onProvided={() => {
             setOpen(false);

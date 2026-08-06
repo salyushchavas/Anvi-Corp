@@ -284,6 +284,16 @@ export interface ApplicationResponse {
   applicantVisibleFeedback?: string;
   /** ERM Phase 2 — CSV of field keys the intern must provide when stage is INFO_REQUESTED. */
   infoRequestedFieldsCsv?: string;
+  /** When the ERM flipped the application to INFO_REQUESTED. */
+  infoRequestedAt?: IsoDateTime;
+  /** Human label of the reason code ERM picked (e.g. "Updated resume"). */
+  infoRequestedReasonLabel?: string;
+  /** ERM's free-text ask — shown verbatim to the applicant. */
+  infoRequestedMessage?: string;
+  /** Applicant's response captured when they closed INFO_REQUESTED. */
+  infoProvidedResponse?: string;
+  /** When the applicant submitted their response. */
+  infoProvidedAt?: IsoDateTime;
 }
 
 

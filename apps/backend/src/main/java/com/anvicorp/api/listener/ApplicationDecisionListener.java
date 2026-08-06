@@ -112,19 +112,21 @@ public class ApplicationDecisionListener {
                         || e.getInfoRequestedFields().isEmpty()
                         ? "additional information"
                         : String.join(", ", humanizeFieldList(e.getInfoRequestedFields()));
+                String deepLink = frontendBaseUrl + "/careers/intern/applications/"
+                        + e.getApplicationId();
                 Map<String, Object> vars = new LinkedHashMap<>();
                 vars.put("firstName", firstName);
                 vars.put("jobTitle", jobTitle);
                 vars.put("infoRequested", fields);
                 vars.put("ermName", ermName);
                 vars.put("supportEmail", brand.getSupportEmail());
-                vars.put("deepLink", frontendBaseUrl + "/careers/intern/applications/"
-                        + e.getApplicationId());
+                vars.put("deepLink", deepLink);
                 renderAndSend("APPLICATION_REQUEST_INFO", vars, email, applicant, e,
                         brand.getName() + " application — additional information needed",
                         "Hello " + firstName + ",\n\nWe are reviewing your application for "
                                 + jobTitle + " and need: " + fields
-                                + ". Please update your application in your " + brand.getName() + " dashboard.\n\n" + brand.signoffErm() + "");
+                                + ".\n\nOpen your application to provide the details:\n"
+                                + deepLink + "\n\n" + brand.signoffErm() + "");
             }
             default -> {
                 // Other decisions (RESUME_FROM_HOLD) — no fan-out.
@@ -207,13 +209,39 @@ public class ApplicationDecisionListener {
     public void onInfoProvided(ApplicationInfoProvidedEvent e) {
         if (e == null) return;
         try {
-            String title = "Applicant provided requested information";
-            String body = "An applicant updated their application; ready for re-review.";
+            Application app = applicationRepository.findById(e.getApplicationId()).orElse(null);
+            User applicant = app != null && app.getCandidate() != null
+                    ? app.getCandidate().getUser() : null;
+            String applicantName = applicant != null && applicant.getFullName() != null
+                    ? applicant.getFullName() : "The candidate";
+            String jobTitle = app != null && app.getJobPosting() != null
+                    ? app.getJobPosting().getTitle() : "an open role";
+            String title = applicantName + " provided requested information";
+            String body = applicantName + " updated their application for "
+                    + jobTitle + " — ready for re-review.";
             String url = ERM_DASH + "/" + e.getApplicationId();
+
+            // Deliver to the shared ERM inbox pattern: every active ERM sees
+            // a row so the "erm@" collective queue is honoured, plus the
+            // owner is guaranteed a copy. Mirrors SelectionAcknowledgedListener's
+            // broadcast fallback but always broadcasts here since the applicant
+            // returning info is a reviewer-team signal, not owner-scoped work.
+            java.util.Set<UUID> dispatched = new java.util.HashSet<>();
             if (e.getErmOwnerId() != null) {
                 dispatcher.dispatch(e.getErmOwnerId(), "APPLICATION_INFO_PROVIDED",
                         e.getApplicantUserId(),
                         cap(title, 200), cap(body, 400), url, false);
+                dispatched.add(e.getErmOwnerId());
+            }
+            for (User erm : userRepository.findByRole(UserRole.ERM)) {
+                if (erm == null || erm.getId() == null) continue;
+                if (dispatched.contains(erm.getId())) continue;
+                try {
+                    dispatcher.dispatch(erm.getId(), "APPLICATION_INFO_PROVIDED",
+                            e.getApplicantUserId(),
+                            cap(title, 200), cap(body, 400), url, false);
+                    dispatched.add(erm.getId());
+                } catch (Exception ignored) {}
             }
         } catch (Exception ex) {
             log.debug("[ApplicationDecision] info-provided dispatch failed: {}", ex.getMessage());

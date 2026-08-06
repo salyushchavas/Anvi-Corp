@@ -89,7 +89,14 @@ public class Application {
     @Column(name = "last_decision_reason_code", length = 80)
     private String lastDecisionReasonCode;
 
-    /** ERM-only free text accompanying the decision. NEVER returned to INTERN/MANAGER. */
+    /**
+     * Free text accompanying the decision. For HOLD/REJECT this stays
+     * ERM-internal (the applicant sees only the reason label). For
+     * REQUEST_INFO the text is the ERM's specific ask — surfaced verbatim
+     * to the applicant since REQUEST_INFO_OTHER's "(specify)" prompt is
+     * explicitly the field where the ERM types what they need. The DTO
+     * mapper gates this exposure on stage == INFO_REQUESTED.
+     */
     @Column(name = "last_decision_reason_text", columnDefinition = "TEXT")
     private String lastDecisionReasonText;
 
@@ -105,6 +112,20 @@ public class Application {
 
     @Column(name = "info_requested_at")
     private Instant infoRequestedAt;
+
+    /**
+     * Applicant's free-text response captured when they close the
+     * INFO_REQUESTED loop via POST /provide-info. Persisted so the
+     * exchange is visible to both sides after the status flips back to
+     * APPLIED. Not cleared on subsequent decisions — the applicant + ERM
+     * can always see what was asked and what was answered on the
+     * detail page's history section.
+     */
+    @Column(name = "info_provided_response", columnDefinition = "TEXT")
+    private String infoProvidedResponse;
+
+    @Column(name = "info_provided_at")
+    private Instant infoProvidedAt;
 
     /**
      * Free-form ERM-only notes appended over time. Distinct from

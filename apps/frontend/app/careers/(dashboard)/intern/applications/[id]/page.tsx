@@ -82,8 +82,30 @@ export default function InternApplicationDetailPage() {
         <InfoRequestedBanner
           applicationId={app.id}
           infoRequestedFieldsCsv={app.infoRequestedFieldsCsv ?? null}
+          reasonLabel={app.infoRequestedReasonLabel}
+          message={app.infoRequestedMessage}
+          requestedAt={app.infoRequestedAt}
           onProvided={() => void load()}
         />
+      )}
+
+      {app.status !== 'INFO_REQUESTED' && app.infoProvidedAt && (
+        <section className="mb-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm">
+          <p className="font-semibold text-slate-900">
+            Your response was submitted
+          </p>
+          <p className="mt-0.5 text-[12px] text-slate-500">
+            Sent {new Date(app.infoProvidedAt).toLocaleString()}
+          </p>
+          {app.infoProvidedResponse && (
+            <p className="mt-2 whitespace-pre-wrap text-slate-700">
+              {app.infoProvidedResponse}
+            </p>
+          )}
+          <p className="mt-2 text-[12px] text-slate-500">
+            Your application is back in review. The team will follow up shortly.
+          </p>
+        </section>
       )}
 
       {showFeedback && (
