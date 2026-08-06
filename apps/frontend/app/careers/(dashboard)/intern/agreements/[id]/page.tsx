@@ -20,7 +20,8 @@ import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import InstanceRenderer from '@/components/idms/InstanceRenderer';
 import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
-import SignaturePad, { type SignaturePadHandle } from '@/components/idms/SignaturePad';
+import SignatureCapture from '@/components/idms/SignatureCapture';
+import { useAuth } from '@/lib/careers/auth-context';
 import {
   RETURN_REASONS,
   humanDate,
@@ -65,8 +66,9 @@ function PageContent() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
+  const [stagedSignature, setStagedSignature] = useState<string | null>(null);
 
-  const signaturePadRef = useRef<SignaturePadHandle | null>(null);
+  const { user } = useAuth();
   const fieldFormRef = useRef<FieldFormHandle | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextAutoSaveRef = useRef(false);
@@ -173,18 +175,17 @@ function PageContent() {
 
   async function saveSignature() {
     if (!detail || !activeSignature) return;
-    const dataUrl = signaturePadRef.current?.toDataURL();
-    if (!dataUrl) {
-      toast.error('Please draw your signature first.');
+    if (!stagedSignature) {
+      toast.error('Prepare a signature first.');
       return;
     }
     try {
       const res = await api.post<InstanceDetail>(
         `/api/v1/intern/agreements/${detail.id}/sign`,
-        { fieldId: activeSignature, signatureImageDataUrl: dataUrl, typedName },
+        { fieldId: activeSignature, signatureImageDataUrl: stagedSignature, typedName },
       );
       setDetail(res.data);
-      signaturePadRef.current?.clear();
+      setStagedSignature(null);
       setActiveSignature(null);
       setTypedName('');
     } catch (e) {
@@ -367,10 +368,14 @@ function PageContent() {
             <section className="rounded-lg border border-brand-300 bg-white p-4 shadow-sm">
               <h3 className="text-sm font-semibold text-slate-900">Your signature</h3>
               <p className="mt-1 text-xs text-slate-500">
-                Draw your signature with your mouse or finger.
+                Pick a way to sign — draw, upload an image, generate one from
+                your name, or clean up a photo of your signature.
               </p>
               <div className="mt-3">
-                <SignaturePad ref={signaturePadRef} />
+                <SignatureCapture
+                  initialName={user?.fullName ?? ''}
+                  onChange={setStagedSignature}
+                />
               </div>
               <div className="mt-3">
                 <label className="text-xs font-medium text-slate-600">Typed name</label>
@@ -384,7 +389,10 @@ function PageContent() {
               <div className="mt-4 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setActiveSignature(null)}
+                  onClick={() => {
+                    setActiveSignature(null);
+                    setStagedSignature(null);
+                  }}
                   className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
@@ -392,7 +400,8 @@ function PageContent() {
                 <button
                   type="button"
                   onClick={saveSignature}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-800"
+                  disabled={!stagedSignature}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
                 >
                   <CheckCircle2 className="h-3.5 w-3.5" />
                   Save signature

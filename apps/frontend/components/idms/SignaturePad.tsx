@@ -12,11 +12,16 @@ export interface SignaturePadHandle {
 
 interface Props {
   onChange?: (empty: boolean) => void;
+  /** Fires on the trailing edge of each stroke (pointer-up) with the
+   *  current PNG data URL, or {@code null} if the pad is empty. Used by
+   *  {@code SignatureCapture}'s Draw tab to keep the parent's staged
+   *  signature in sync without polling the imperative handle. */
+  onStrokeEnd?: (dataUrl: string | null) => void;
   disabled?: boolean;
 }
 
 const SignaturePad = forwardRef<SignaturePadHandle, Props>(function SignaturePad(
-  { onChange, disabled },
+  { onChange, onStrokeEnd, disabled },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -38,6 +43,7 @@ const SignaturePad = forwardRef<SignaturePadHandle, Props>(function SignaturePad
       emptyRef.current = true;
       setTick((n) => n + 1);
       onChange?.(true);
+      onStrokeEnd?.(null);
     },
     isEmpty() {
       return emptyRef.current;
@@ -88,6 +94,11 @@ const SignaturePad = forwardRef<SignaturePadHandle, Props>(function SignaturePad
   function pointerUp() {
     if (!drawingRef.current) return;
     drawingRef.current = false;
+    if (onStrokeEnd) {
+      const c = canvasRef.current;
+      if (!c || emptyRef.current) onStrokeEnd(null);
+      else onStrokeEnd(c.toDataURL('image/png'));
+    }
   }
 
   return (

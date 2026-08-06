@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef } from 'react';
-import type { FieldSchemaEntry, InstanceDetail } from '@/lib/careers/idms';
+import { formatIsoDateMdy, type FieldSchemaEntry, type InstanceDetail } from '@/lib/careers/idms';
 
 /**
  * IDMS live-preview renderer.
@@ -65,8 +65,25 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
       const schema = schemaById.get(id);
       const persisted = detail.values[id];
 
-      // Reset per pass — we own every span's contents + classes.
-      span.innerHTML = '';
+      // Signature-anchor DOM reuse — when the persisted URL hasn't
+      // changed AND an <img> for it already exists, we DON'T touch the
+      // img element (previously we did innerHTML='' + createElement +
+      // src= on every keystroke, which forced the browser to reload the
+      // bitmap and flashed a broken-image on each character). Only the
+      // outer classes (focus ring, tint) are re-applied.
+      const isSignatureAnchor = schema?.type === 'signature';
+      const existingSigImg = isSignatureAnchor
+        ? span.querySelector<HTMLImageElement>('img.doc-field-sig')
+        : null;
+      const reusableSig = isSignatureAnchor
+        && persisted?.signatureUrl
+        && existingSigImg
+        && existingSigImg.getAttribute('data-sig-src') === persisted.signatureUrl;
+
+      if (!reusableSig) {
+        // Reset per pass — we own every span's contents + classes.
+        span.innerHTML = '';
+      }
       span.classList.remove(
         'doc-field--erm', 'doc-field--intern', 'doc-field--auto',
         'doc-field--awaits', 'doc-field--filled', 'doc-field--signable',
@@ -84,7 +101,20 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
       // ── Signature anchor ─────────────────────────────────────────
       if (schema?.type === 'signature') {
         if (persisted?.signatureUrl) {
+          if (reusableSig) {
+            // Existing img stays in place — no HTTP re-fetch, no flicker.
+            span.classList.add('doc-field--filled');
+            if (onFieldClick) {
+              span.style.cursor = 'pointer';
+              span.onclick = () => onFieldClick(id);
+            }
+            return;
+          }
           const img = document.createElement('img');
+          img.className = 'doc-field-sig';
+          // Compare via data-* attr on re-paint — img.src returns the
+          // resolved absolute URL, which never equals the raw stored one.
+          img.setAttribute('data-sig-src', persisted.signatureUrl);
           img.src = persisted.signatureUrl;
           img.alt = 'Signature';
           img.style.cssText = 'max-height:44px;vertical-align:middle;';
@@ -124,6 +154,10 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
             if (i > 0) span.appendChild(document.createElement('br'));
             span.appendChild(document.createTextNode(line));
           });
+        } else if (schema?.type === 'date') {
+          // Document-interpolated date contract: MM/DD/YYYY every time,
+          // matching backend IdmsDateFormat.formatIsoDateString on the PDF.
+          span.textContent = formatIsoDateMdy(text);
         } else {
           span.textContent = text;
         }
