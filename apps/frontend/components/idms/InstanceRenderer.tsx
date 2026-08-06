@@ -25,6 +25,14 @@ export interface InstanceRendererProps {
   /** Working text values keyed by fieldId. Every anchor of the same field
    *  id renders the same value — multi-anchor updates are free. */
   textValues: Record<string, string>;
+  /** Signature object URLs by fieldId, resolved by
+   *  {@link useSignatureBlobs}. Preferred over the raw
+   *  {@code detail.values[id].signatureUrl} because signature bytes
+   *  are PII-encrypted at rest — a direct S3 fetch would return the
+   *  encrypted envelope (broken image). Falls back to the raw URL
+   *  when a blob hasn't loaded yet, so pre-hydration state renders
+   *  something reasonable. */
+  signatureBlobs?: Record<string, string>;
   /** Field currently focused in the panel — all its anchors light up. */
   focusedFieldId?: string | null;
   /** Fired when any anchor is clicked (text or signature). Parent typically
@@ -36,7 +44,7 @@ export interface InstanceRendererProps {
 
 export default function InstanceRenderer(props: InstanceRendererProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { detail, fields, editRole, textValues,
+  const { detail, fields, editRole, textValues, signatureBlobs,
     focusedFieldId, onFieldClick, activeSignatureFieldId } = props;
 
   const schemaById = useMemo(() => {
@@ -65,20 +73,30 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
       const schema = schemaById.get(id);
       const persisted = detail.values[id];
 
-      // Signature-anchor DOM reuse — when the persisted URL hasn't
+      // Signature-anchor DOM reuse — when the effective src hasn't
       // changed AND an <img> for it already exists, we DON'T touch the
       // img element (previously we did innerHTML='' + createElement +
       // src= on every keystroke, which forced the browser to reload the
       // bitmap and flashed a broken-image on each character). Only the
       // outer classes (focus ring, tint) are re-applied.
+      //
+      // Effective src = the blob URL from useSignatureBlobs when
+      // hydrated (the correct decrypted PNG), else the raw
+      // detail.values[id].signatureUrl (a fallback marker — the raw
+      // server URL alone can't render because signature bytes are
+      // PII-encrypted at rest and need to go through the authenticated
+      // /idms/documents/{...}/signatures/{...} endpoint).
       const isSignatureAnchor = schema?.type === 'signature';
+      const sigSrc = isSignatureAnchor
+        ? (signatureBlobs?.[id] ?? persisted?.signatureUrl ?? null)
+        : null;
       const existingSigImg = isSignatureAnchor
         ? span.querySelector<HTMLImageElement>('img.doc-field-sig')
         : null;
       const reusableSig = isSignatureAnchor
-        && persisted?.signatureUrl
+        && sigSrc
         && existingSigImg
-        && existingSigImg.getAttribute('data-sig-src') === persisted.signatureUrl;
+        && existingSigImg.getAttribute('data-sig-src') === sigSrc;
 
       if (!reusableSig) {
         // Reset per pass — we own every span's contents + classes.
@@ -110,16 +128,26 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
             }
             return;
           }
-          const img = document.createElement('img');
-          img.className = 'doc-field-sig';
-          // Compare via data-* attr on re-paint — img.src returns the
-          // resolved absolute URL, which never equals the raw stored one.
-          img.setAttribute('data-sig-src', persisted.signatureUrl);
-          img.src = persisted.signatureUrl;
-          img.alt = 'Signature';
-          img.style.cssText = 'max-height:44px;vertical-align:middle;';
-          span.appendChild(img);
-          span.classList.add('doc-field--filled');
+          if (sigSrc) {
+            const img = document.createElement('img');
+            img.className = 'doc-field-sig';
+            // Compare via data-* attr on re-paint — img.src returns the
+            // resolved absolute URL, which never equals the raw stored one.
+            img.setAttribute('data-sig-src', sigSrc);
+            img.src = sigSrc;
+            img.alt = 'Signature';
+            img.style.cssText = 'max-height:44px;vertical-align:middle;';
+            span.appendChild(img);
+            span.classList.add('doc-field--filled');
+          } else {
+            // Blob not hydrated yet — clean neutral placeholder rather
+            // than a broken-image icon.
+            const label = document.createElement('span');
+            label.textContent = 'Loading signature…';
+            label.className = 'doc-field-inline-label';
+            span.appendChild(label);
+            span.classList.add('doc-field--awaits');
+          }
         } else {
           const canSign = editRole && assignee === editRole;
           const label = document.createElement('span');
@@ -179,7 +207,7 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
         span.onclick = () => onFieldClick(id);
       }
     });
-  }, [detail, schemaById, editRole, textValues,
+  }, [detail, schemaById, editRole, textValues, signatureBlobs,
       focusedFieldId, activeSignatureFieldId, onFieldClick]);
 
   // Scroll the first anchor for the focused field into view — soft, block:'center'.

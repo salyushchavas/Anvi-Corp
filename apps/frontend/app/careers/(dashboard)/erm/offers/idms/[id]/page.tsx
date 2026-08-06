@@ -22,6 +22,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import InstanceRenderer from '@/components/idms/InstanceRenderer';
+import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
 import {
   RETURN_REASONS,
   REVOKE_REASONS,
@@ -81,6 +82,7 @@ function PageContent() {
   const fields = useMemo(
     () => detail ? parseFieldSchema(detail.fieldSchemaJson) : [],
     [detail]);
+  const signatureBlobs = useSignatureBlobs(detail);
 
   async function act(path: string, key: string, body?: unknown) {
     if (!detail) return;
@@ -239,6 +241,7 @@ function PageContent() {
               fields={fields}
               editRole={null}
               textValues={{}}
+              signatureBlobs={signatureBlobs}
             />
           </div>
         </section>

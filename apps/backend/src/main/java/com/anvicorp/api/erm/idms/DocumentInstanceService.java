@@ -938,16 +938,18 @@ public class DocumentInstanceService {
         for (DocumentInstanceFieldValue v : valueRepo.findByInstanceId(instance.getId())) {
             FieldSchemaEntry f = byId.get(v.getFieldId());
             String sigUrl = null;
-            if (v.getSignatureDocumentId() != null && s3.isReady()) {
-                try {
-                    Document sig = documentRepo.findById(v.getSignatureDocumentId()).orElse(null);
-                    if (sig != null && sig.getDeletedAt() == null) {
-                        sigUrl = s3.presignGetUrl(sig.getStorageKey(), SIGNATURE_URL_TTL);
-                    }
-                } catch (Exception ex) {
-                    log.debug("[IDMS] signature presign failed for {}: {}",
-                            v.getSignatureDocumentId(), ex.getMessage());
-                }
+            if (v.getSignatureDocumentId() != null) {
+                // Route signatures through our own authenticated endpoint
+                // rather than an S3 presigned URL. Signatures are PII-
+                // encrypted at rest, so a direct S3 fetch returns the
+                // encrypted envelope (a durable broken image). Our
+                // endpoint decrypts + streams the PNG with owner/staff
+                // gating. The {@code v=<documentId>} query param is a
+                // cache-buster tied to the underlying signature — swaps
+                // cleanly to a new blob URL on re-sign.
+                sigUrl = "/api/v1/idms/documents/" + instance.getId()
+                        + "/signatures/" + v.getFieldId()
+                        + "?v=" + v.getSignatureDocumentId();
             }
             values.put(v.getFieldId(), new DocumentInstanceDtos.FieldValue(
                     v.getFieldId(),
