@@ -18,11 +18,15 @@ import { BRAND } from '@/lib/careers/brand';
  * <p>Phase 0 lights up Home + a placeholder for every item; Phase 1+ will
  * incrementally swap each placeholder for the real surface.</p>
  */
-const ITEMS: { href: string; label: string; phase: number }[] = [
+// `phase` is optional — legacy rows still carry it as a comment on the
+// original build order, but the P-badge that used to render it was
+// scrubbed platform-wide, so new entries omit it.
+const ITEMS: { href: string; label: string; phase?: number }[] = [
   { href: '/careers/manager',                       label: 'Home',                phase: 1 },
   { href: '/careers/manager/applicant-pipeline',    label: 'Applicant Pipeline',  phase: 1 },
   { href: '/careers/manager/onboarding-health',     label: 'Onboarding Health',   phase: 2 },
   { href: '/careers/manager/active-interns',        label: 'Active Interns',      phase: 3 },
+  { href: '/careers/manager/intern-portfolio',      label: 'Intern Portfolio' },
   { href: '/careers/manager/timesheet-approvals',   label: 'Timesheet Approvals', phase: 3 },
   { href: '/careers/manager/weekly-reports',        label: 'Weekly Reports',      phase: 3 },
   { href: '/careers/manager/recording-approvals',   label: 'Recording Approvals', phase: 4 },
