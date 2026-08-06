@@ -22,11 +22,17 @@ import { cn } from '@/lib/careers/cn';
  */
 
 // ── Step definitions ───────────────────────────────────────────────────────
+// Order: Personal → Work authorization → Documents → Reporting → Review.
+// Documents comes BEFORE Reporting because the per-type proof documents
+// (Passport / Citizenship Card, Green Card) are surfaced inline on the
+// Work Auth step and share the same document-submission pipeline as the
+// Documents step; putting Documents next keeps the file-upload flow
+// contiguous before the ERM assigns supervisors.
 const STEPS = [
   { key: 'personal', label: 'Personal' },
   { key: 'workauth', label: 'Work authorization' },
-  { key: 'reporting', label: 'Reporting structure' },
   { key: 'documents', label: 'Documents' },
+  { key: 'reporting', label: 'Reporting structure' },
   { key: 'review', label: 'Mailbox + review' },
 ] as const;
 
@@ -37,8 +43,25 @@ const WORK_AUTH_TYPES = [
   { value: 'F1_OPT', label: 'F-1 OPT' },
   { value: 'F1_STEM_OPT', label: 'F-1 STEM OPT' },
   { value: 'H1B', label: 'H-1B' },
+  { value: 'H4', label: 'H-4' },
   { value: 'OTHER', label: 'Other' },
 ] as const;
+
+// Reserved document keys the wizard surfaces inline on the Work Auth
+// step for citizens + permanent residents. They travel through the same
+// `docFiles` map + `documents[]` submission as any other catalog doc, so
+// no separate storage path exists — the server sees them as regular
+// enum-backed onboarding-document rows already seeded from SkyzenDocument.
+const US_CITIZEN_PROOF_KEY = 'US_CITIZEN_PROOF';
+const PERMANENT_RESIDENT_GREEN_CARD_KEY = 'PERMANENT_RESIDENT_GREEN_CARD';
+
+interface CustomDoc {
+  /** Client-generated key, prefixed CUSTOM_ so the server takes the
+   *  seed-inactive-template branch and honours titleOverride. */
+  key: string;
+  title: string;
+  file: File | null;
+}
 
 interface OnboardingDoc {
   key: string;
@@ -91,7 +114,7 @@ function DirectOnboardingWizard() {
   const [entityId, setEntityId] = useState<string>('');
   const [entities, setEntities] = useState<StaffingEntityStub[]>([]);
 
-  // Step 2
+  // Step 2 — Work authorization
   const [workAuthType, setWorkAuthType] = useState<string>('US_CITIZEN');
   const [authorizedFrom, setAuthorizedFrom] = useState<string>('');
   const [authorizedUntil, setAuthorizedUntil] = useState<string>('');
@@ -103,20 +126,27 @@ function DirectOnboardingWizard() {
   const [dsoEmail, setDsoEmail] = useState('');
   const [dsoPhone, setDsoPhone] = useState('');
   const [workAuthNotes, setWorkAuthNotes] = useState('');
+  // Per-type extensions
+  const [sevisNumber, setSevisNumber] = useState('');
+  const [cptExpiration, setCptExpiration] = useState<string>('');
+  const [h1ReceiptNumber, setH1ReceiptNumber] = useState('');
+  const [h1ReceiptStart, setH1ReceiptStart] = useState<string>('');
+  const [h1ReceiptEnd, setH1ReceiptEnd] = useState<string>('');
 
-  // Step 3
+  // Step 3 — Documents (moved before reporting)
+  const [catalog, setCatalog] = useState<OnboardingDoc[]>([]);
+  const [selectedDocKeys, setSelectedDocKeys] = useState<string[]>([]);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [docFiles, setDocFiles] = useState<Record<string, File | null>>({});
+  const [customDocs, setCustomDocs] = useState<CustomDoc[]>([]);
+
+  // Step 4 — Reporting structure
   const [trainers, setTrainers] = useState<UserStub[]>([]);
   const [evaluators, setEvaluators] = useState<UserStub[]>([]);
   const [managers, setManagers] = useState<UserStub[]>([]);
   const [trainerId, setTrainerId] = useState('');
   const [evaluatorId, setEvaluatorId] = useState('');
   const [managerId, setManagerId] = useState('');
-
-  // Step 4
-  const [catalog, setCatalog] = useState<OnboardingDoc[]>([]);
-  const [selectedDocKeys, setSelectedDocKeys] = useState<string[]>([]);
-  const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [docFiles, setDocFiles] = useState<Record<string, File | null>>({});
 
   // Step 5
   const [assignMailbox, setAssignMailbox] = useState(true);
@@ -138,8 +168,10 @@ function DirectOnboardingWizard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Reporting-structure step (new position: index 3) — lazy load the
+  // trainer / evaluator / manager pickers.
   useEffect(() => {
-    if (stepIdx !== 2) return;
+    if (stepIdx !== 3) return;
     if (trainers.length + evaluators.length + managers.length > 0) return;
     void (async () => {
       try {
@@ -159,8 +191,11 @@ function DirectOnboardingWizard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepIdx]);
 
+  // Documents step (new position: index 2) — lazy load the pickable
+  // template catalog. E-Verify + the per-type proof docs surface here
+  // automatically once the SkyzenDocument enum is seeded.
   useEffect(() => {
-    if (stepIdx !== 3) return;
+    if (stepIdx !== 2) return;
     if (catalog.length > 0) return;
     void (async () => {
       try {
@@ -183,6 +218,13 @@ function DirectOnboardingWizard() {
   }, [stepIdx]);
 
   // ── Per-step validation ──────────────────────────────────────────────────
+  //
+  // Step indices under the new order:
+  //   0 Personal
+  //   1 Work authorization  (per-type field + type-specific doc)
+  //   2 Documents           (catalog + custom docs)
+  //   3 Reporting structure
+  //   4 Mailbox + review
   const stepError = useMemo(() => {
     if (stepIdx === 0) {
       if (!email.trim()) return 'Email is required.';
@@ -192,11 +234,39 @@ function DirectOnboardingWizard() {
     }
     if (stepIdx === 1) {
       if (!workAuthType) return 'Pick a work-authorization type.';
+      // Per-type field requirements — mirror the server matrix.
+      if (workAuthType === 'US_CITIZEN' && !docFiles[US_CITIZEN_PROOF_KEY]) {
+        return 'Upload a passport or citizenship card.';
+      }
+      if (workAuthType === 'PERMANENT_RESIDENT' && !docFiles[PERMANENT_RESIDENT_GREEN_CARD_KEY]) {
+        return 'Upload the Green Card.';
+      }
+      if (workAuthType === 'F1_CPT') {
+        if (!sevisNumber.trim()) return 'SEVIS number is required for F-1 CPT.';
+        if (!cptExpiration) return 'CPT expiration date is required for F-1 CPT.';
+      }
+      if (workAuthType === 'F1_OPT' || workAuthType === 'F1_STEM_OPT'
+          || workAuthType === 'H4' || workAuthType === 'OTHER') {
+        if (!eadCardNumber.trim()) return 'EAD card number is required.';
+        if (!eadExpiration) return 'EAD expiration date is required.';
+      }
+      if (workAuthType === 'H1B') {
+        if (!h1ReceiptNumber.trim()) return 'H-1 receipt number is required for H-1B.';
+        if (!h1ReceiptStart) return 'H-1 receipt start date is required for H-1B.';
+        if (!h1ReceiptEnd) return 'H-1 receipt end date is required for H-1B.';
+        if (h1ReceiptEnd && h1ReceiptStart && h1ReceiptEnd < h1ReceiptStart) {
+          return 'H-1 receipt end date cannot be before the start date.';
+        }
+      }
     }
-    if (stepIdx === 3) {
+    if (stepIdx === 2) {
       if (!resumeFile) return 'Resume upload is required.';
       for (const k of selectedDocKeys) {
         if (!docFiles[k]) return `Upload a file for ${labelFor(catalog, k)}.`;
+      }
+      for (const c of customDocs) {
+        if (!c.title.trim()) return 'Every custom document needs a name.';
+        if (!c.file) return `Upload a file for "${c.title.trim() || 'Custom document'}".`;
       }
     }
     if (stepIdx === 4 && assignMailbox) {
@@ -211,7 +281,9 @@ function DirectOnboardingWizard() {
     return null;
   }, [
     stepIdx, email, fullName, joiningDate, workAuthType,
-    resumeFile, selectedDocKeys, docFiles, catalog,
+    sevisNumber, cptExpiration, eadCardNumber, eadExpiration,
+    h1ReceiptNumber, h1ReceiptStart, h1ReceiptEnd,
+    resumeFile, selectedDocKeys, docFiles, catalog, customDocs,
     assignMailbox, mailboxLocalPart, mailboxPassword,
   ]);
 
@@ -238,6 +310,30 @@ function DirectOnboardingWizard() {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      // Enforce I-983 visibility rule client-side too: strip true for
+      // non-F-1-OPT types so the payload never carries a stale checkbox
+      // value from an earlier type selection.
+      const effectiveI983 =
+        workAuthType === 'F1_OPT' || workAuthType === 'F1_STEM_OPT'
+          ? i983Required
+          : false;
+
+      // The type-specific proof documents live in the SAME docFiles map
+      // as the catalog picks (they just arrive from the Work Auth step).
+      // Collect every enum-backed key that has a file attached — that's
+      // the set of assignments the server expects.
+      const workAuthDocKeys: string[] = [];
+      if (workAuthType === 'US_CITIZEN' && docFiles[US_CITIZEN_PROOF_KEY]) {
+        workAuthDocKeys.push(US_CITIZEN_PROOF_KEY);
+      }
+      if (workAuthType === 'PERMANENT_RESIDENT'
+          && docFiles[PERMANENT_RESIDENT_GREEN_CARD_KEY]) {
+        workAuthDocKeys.push(PERMANENT_RESIDENT_GREEN_CARD_KEY);
+      }
+      const enumBackedKeys = Array.from(
+        new Set<string>([...selectedDocKeys, ...workAuthDocKeys]),
+      );
+
       const metadata = {
         email: email.trim(),
         fullName: fullName.trim(),
@@ -251,18 +347,33 @@ function DirectOnboardingWizard() {
         eadCardNumber: eadCardNumber.trim() || null,
         eadExpiration: eadExpiration || null,
         i20Expiration: i20Expiration || null,
-        i983Required,
+        i983Required: effectiveI983,
         dsoName: dsoName.trim() || null,
         dsoEmail: dsoEmail.trim() || null,
         dsoPhone: dsoPhone.trim() || null,
         workAuthNotes: workAuthNotes.trim() || null,
+        sevisNumber: sevisNumber.trim() || null,
+        cptExpiration: cptExpiration || null,
+        h1ReceiptNumber: h1ReceiptNumber.trim() || null,
+        h1ReceiptStart: h1ReceiptStart || null,
+        h1ReceiptEnd: h1ReceiptEnd || null,
         trainerUserId: trainerId || null,
         evaluatorUserId: evaluatorId || null,
         managerUserId: managerId || null,
-        documents: selectedDocKeys.map((k) => ({
-          documentKey: k,
-          formPartName: `doc_${k}`,
-        })),
+        documents: [
+          ...enumBackedKeys.map((k) => ({
+            documentKey: k,
+            formPartName: `doc_${k}`,
+            titleOverride: null,
+          })),
+          ...customDocs
+            .filter((c) => c.file && c.title.trim())
+            .map((c) => ({
+              documentKey: c.key,
+              formPartName: `doc_${c.key}`,
+              titleOverride: c.title.trim(),
+            })),
+        ],
         assignMailboxNow: assignMailbox,
         mailboxLocalPart: assignMailbox ? mailboxLocalPart.trim() : null,
         mailboxStartingPassword: assignMailbox ? mailboxPassword : null,
@@ -270,9 +381,12 @@ function DirectOnboardingWizard() {
       const fd = new FormData();
       fd.append('metadata', JSON.stringify(metadata));
       fd.append('resume', resumeFile);
-      for (const k of selectedDocKeys) {
+      for (const k of enumBackedKeys) {
         const f = docFiles[k];
         if (f) fd.append(`doc_${k}`, f);
+      }
+      for (const c of customDocs) {
+        if (c.file && c.title.trim()) fd.append(`doc_${c.key}`, c.file);
       }
       const res = await api.post<DirectOnboardingResponse>(
         '/api/v1/erm/direct-onboarding',
@@ -406,22 +520,29 @@ function DirectOnboardingWizard() {
             dsoEmail={dsoEmail} setDsoEmail={setDsoEmail}
             dsoPhone={dsoPhone} setDsoPhone={setDsoPhone}
             workAuthNotes={workAuthNotes} setWorkAuthNotes={setWorkAuthNotes}
+            sevisNumber={sevisNumber} setSevisNumber={setSevisNumber}
+            cptExpiration={cptExpiration} setCptExpiration={setCptExpiration}
+            h1ReceiptNumber={h1ReceiptNumber} setH1ReceiptNumber={setH1ReceiptNumber}
+            h1ReceiptStart={h1ReceiptStart} setH1ReceiptStart={setH1ReceiptStart}
+            h1ReceiptEnd={h1ReceiptEnd} setH1ReceiptEnd={setH1ReceiptEnd}
+            docFiles={docFiles} setDocFiles={setDocFiles}
           />
         )}
         {stepIdx === 2 && (
-          <ReportingStep
-            trainers={trainers} evaluators={evaluators} managers={managers}
-            trainerId={trainerId} setTrainerId={setTrainerId}
-            evaluatorId={evaluatorId} setEvaluatorId={setEvaluatorId}
-            managerId={managerId} setManagerId={setManagerId}
-          />
-        )}
-        {stepIdx === 3 && (
           <DocumentsStep
             catalog={catalog}
             selectedDocKeys={selectedDocKeys} setSelectedDocKeys={setSelectedDocKeys}
             resumeFile={resumeFile} setResumeFile={setResumeFile}
             docFiles={docFiles} setDocFiles={setDocFiles}
+            customDocs={customDocs} setCustomDocs={setCustomDocs}
+          />
+        )}
+        {stepIdx === 3 && (
+          <ReportingStep
+            trainers={trainers} evaluators={evaluators} managers={managers}
+            trainerId={trainerId} setTrainerId={setTrainerId}
+            evaluatorId={evaluatorId} setEvaluatorId={setEvaluatorId}
+            managerId={managerId} setManagerId={setManagerId}
           />
         )}
         {stepIdx === 4 && (
@@ -431,6 +552,8 @@ function DirectOnboardingWizard() {
             trainerId={trainerId} evaluatorId={evaluatorId} managerId={managerId}
             trainers={trainers} evaluators={evaluators} managers={managers}
             selectedDocKeys={selectedDocKeys} catalog={catalog}
+            customDocs={customDocs}
+            docFiles={docFiles}
             resumeFile={resumeFile}
             assignMailbox={assignMailbox} setAssignMailbox={setAssignMailbox}
             mailboxLocalPart={mailboxLocalPart} setMailboxLocalPart={setMailboxLocalPart}
@@ -573,35 +696,40 @@ function WorkAuthStep(props: {
   dsoEmail: string; setDsoEmail: (v: string) => void;
   dsoPhone: string; setDsoPhone: (v: string) => void;
   workAuthNotes: string; setWorkAuthNotes: (v: string) => void;
+  sevisNumber: string; setSevisNumber: (v: string) => void;
+  cptExpiration: string; setCptExpiration: (v: string) => void;
+  h1ReceiptNumber: string; setH1ReceiptNumber: (v: string) => void;
+  h1ReceiptStart: string; setH1ReceiptStart: (v: string) => void;
+  h1ReceiptEnd: string; setH1ReceiptEnd: (v: string) => void;
+  docFiles: Record<string, File | null>;
+  setDocFiles: (v: Record<string, File | null>) => void;
 }) {
-  const showF1Fields = props.workAuthType.startsWith('F1_');
+  const t = props.workAuthType;
+  const showEadFields = t === 'F1_OPT' || t === 'F1_STEM_OPT'
+    || t === 'H4' || t === 'OTHER';
+  const showI20AndDso = t === 'F1_CPT' || t === 'F1_OPT' || t === 'F1_STEM_OPT';
+  const showI983 = t === 'F1_OPT' || t === 'F1_STEM_OPT';
+  function setDoc(key: string, file: File | null) {
+    props.setDocFiles({ ...props.docFiles, [key]: file });
+  }
+
   return (
     <div>
       <SectionHeader
         title="Work authorization"
-        subtitle="Same fields ERM edits from the compliance card later."
+        subtitle="Fields shown match the selected type — nothing you don't need."
       />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Type" required>
           <select
-            value={props.workAuthType}
+            value={t}
             onChange={(e) => props.setWorkAuthType(e.target.value)}
             className={inputClass}
           >
-            {WORK_AUTH_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
+            {WORK_AUTH_TYPES.map((row) => (
+              <option key={row.value} value={row.value}>{row.label}</option>
             ))}
           </select>
-        </Field>
-        <Field label="I-983 required">
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input
-              type="checkbox" checked={props.i983Required}
-              onChange={(e) => props.setI983Required(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300"
-            />
-            <span className="text-slate-700">STEM OPT — I-983 required</span>
-          </label>
         </Field>
         <Field label="Authorized from">
           <input
@@ -617,9 +745,57 @@ function WorkAuthStep(props: {
             className={inputClass}
           />
         </Field>
-        {showF1Fields && (
+
+        {/* US_CITIZEN + PERMANENT_RESIDENT — no visa fields, one required upload. */}
+        {t === 'US_CITIZEN' && (
+          <div className="sm:col-span-2">
+            <ProofUpload
+              label="Passport or Citizenship Card"
+              required
+              helper="Upload either one — whichever proves US citizenship most cleanly."
+              file={props.docFiles[US_CITIZEN_PROOF_KEY] ?? null}
+              onChange={(f) => setDoc(US_CITIZEN_PROOF_KEY, f)}
+            />
+          </div>
+        )}
+        {t === 'PERMANENT_RESIDENT' && (
+          <div className="sm:col-span-2">
+            <ProofUpload
+              label="Green Card"
+              required
+              helper="Both sides in one file if possible."
+              file={props.docFiles[PERMANENT_RESIDENT_GREEN_CARD_KEY] ?? null}
+              onChange={(f) => setDoc(PERMANENT_RESIDENT_GREEN_CARD_KEY, f)}
+            />
+          </div>
+        )}
+
+        {/* F1_CPT — SEVIS + CPT expiration. */}
+        {t === 'F1_CPT' && (
           <>
-            <Field label="EAD card number">
+            <Field label="SEVIS number" required>
+              <input
+                value={props.sevisNumber}
+                onChange={(e) => props.setSevisNumber(e.target.value)}
+                className={inputClass}
+                autoComplete="off"
+                placeholder="N00XXXXXXXX"
+              />
+            </Field>
+            <Field label="CPT expiration" required>
+              <input
+                type="date" value={props.cptExpiration}
+                onChange={(e) => props.setCptExpiration(e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+          </>
+        )}
+
+        {/* EAD fields — F-1 OPT, F-1 STEM OPT, H-4, OTHER. */}
+        {showEadFields && (
+          <>
+            <Field label="EAD card number" required>
               <input
                 value={props.eadCardNumber}
                 onChange={(e) => props.setEadCardNumber(e.target.value)}
@@ -627,13 +803,49 @@ function WorkAuthStep(props: {
                 autoComplete="off"
               />
             </Field>
-            <Field label="EAD expiration">
+            <Field label="EAD expiration" required>
               <input
                 type="date" value={props.eadExpiration}
                 onChange={(e) => props.setEadExpiration(e.target.value)}
                 className={inputClass}
               />
             </Field>
+          </>
+        )}
+
+        {/* H-1B — receipt number + validity window. */}
+        {t === 'H1B' && (
+          <>
+            <Field label="H-1 receipt number" required>
+              <input
+                value={props.h1ReceiptNumber}
+                onChange={(e) => props.setH1ReceiptNumber(e.target.value)}
+                className={inputClass}
+                autoComplete="off"
+                placeholder="EAC-XX-XXX-XXXXX"
+              />
+            </Field>
+            <div />
+            <Field label="Receipt valid from" required>
+              <input
+                type="date" value={props.h1ReceiptStart}
+                onChange={(e) => props.setH1ReceiptStart(e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Receipt valid until" required>
+              <input
+                type="date" value={props.h1ReceiptEnd}
+                onChange={(e) => props.setH1ReceiptEnd(e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+          </>
+        )}
+
+        {/* I-20 + DSO — F-1 track only. */}
+        {showI20AndDso && (
+          <>
             <Field label="I-20 expiration">
               <input
                 type="date" value={props.i20Expiration}
@@ -667,6 +879,21 @@ function WorkAuthStep(props: {
             </Field>
           </>
         )}
+
+        {/* I-983 checkbox — F-1 OPT / F-1 STEM OPT only. */}
+        {showI983 && (
+          <div className="sm:col-span-2">
+            <label className="inline-flex items-center gap-2 text-sm">
+              <input
+                type="checkbox" checked={props.i983Required}
+                onChange={(e) => props.setI983Required(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              <span className="text-slate-700">I-983 required (STEM OPT training plan)</span>
+            </label>
+          </div>
+        )}
+
         <div className="sm:col-span-2">
           <Field label="Notes (ERM-only)">
             <textarea
@@ -678,6 +905,35 @@ function WorkAuthStep(props: {
           </Field>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Small inline file-upload used by the Work Auth step for the two
+ * type-specific proof documents. Stores through the same docFiles map
+ * as the Documents-step uploads so a single submit path handles them.
+ */
+function ProofUpload({ label, required, helper, file, onChange }: {
+  label: string;
+  required?: boolean;
+  helper?: string;
+  file: File | null;
+  onChange: (f: File | null) => void;
+}) {
+  return (
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm font-medium text-slate-800">
+        {label}
+        {required && <span className="text-red-600"> *</span>}
+      </p>
+      {helper && <p className="mt-0.5 text-xs text-slate-500">{helper}</p>}
+      <input
+        type="file"
+        onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+        className="mt-2 block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-brand-700 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-brand-800"
+      />
+      {file && <p className="mt-1 text-xs text-slate-500">Selected: {file.name}</p>}
     </div>
   );
 }
@@ -718,7 +974,14 @@ function DocumentsStep(props: {
   resumeFile: File | null; setResumeFile: (v: File | null) => void;
   docFiles: Record<string, File | null>;
   setDocFiles: (v: Record<string, File | null>) => void;
+  customDocs: CustomDoc[]; setCustomDocs: (v: CustomDoc[]) => void;
 }) {
+  // Hide the two proof-of-status entries from the catalog list — they
+  // live on the Work Auth step where the ERM has type-in-hand context.
+  const catalog = props.catalog.filter(
+    (d) => d.key !== US_CITIZEN_PROOF_KEY
+        && d.key !== PERMANENT_RESIDENT_GREEN_CARD_KEY,
+  );
   function toggleDoc(key: string) {
     if (props.selectedDocKeys.includes(key)) {
       props.setSelectedDocKeys(props.selectedDocKeys.filter((k) => k !== key));
@@ -729,12 +992,22 @@ function DocumentsStep(props: {
       props.setSelectedDocKeys([...props.selectedDocKeys, key]);
     }
   }
+  function addCustom() {
+    const key = `CUSTOM_${customKeySuffix()}`;
+    props.setCustomDocs([...props.customDocs, { key, title: '', file: null }]);
+  }
+  function updateCustom(idx: number, patch: Partial<CustomDoc>) {
+    props.setCustomDocs(props.customDocs.map((c, i) => i === idx ? { ...c, ...patch } : c));
+  }
+  function removeCustom(idx: number) {
+    props.setCustomDocs(props.customDocs.filter((_, i) => i !== idx));
+  }
   return (
     <div>
       <SectionHeader
         icon={<FileUp className="h-4 w-4" />}
         title="Documents"
-        subtitle="Upload the resume plus any onboarding docs you already have on file."
+        subtitle="Resume plus any onboarding docs you already have on file — including custom ones."
       />
       <div className="mb-6 rounded-md border border-slate-200 bg-slate-50 p-4">
         <p className="text-sm font-medium text-slate-800">Resume <span className="text-red-600">*</span></p>
@@ -752,14 +1025,14 @@ function DocumentsStep(props: {
       <p className="mb-3 text-xs text-slate-500">
         Pick every document you have on file. Each selected row needs a file to submit.
       </p>
-      {props.catalog.length === 0 ? (
+      {catalog.length === 0 ? (
         <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
           No onboarding document templates configured. Add them from Admin → Onboarding Documents,
           or continue without any.
         </p>
       ) : (
         <ul className="space-y-2">
-          {props.catalog.map((doc) => {
+          {catalog.map((doc) => {
             const selected = props.selectedDocKeys.includes(doc.key);
             return (
               <li
@@ -798,6 +1071,61 @@ function DocumentsStep(props: {
           })}
         </ul>
       )}
+
+      {/* Custom documents — name + file per row, repeatable. */}
+      <div className="mt-6">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-sm font-medium text-slate-800">Custom documents</p>
+          <button
+            type="button"
+            onClick={addCustom}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            + Add another document
+          </button>
+        </div>
+        <p className="mb-3 text-xs text-slate-500">
+          Anything not in the catalog above — offer letter attachments, prior-employer verifications, agreements.
+          Give each a clear name.
+        </p>
+        {props.customDocs.length === 0 ? (
+          <p className="rounded-md border border-dashed border-slate-200 bg-white p-3 text-xs text-slate-500">
+            No custom documents added.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {props.customDocs.map((c, idx) => (
+              <li key={c.key} className="rounded-md border border-slate-200 bg-white p-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 space-y-2">
+                    <input
+                      value={c.title}
+                      onChange={(e) => updateCustom(idx, { title: e.target.value })}
+                      placeholder="Document name (e.g. Signed offer letter)"
+                      className={inputClass}
+                      autoComplete="off"
+                    />
+                    <input
+                      type="file"
+                      onChange={(e) => updateCustom(idx, { file: e.target.files?.[0] ?? null })}
+                      className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-slate-800"
+                    />
+                    {c.file && <p className="text-xs text-slate-500">Selected: {c.file.name}</p>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeCustom(idx)}
+                    className="text-xs font-medium text-slate-500 hover:text-red-600"
+                    aria-label={`Remove ${c.title || 'custom document'}`}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
@@ -808,11 +1136,31 @@ function ReviewStep(props: {
   trainerId: string; evaluatorId: string; managerId: string;
   trainers: UserStub[]; evaluators: UserStub[]; managers: UserStub[];
   selectedDocKeys: string[]; catalog: OnboardingDoc[];
+  customDocs: CustomDoc[];
+  docFiles: Record<string, File | null>;
   resumeFile: File | null;
   assignMailbox: boolean; setAssignMailbox: (v: boolean) => void;
   mailboxLocalPart: string; setMailboxLocalPart: (v: string) => void;
   mailboxPassword: string; setMailboxPassword: (v: string) => void;
 }) {
+  // Compose the full document list for the summary — catalog picks +
+  // type-specific proof docs from the Work Auth step + custom docs.
+  const workAuthDocs: string[] = [];
+  if (props.workAuthType === 'US_CITIZEN'
+      && props.docFiles[US_CITIZEN_PROOF_KEY]) {
+    workAuthDocs.push('Passport or Citizenship Card');
+  }
+  if (props.workAuthType === 'PERMANENT_RESIDENT'
+      && props.docFiles[PERMANENT_RESIDENT_GREEN_CARD_KEY]) {
+    workAuthDocs.push('Green Card');
+  }
+  const summaryDocs: string[] = [
+    ...workAuthDocs,
+    ...props.selectedDocKeys.map((k) => labelFor(props.catalog, k)),
+    ...props.customDocs
+      .filter((c) => c.file && c.title.trim())
+      .map((c) => `${c.title.trim()} (custom)`),
+  ];
   return (
     <div>
       <SectionHeader
@@ -838,9 +1186,7 @@ function ReviewStep(props: {
         <dd className="text-slate-800">{props.resumeFile?.name ?? '—'}</dd>
         <dt className="font-medium text-slate-600">Documents</dt>
         <dd className="text-slate-800">
-          {props.selectedDocKeys.length === 0
-            ? '—'
-            : props.selectedDocKeys.map((k) => labelFor(props.catalog, k)).join(', ')}
+          {summaryDocs.length === 0 ? '—' : summaryDocs.join(', ')}
         </dd>
       </dl>
       <div className="rounded-md border border-slate-200 p-4">
@@ -954,6 +1300,20 @@ function todayISO(): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/** Short random key suffix for custom-document keys (CUSTOM_<suffix>). */
+function customKeySuffix(): string {
+  const bytes = new Uint8Array(6);
+  const crypto = typeof window !== 'undefined' ? window.crypto : undefined;
+  if (crypto) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out.toUpperCase();
 }
 
 function generatePassword(): string {

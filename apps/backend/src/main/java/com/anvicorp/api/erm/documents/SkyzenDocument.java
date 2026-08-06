@@ -102,7 +102,29 @@ public enum SkyzenDocument {
     I9_TRAVEL_HISTORY("Travel History",
             "IMMIGRATION", "GOVERNMENT_ID", null,
             "Scanned summary of your US entry/exit history for the I-9. "
-                    + "Use the I-94 travel history PDF from i94.cbp.dhs.gov.", false);
+                    + "Use the I-94 travel history PDF from i94.cbp.dhs.gov.", false),
+
+    // ── Direct-onboarding proof-of-status documents ────────────────────
+    // Surfaced inline on the Direct Onboarding wizard's Work Authorization
+    // step (US_CITIZEN + PERMANENT_RESIDENT branches) and available in the
+    // standard pickable catalog for any other flow that needs them.
+
+    US_CITIZEN_PROOF("Passport or Citizenship Card",
+            "IMMIGRATION", "GOVERNMENT_ID", null,
+            "US passport OR US citizenship / naturalization card — either "
+                    + "one satisfies proof of US citizenship. Upload one file.",
+            false),
+    PERMANENT_RESIDENT_GREEN_CARD("Permanent Resident Card (Green Card)",
+            "IMMIGRATION", "GOVERNMENT_ID", null,
+            "Both sides of the Green Card in one file if possible.",
+            false),
+
+    // ── E-Verify case detail (visible in the pickable catalog) ─────────
+    EVERIFY_FORM("E-Verify Form",
+            "IMMIGRATION", "GENERAL", null,
+            "E-Verify case detail printout / confirmation from the DHS "
+                    + "E-Verify portal.",
+            false);
 
     private final String title;
     private final String category;

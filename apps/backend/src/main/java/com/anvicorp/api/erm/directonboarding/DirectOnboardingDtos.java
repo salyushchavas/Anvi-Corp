@@ -42,20 +42,38 @@ public final class DirectOnboardingDtos {
             UUID entityId,
 
             // Step 2 — Work authorization --------------------------------------
-            /** {@code CITIZEN | CPT | OPT | STEM_OPT | OTHER} — snapshotted onto
-             *  the Engagement.track; also drives WorkAuthorizationRecord.workAuthType
-             *  via the shared upsert. */
+            /** {@code US_CITIZEN | PERMANENT_RESIDENT | F1_CPT | F1_OPT |
+             *  F1_STEM_OPT | H1B | H4 | OTHER}. Snapshotted onto
+             *  Engagement.track; drives WorkAuthorizationRecord.workAuthType
+             *  via the shared upsert. Also drives which of the per-type
+             *  fields below are required (see DirectOnboardingService). */
             String workAuthType,
             LocalDate authorizedFrom,
             LocalDate authorizedUntil,
+            /** EAD card number (F-1 OPT, F-1 STEM OPT, H-4, OTHER). AES-GCM
+             *  encrypted server-side. */
             String eadCardNumber,
+            /** EAD expiration (F-1 OPT, F-1 STEM OPT, H-4, OTHER). */
             LocalDate eadExpiration,
             LocalDate i20Expiration,
+            /** True ONLY when workAuthType is F1_OPT or F1_STEM_OPT. The
+             *  service forces false for every other type to keep the
+             *  compliance card honest. */
             Boolean i983Required,
             String dsoName,
             String dsoEmail,
             String dsoPhone,
             String workAuthNotes,
+            // Per-type extensions -----------------------------------------------
+            /** SEVIS ID (F-1 CPT). AES-GCM encrypted server-side. */
+            String sevisNumber,
+            /** CPT authorization end date (F-1 CPT). */
+            LocalDate cptExpiration,
+            /** USCIS receipt number for H-1B (I-797). AES-GCM encrypted
+             *  server-side. */
+            String h1ReceiptNumber,
+            LocalDate h1ReceiptStart,
+            LocalDate h1ReceiptEnd,
 
             // Step 3 — Reporting structure (all optional; null = auto-link
             // from DEFAULT_TRAINER_EMAIL / DEFAULT_EVALUATOR_EMAIL) --------------
@@ -94,7 +112,14 @@ public final class DirectOnboardingDtos {
             String documentKey,
             /** Name of the multipart file part carrying the bytes for this
              *  document. Convention: {@code doc_<documentKey>}. */
-            String formPartName
+            String formPartName,
+            /** Only used for custom documents (documentKey starting with
+             *  {@code CUSTOM_}). The ERM-typed display name lands on a
+             *  freshly-seeded (inactive) onboarding_document_template row
+             *  so the downstream display path — which resolves task labels
+             *  through {@code onboarding_document_templates} — shows the
+             *  ERM's chosen title. Null / ignored for enum-backed keys. */
+            String titleOverride
     ) {}
 
     /**

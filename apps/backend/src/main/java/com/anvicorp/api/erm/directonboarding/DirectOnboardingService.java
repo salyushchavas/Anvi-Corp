@@ -209,8 +209,19 @@ public class DirectOnboardingService {
         // ── Step 2 — Resolve the StaffingEntity (required for engagement) ────
         StaffingEntity entity = resolveEntity(req.entityId());
 
+        // ── Step 2b — Per-type work-auth field validation ────────────────────
+        // Enforce the per-type "which fields are required" matrix on the
+        // server. The frontend renders the same rules, but a direct API
+        // call must not slip past them (and must not carry stray fields
+        // for a wrong type — e.g. SEVIS on a US_CITIZEN row).
+        validateWorkAuthByType(req);
+
         // ── Step 3 — Validate document keys against the admin catalog ────────
-        List<ResolvedDocument> resolvedDocs = resolveDocuments(req.documents(), documentFiles);
+        List<ResolvedDocument> resolvedDocs = resolveDocuments(req.documents(), documentFiles, caller);
+        // Type-specific document requirements: US_CITIZEN + PERMANENT_RESIDENT
+        // MUST include the corresponding proof-of-status document because the
+        // wizard surfaces that upload inline on the Work Authorization step.
+        requireTypeSpecificDocuments(req.workAuthType(), resolvedDocs);
 
         // ── Step 4 — Create the User row ─────────────────────────────────────
         Instant now = Instant.now();
@@ -453,34 +464,183 @@ public class DirectOnboardingService {
 
     private List<ResolvedDocument> resolveDocuments(
             List<DirectOnboardingDtos.DocumentAssignment> requested,
-            Map<String, MultipartFile> files) {
+            Map<String, MultipartFile> files,
+            User caller) {
         List<ResolvedDocument> resolved = new ArrayList<>();
         if (requested == null || requested.isEmpty()) return resolved;
         for (DirectOnboardingDtos.DocumentAssignment a : requested) {
             if (a.documentKey() == null || a.documentKey().isBlank()) {
                 throw new BadRequestException("documents[].documentKey is required");
             }
+            String key = a.documentKey().trim();
             if (a.formPartName() == null || a.formPartName().isBlank()) {
                 throw new BadRequestException(
-                        "documents[].formPartName is required for key " + a.documentKey());
+                        "documents[].formPartName is required for key " + key);
             }
             MultipartFile file = files == null ? null : files.get(a.formPartName());
             if (file == null || file.isEmpty()) {
                 throw new BadRequestException(
-                        "missing file for document key " + a.documentKey()
+                        "missing file for document key " + key
                                 + " (expected multipart part '" + a.formPartName() + "')");
             }
-            OnboardingDocumentTemplate template = templateRepository
-                    .findByKey(a.documentKey())
-                    .orElseThrow(() -> new BadRequestException(
-                            "unknown documentKey: " + a.documentKey()));
-            if (!template.isActive()) {
+            OnboardingDocumentTemplate template = key.startsWith("CUSTOM_")
+                    ? resolveOrSeedCustomTemplate(key, a.titleOverride(), caller)
+                    : templateRepository.findByKey(key)
+                            .orElseThrow(() -> new BadRequestException(
+                                    "unknown documentKey: " + key));
+            if (!template.isActive() && !key.startsWith("CUSTOM_")) {
                 throw new BadRequestException(
-                        "document template " + a.documentKey() + " is not active");
+                        "document template " + key + " is not active");
             }
             resolved.add(new ResolvedDocument(template, file));
         }
         return resolved;
+    }
+
+    /**
+     * Custom-document key resolution — the wizard mints keys of the shape
+     * {@code CUSTOM_<uuid-short>} client-side and pairs each with an
+     * ERM-typed display name. If the underlying
+     * {@code onboarding_document_templates} row doesn't exist yet, seed
+     * an INACTIVE row here so the downstream display path (which resolves
+     * task labels through the template table) shows the ERM's chosen
+     * title. Inactive so the pickable catalog for future ERM assignments
+     * stays clean of one-off titles.
+     *
+     * <p>The seed row uses category {@code CUSTOM} + sensitivity
+     * {@code GENERAL} — custom docs are opaque to categorised reporting
+     * by design (they're free-form).</p>
+     */
+    private OnboardingDocumentTemplate resolveOrSeedCustomTemplate(
+            String key, String titleOverride, User caller) {
+        return templateRepository.findByKey(key).orElseGet(() -> {
+            String title = titleOverride != null && !titleOverride.isBlank()
+                    ? titleOverride.trim()
+                    : "Custom document";
+            OnboardingDocumentTemplate row = OnboardingDocumentTemplate.builder()
+                    .key(key)
+                    .title(title)
+                    .category("CUSTOM")
+                    .sensitivity("GENERAL")
+                    .description("ERM-supplied custom document from direct onboarding by "
+                            + (caller != null ? caller.getEmail() : "unknown"))
+                    .documentType("NORMAL")
+                    .active(false)
+                    .sortOrder(9000)
+                    .build();
+            return templateRepository.save(row);
+        });
+    }
+
+    /**
+     * Server-side mirror of the wizard's per-type field requirements —
+     * every direct-API caller obeys the same "which fields belong to
+     * which type" rule the UI enforces.
+     */
+    private static void validateWorkAuthByType(
+            DirectOnboardingDtos.DirectOnboardingRequest req) {
+        String t = req.workAuthType() == null ? "" : req.workAuthType().trim().toUpperCase(Locale.ROOT);
+        switch (t) {
+            case "F1_CPT" -> {
+                if (isBlank(req.sevisNumber())) {
+                    throw new BadRequestException(
+                            "SEVIS number is required for F-1 CPT.");
+                }
+                if (req.cptExpiration() == null) {
+                    throw new BadRequestException(
+                            "CPT expiration date is required for F-1 CPT.");
+                }
+            }
+            case "F1_OPT", "F1_STEM_OPT" -> {
+                if (isBlank(req.eadCardNumber())) {
+                    throw new BadRequestException(
+                            "EAD card number is required for " + humanType(t) + ".");
+                }
+                if (req.eadExpiration() == null) {
+                    throw new BadRequestException(
+                            "EAD expiration date is required for " + humanType(t) + ".");
+                }
+            }
+            case "H1B" -> {
+                if (isBlank(req.h1ReceiptNumber())) {
+                    throw new BadRequestException(
+                            "H-1 receipt number is required for H-1B.");
+                }
+                if (req.h1ReceiptStart() == null || req.h1ReceiptEnd() == null) {
+                    throw new BadRequestException(
+                            "H-1 receipt start + end dates are required for H-1B.");
+                }
+                if (req.h1ReceiptEnd().isBefore(req.h1ReceiptStart())) {
+                    throw new BadRequestException(
+                            "H-1 receipt end date cannot be before the start date.");
+                }
+            }
+            case "H4", "OTHER" -> {
+                if (isBlank(req.eadCardNumber())) {
+                    throw new BadRequestException(
+                            "EAD card number is required for " + humanType(t) + ".");
+                }
+                if (req.eadExpiration() == null) {
+                    throw new BadRequestException(
+                            "EAD expiration date is required for " + humanType(t) + ".");
+                }
+            }
+            case "US_CITIZEN", "PERMANENT_RESIDENT" -> {
+                // No visa fields required. The proof-of-status document
+                // requirement is enforced separately in
+                // requireTypeSpecificDocuments below.
+            }
+            default -> {
+                // Unknown / missing type — the earlier upsert path defaults
+                // to OTHER, so any request that reaches this switch without
+                // matching is a client bug. Fail loud so it surfaces early.
+                if (t.isEmpty()) {
+                    throw new BadRequestException("workAuthType is required.");
+                }
+                throw new BadRequestException(
+                        "Unknown workAuthType: " + t + ". Expected one of "
+                                + "US_CITIZEN, PERMANENT_RESIDENT, F1_CPT, F1_OPT, "
+                                + "F1_STEM_OPT, H1B, H4, OTHER.");
+            }
+        }
+        // I-983 visibility rule: only F-1 OPT / F-1 STEM OPT may set it
+        // true. Any other type carrying i983Required=true is a client
+        // bug — force-reject so the stored row is honest.
+        if (Boolean.TRUE.equals(req.i983Required())
+                && !("F1_OPT".equals(t) || "F1_STEM_OPT".equals(t))) {
+            throw new BadRequestException(
+                    "I-983 required is only valid for F-1 OPT and F-1 STEM OPT.");
+        }
+    }
+
+    /** Type-specific document requirements. */
+    private static void requireTypeSpecificDocuments(
+            String workAuthType, List<ResolvedDocument> resolvedDocs) {
+        if (workAuthType == null) return;
+        String t = workAuthType.trim().toUpperCase(Locale.ROOT);
+        if ("US_CITIZEN".equals(t)
+                && resolvedDocs.stream().noneMatch(d -> "US_CITIZEN_PROOF".equals(d.template.getKey()))) {
+            throw new BadRequestException(
+                    "US Citizens must upload a Passport or Citizenship Card in the Work Authorization step.");
+        }
+        if ("PERMANENT_RESIDENT".equals(t)
+                && resolvedDocs.stream().noneMatch(d -> "PERMANENT_RESIDENT_GREEN_CARD".equals(d.template.getKey()))) {
+            throw new BadRequestException(
+                    "Permanent Residents must upload a Green Card in the Work Authorization step.");
+        }
+    }
+
+    private static boolean isBlank(String v) { return v == null || v.isBlank(); }
+
+    private static String humanType(String t) {
+        return switch (t) {
+            case "F1_CPT" -> "F-1 CPT";
+            case "F1_OPT" -> "F-1 OPT";
+            case "F1_STEM_OPT" -> "F-1 STEM OPT";
+            case "H1B" -> "H-1B";
+            case "H4" -> "H-4";
+            default -> t;
+        };
     }
 
     private void upsertWorkAuth(UUID userId,
@@ -489,28 +649,79 @@ public class DirectOnboardingService {
         WorkAuthorizationRecord existing = workAuthRepository.findByUserId(userId).orElse(null);
         String workAuthType = req.workAuthType() != null && !req.workAuthType().isBlank()
                 ? req.workAuthType().trim().toUpperCase(Locale.ROOT) : "OTHER";
+        // I-983 rule (server-enforced): true only for F-1 OPT / F-1 STEM
+        // OPT. validateWorkAuthByType already 400s on true-elsewhere, so
+        // this is belt-and-suspenders for the persisted row.
+        boolean i983 = Boolean.TRUE.equals(req.i983Required())
+                && ("F1_OPT".equals(workAuthType) || "F1_STEM_OPT".equals(workAuthType));
         WorkAuthorizationRecord w = existing != null
                 ? existing
                 : WorkAuthorizationRecord.builder()
                         .userId(userId)
                         .workAuthType(workAuthType)
-                        .i983Required(Boolean.TRUE.equals(req.i983Required()))
+                        .i983Required(i983)
                         .lastUpdatedById(caller.getId())
                         .build();
         w.setWorkAuthType(workAuthType);
+        w.setI983Required(i983);
         if (req.authorizedFrom() != null) w.setAuthorizedFrom(req.authorizedFrom());
         if (req.authorizedUntil() != null) w.setAuthorizedUntil(req.authorizedUntil());
-        if (req.eadCardNumber() != null && !req.eadCardNumber().isBlank()) {
-            w.setEadCardNumber(req.eadCardNumber().trim());
-        }
-        if (req.eadExpiration() != null) w.setEadExpiration(req.eadExpiration());
         if (req.i20Expiration() != null) w.setI20Expiration(req.i20Expiration());
-        if (req.i983Required() != null) w.setI983Required(req.i983Required());
         if (req.dsoName() != null && !req.dsoName().isBlank()) w.setDsoName(req.dsoName().trim());
         if (req.dsoEmail() != null && !req.dsoEmail().isBlank()) w.setDsoEmail(req.dsoEmail().trim());
         if (req.dsoPhone() != null && !req.dsoPhone().isBlank()) w.setDsoPhone(req.dsoPhone().trim());
         if (req.workAuthNotes() != null && !req.workAuthNotes().isBlank()) {
             w.setErmNotes(req.workAuthNotes().trim());
+        }
+        // Per-type fields — set the ones for this type, CLEAR the ones
+        // that belong to other types so a re-onboarding under a different
+        // type doesn't leave stale fields behind.
+        switch (workAuthType) {
+            case "F1_CPT" -> {
+                if (req.sevisNumber() != null && !req.sevisNumber().isBlank()) {
+                    w.setSevisNumber(req.sevisNumber().trim());
+                }
+                if (req.cptExpiration() != null) w.setCptExpiration(req.cptExpiration());
+                w.setEadCardNumber(null);
+                w.setEadExpiration(null);
+                w.setH1ReceiptNumber(null);
+                w.setH1ReceiptStart(null);
+                w.setH1ReceiptEnd(null);
+            }
+            case "F1_OPT", "F1_STEM_OPT", "H4", "OTHER" -> {
+                if (req.eadCardNumber() != null && !req.eadCardNumber().isBlank()) {
+                    w.setEadCardNumber(req.eadCardNumber().trim());
+                }
+                if (req.eadExpiration() != null) w.setEadExpiration(req.eadExpiration());
+                w.setSevisNumber(null);
+                w.setCptExpiration(null);
+                w.setH1ReceiptNumber(null);
+                w.setH1ReceiptStart(null);
+                w.setH1ReceiptEnd(null);
+            }
+            case "H1B" -> {
+                if (req.h1ReceiptNumber() != null && !req.h1ReceiptNumber().isBlank()) {
+                    w.setH1ReceiptNumber(req.h1ReceiptNumber().trim());
+                }
+                if (req.h1ReceiptStart() != null) w.setH1ReceiptStart(req.h1ReceiptStart());
+                if (req.h1ReceiptEnd() != null) w.setH1ReceiptEnd(req.h1ReceiptEnd());
+                w.setEadCardNumber(null);
+                w.setEadExpiration(null);
+                w.setSevisNumber(null);
+                w.setCptExpiration(null);
+            }
+            case "US_CITIZEN", "PERMANENT_RESIDENT" -> {
+                // No visa fields. Clear every per-type slot so a switch
+                // FROM a visa type TO citizen/PR doesn't leave dangling data.
+                w.setEadCardNumber(null);
+                w.setEadExpiration(null);
+                w.setSevisNumber(null);
+                w.setCptExpiration(null);
+                w.setH1ReceiptNumber(null);
+                w.setH1ReceiptStart(null);
+                w.setH1ReceiptEnd(null);
+            }
+            default -> { /* unknown types are already rejected above */ }
         }
         w.setLastUpdatedById(caller.getId());
         workAuthRepository.save(w);
