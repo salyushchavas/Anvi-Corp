@@ -169,6 +169,15 @@ public class InternDocumentService {
             t.setReviewedById(null);
             t.setReviewReasonCode(null);
             t.setReviewComments(null);
+            // ERM Pass 2 verify-after-download gate — reset the download
+            // stamp in the SAME transaction as the file swap. Without
+            // this, the stale stamp from the PREVIOUS file lets an ERM
+            // ACCEPT the resubmission without ever opening the new bytes
+            // (the ACCEPT branch of DocumentPacketService.reviewTask gates
+            // on `lastDownloadedAt != null` only, with no version check).
+            t.setLastDownloadedAt(null);
+            t.setDownloadedById(null);
+            t.setDownloadCount(0);
             DocumentTask savedTask = taskRepository.save(t);
 
             try {
