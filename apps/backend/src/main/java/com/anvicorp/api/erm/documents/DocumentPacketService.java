@@ -73,6 +73,13 @@ public class DocumentPacketService {
      *  soft-deleted still render with an "(unknown)" title fallback. */
     private final OnboardingDocumentTemplateRepository templateRepository;
     private final OnboardingTemplateAdminService templateAdminService;
+    // Pipeline-restore — the onboarding gate now also inspects the intern's
+    // offer-family IDMS instance so an in-flight offer (SENT_TO_INTERN /
+    // INTERN_SUBMITTED / RETURNED / VERIFIED — anything short of
+    // FINALIZED) blocks packet assignment. Legacy interns with no offer-
+    // family instance still pass the check unchanged.
+    private final com.anvicorp.api.erm.idms.DocumentInstanceRepository
+            documentInstanceRepository;
 
     /** ERM Phase 8.9 — resolve + validate a documentKey against the
      *  {@code onboarding_document_templates} table (enum-seeded rows +
@@ -223,6 +230,24 @@ public class DocumentPacketService {
                     "Packet assignment requires lifecycle_status IN "
                             + "(EMPLOYEE_ID_CREATED, ONBOARDING_ASSIGNED) — current: " + s);
         }
+        // Pipeline-restore — offer-family IDMS gate. If the intern has ANY
+        // offer-family instance (templateKey LIKE 'OFFER_%'), the most
+        // recent one must be FINALIZED before an onboarding packet can
+        // be assigned. This closes the "IDMS-signed intern gets stuck at
+        // EMPLOYEE_ID_CREATED with an unexecuted offer" loophole where
+        // the legacy Offer row could reach SIGNED (advancing lifecycle)
+        // without the IDMS document ever reaching FINALIZED. Purely-
+        // legacy interns (no offer-family instance) continue to pass.
+        documentInstanceRepository.findOfferFamilyForIntern(intern.getId())
+                .stream().findFirst().ifPresent(offer -> {
+            if (offer.getStatus() !=
+                    com.anvicorp.api.erm.idms.DocumentInstanceStatus.FINALIZED) {
+                throw new ConflictException(
+                        "Cannot assign an onboarding packet until the intern's "
+                                + "offer letter reaches Executed (current IDMS state: "
+                                + offer.getStatus() + ").");
+            }
+        });
 
         // Phase 8.6.4 (revised) — document onboarding runs end-to-end
         // between ERM and the intern only: ERM sends, intern downloads +

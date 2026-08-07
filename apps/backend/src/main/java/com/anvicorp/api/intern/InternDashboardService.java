@@ -50,6 +50,13 @@ public class InternDashboardService {
     private final SelectionAckPolicy selectionAckPolicy;
     private final OrgTeamResolver orgTeamResolver;
     private final ProfileCompletionService profileCompletionService;
+    // Pipeline-restore — surface a "review + sign your offer letter" card
+    // whenever the intern has a live offer-family IDMS instance
+    // (SENT_TO_INTERN or RETURNED). Trumps the lifecycle-status-driven
+    // OFFER_SENT branch below so the card links at the new IDMS page
+    // instead of the retiring legacy /careers/intern/offer route.
+    private final com.anvicorp.api.erm.idms.DocumentInstanceRepository
+            documentInstanceRepository;
 
     /**
      * Read-only transaction so lazy associations the dashboard touches
@@ -102,7 +109,7 @@ public class InternDashboardService {
                 emailVerified,
                 buildStepper(caller, status, hasPublishedEval),
                 buildModules(mode),
-                buildNextAction(status, mode, emailVerified,
+                buildNextAction(caller, status, mode, emailVerified,
                         exitSummary, feedbackSubmitted, selection),
                 buildContacts(caller),
                 exitSummary,
@@ -479,11 +486,22 @@ public class InternDashboardService {
 
     // ── Next-action card ────────────────────────────────────────────────────
 
-    private NextAction buildNextAction(InternLifecycleStatus s, String mode,
+    private NextAction buildNextAction(User caller,
+                                       InternLifecycleStatus s, String mode,
                                        boolean emailVerified,
                                        ExitSummary exitSummary,
                                        boolean feedbackSubmitted,
                                        SelectionContext selection) {
+        // Pipeline-restore — highest-priority next-action for interns
+        // with a live IDMS offer-family instance. Runs BEFORE the
+        // lifecycle-status switch so a SENT_TO_INTERN or RETURNED offer
+        // card is shown even if the lifecycle status has drifted (e.g.
+        // OFFER_SENT recorded once by legacy path but IDMS offer just
+        // returned for corrections). Never surfaces for INACTIVE interns.
+        if (s != InternLifecycleStatus.INACTIVE_INTERN && caller != null) {
+            NextAction offerCard = offerLetterNextAction(caller);
+            if (offerCard != null) return offerCard;
+        }
         if (s == InternLifecycleStatus.INACTIVE_INTERN) {
             if (!feedbackSubmitted) {
                 return action(
@@ -568,7 +586,7 @@ public class InternDashboardService {
             case OFFER_SENT -> action(
                     "Sign your offer letter",
                     "Review and sign the offer through IDMS.",
-                    "Open offer", "/careers/intern/offer",
+                    "Open offer letter", "/careers/intern/offer-letter",
                     false, null);
             case OFFER_SIGNED -> waiting(
                     "Welcome! Setting up your account",
@@ -609,6 +627,45 @@ public class InternDashboardService {
 
     private NextAction waiting(String title, String desc, String waitingFor) {
         return new NextAction(title, desc, null, null, true, waitingFor);
+    }
+
+    /**
+     * Pipeline-restore — resolve the offer-family next-action card, or
+     * {@code null} if the intern has no live offer to act on.
+     *
+     * <p>Card decisions by IDMS status of the intern's newest
+     * {@code templateKey LIKE 'OFFER_%'} instance:</p>
+     * <ul>
+     *   <li>{@code SENT_TO_INTERN} — "Your offer letter is ready — review
+     *       and sign" (deep-link to the fill/sign page).</li>
+     *   <li>{@code RETURNED} — "Your offer letter came back with
+     *       corrections" (same link).</li>
+     *   <li>{@code INTERN_SUBMITTED} or {@code VERIFIED} — waiting on ERM.</li>
+     *   <li>{@code FINALIZED} / {@code REVOKED} / {@code SUPERSEDED} —
+     *       yield to the lifecycle-status branches (no card).</li>
+     * </ul>
+     */
+    private NextAction offerLetterNextAction(User caller) {
+        var latest = documentInstanceRepository
+                .findOfferFamilyForIntern(caller.getId())
+                .stream().findFirst().orElse(null);
+        if (latest == null) return null;
+        String url = "/careers/intern/offer-letter/" + latest.getId();
+        return switch (latest.getStatus()) {
+            case SENT_TO_INTERN -> action(
+                    "Your offer letter is ready — review and sign",
+                    "Open your offer, complete any intern fields, and sign.",
+                    "Open offer letter", url, false, null);
+            case RETURNED -> action(
+                    "Your offer letter came back with corrections",
+                    "Address the changes your ERM requested, then re-submit.",
+                    "Open offer letter", url, false, null);
+            case INTERN_SUBMITTED, VERIFIED -> waiting(
+                    "Your offer is with ERM for review",
+                    "You'll see the executed copy the moment it's finalized.",
+                    "ERM");
+            case DRAFT, FINALIZED, REVOKED, SUPERSEDED, VOIDED -> null;
+        };
     }
 
     // ── Contacts ────────────────────────────────────────────────────────────

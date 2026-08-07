@@ -365,7 +365,7 @@ public class DocumentInstanceService {
         notifyIntern(instance,
                 "A document is ready for your signature",
                 "Please review and sign \"" + instance.getTemplateTitle() + "\".",
-                "/careers/intern/agreements/" + instance.getId());
+                internDocPath(instance));
         return toDetail(instance, caller);
     }
 
@@ -459,7 +459,7 @@ public class DocumentInstanceService {
         notifyIntern(instance,
                 "Please make corrections to your document",
                 "Your ERM has asked for changes to \"" + instance.getTemplateTitle() + "\".",
-                "/careers/intern/agreements/" + instance.getId());
+                internDocPath(instance));
         return toDetail(instance, caller);
     }
 
@@ -602,7 +602,7 @@ public class DocumentInstanceService {
         notifyIntern(instance,
                 "Your document has been executed",
                 "\"" + instance.getTemplateTitle() + "\" is complete. Download the executed copy from your Agreements.",
-                "/careers/intern/agreements/" + instance.getId());
+                internDocPath(instance));
         log.info("[IDMS] finalized instance={} pdfDoc={}", instance.getId(), pdfDoc.getId());
         return toDetail(instance, caller);
     }
@@ -653,7 +653,7 @@ public class DocumentInstanceService {
                 "Your document has been revoked",
                 "\"" + instance.getTemplateTitle()
                         + "\" has been withdrawn. Please reach out to your ERM if you have questions.",
-                "/careers/intern/agreements/" + instance.getId());
+                internDocPath(instance));
         log.info("[IDMS] revoked instance={} by={} reason={}",
                 instance.getId(), caller.getId(), req.reasonCode());
         return toDetail(instance, caller);
@@ -1227,6 +1227,53 @@ public class DocumentInstanceService {
         notifyUser(instance.getInternUserId(),
                 "IDMS_DOC_" + instance.getStatus().name(),
                 title, body, actionUrl);
+    }
+
+    /**
+     * Pipeline-restore — resolve the intern-facing deep link for an
+     * instance. Offer-family instances land on the offer-letter page (the
+     * intern's home for their offer); every other IDMS instance keeps the
+     * generic agreements URL so an existing route (with its 301 redirect
+     * for backward-compat deep links) still resolves.
+     */
+    private static String internDocPath(DocumentInstance instance) {
+        return isOfferFamily(instance)
+                ? "/careers/intern/offer-letter/" + instance.getId()
+                : "/careers/intern/agreements/" + instance.getId();
+    }
+
+    /** Offer-family templates by convention key with {@code OFFER_*}. The
+     *  admin studio owns template creation so the prefix acts as a
+     *  loose family tag — no separate column required. */
+    public static boolean isOfferFamily(DocumentInstance instance) {
+        return instance != null
+                && instance.getTemplateKey() != null
+                && instance.getTemplateKey().startsWith("OFFER_");
+    }
+
+    /**
+     * Pipeline-restore — return the intern's current offer-family
+     * instance detail (newest non-VOIDED offer-family row), or empty if
+     * none exists. Consumed by the intern offer-letter landing page and
+     * the intern dashboard's next-action resolver.
+     */
+    @Transactional(readOnly = true)
+    public Optional<DocumentInstanceDtos.InstanceDetail>
+            findCurrentOfferLetterForIntern(User caller) {
+        if (caller == null) return Optional.empty();
+        List<DocumentInstance> offers = instanceRepo.findOfferFamilyForIntern(caller.getId());
+        if (offers.isEmpty()) return Optional.empty();
+        return Optional.of(toDetail(offers.get(0), caller));
+    }
+
+    /** Package-private companion used by DocumentPacketService's onboarding
+     *  gate — returns the raw entity so callers can inspect
+     *  {@code status} without paying for the full DTO serialisation. */
+    @Transactional(readOnly = true)
+    public Optional<DocumentInstance> findCurrentOfferFamilyEntityForIntern(UUID internUserId) {
+        if (internUserId == null) return Optional.empty();
+        List<DocumentInstance> offers = instanceRepo.findOfferFamilyForIntern(internUserId);
+        return offers.isEmpty() ? Optional.empty() : Optional.of(offers.get(0));
     }
 
     private void notifyUser(UUID userId, String eventKey, String title,

@@ -6,15 +6,23 @@ import type { InternLifecycleStatus } from './InternDashboardContext';
 /**
  * Single source of truth for the intern journey bar — used by every
  * intern page (via {@link InternPageShell}) and by the home page
- * directly. Renders the 6 condensed milestones in brand-orange:
- * completed = filled+checked, current = ringed/highlighted, upcoming =
- * muted slate.
+ * directly. Renders the milestones in brand-orange: completed =
+ * filled+checked, current = ringed/highlighted, upcoming = muted slate.
+ *
+ * <p>Pipeline-restore — the Offer stage is now split into three
+ * explicit sub-milestones (Sent → Signed → Executed) so the intern's
+ * progress through their offer letter is visible without opening the
+ * dedicated offer page. Onboarding is gated behind {@code
+ * offer-executed} (enforced by
+ * {@code DocumentPacketService}'s offer-family gate).</p>
  */
 export const MILESTONES = [
   { key: 'apply', label: 'Apply' },
   { key: 'shortlist', label: 'Shortlist' },
   { key: 'interview', label: 'Interview' },
-  { key: 'offer', label: 'Offer' },
+  { key: 'offer-sent', label: 'Offer Sent' },
+  { key: 'offer-signed', label: 'Signed' },
+  { key: 'offer-executed', label: 'Executed' },
   { key: 'onboard', label: 'Onboard' },
   { key: 'active', label: 'Active' },
 ];
@@ -33,12 +41,14 @@ export function milestoneIndexFor(s: InternLifecycleStatus): number {
     case 'OFFER_SENT':
       return 3;
     case 'OFFER_SIGNED':
+      return 4;
     case 'EMPLOYEE_ID_CREATED':
+      return 5;
     case 'ONBOARDING_ASSIGNED':
     case 'ONBOARDING_ACCEPTED':
-      return 4;
+      return 6;
     case 'ACTIVE_INTERN':
-      return 5;
+      return 7;
     case 'INACTIVE_INTERN':
       // Past every milestone — StepperHorizontal renders all as done.
       return MILESTONES.length;

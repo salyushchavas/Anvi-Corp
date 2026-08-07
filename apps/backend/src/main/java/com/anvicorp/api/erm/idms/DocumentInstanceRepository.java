@@ -42,4 +42,23 @@ public interface DocumentInstanceRepository
      *  by the supersede-ask on create. */
     List<DocumentInstance> findByInternLifecycleIdAndTemplateIdAndStatus(
             UUID internLifecycleId, UUID templateId, DocumentInstanceStatus status);
+
+    /**
+     * Pipeline-restore — offer-family instances for an intern, newest first.
+     *
+     * <p>"Offer-family" is defined by the template key starting with
+     * {@code OFFER_} (convention documented on {@link
+     * com.anvicorp.api.admin.editabletemplates.EditableTemplate#getKey()}).
+     * VOIDED rows are excluded because a voided instance never had a real
+     * offer effect. The caller inspects the head of the list to decide
+     * "current" (usually the latest non-{@code SUPERSEDED} row); the
+     * result-set is small (typically 0-2 rows per intern) so no separate
+     * "latest" query is warranted.</p>
+     */
+    @Query("SELECT di FROM DocumentInstance di "
+            + "WHERE di.internUserId = :userId "
+            + "  AND di.templateKey LIKE 'OFFER\\_%' ESCAPE '\\' "
+            + "  AND di.status <> 'VOIDED' "
+            + "ORDER BY di.createdAt DESC")
+    List<DocumentInstance> findOfferFamilyForIntern(@Param("userId") UUID userId);
 }
