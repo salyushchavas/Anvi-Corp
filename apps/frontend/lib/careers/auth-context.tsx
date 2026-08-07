@@ -5,10 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import api from './api';
 import {
   clearAuth,
-  getToken,
   getUser,
-  setRefreshToken,
-  setToken,
   setUser,
 } from './auth-storage';
 import type { AuthResponse, DegreeLevel, User, WorkAuthTrack } from '@/types';
@@ -106,11 +103,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const stored = getUser();
     if (stored) setUserState(stored);
     setIsLoading(false);
-    // Phase 1.2: refresh from /auth/me so localStorage caches written before
-    // emailVerified/applicantId existed pick up the new fields, and so a
-    // verification flipped in another tab is reflected on the next load.
-    // Silent — if it fails (token expired etc.) the cached user stays valid.
-    if (getToken()) {
+    // Security Wave 2 — the JWT lives in an httpOnly cookie the browser
+    // ships automatically, so we can no longer inspect it from JS. If a
+    // cached user is present we still call /auth/me to pick up any newly-
+    // added fields (or detect a torn cookie); the api client's 401
+    // interceptor will kick refresh-and-retry when the cookie is
+    // legitimately expired.
+    if (stored) {
       void refreshFromMe();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -157,9 +156,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function login(email: string, password: string): Promise<User> {
+    // Security Wave 2 — the server sets anvi_access + anvi_refresh + XSRF-TOKEN
+    // cookies on this response; no token storage on the client.
     const res = await api.post<AuthResponse>('/auth/login', { email, password });
-    setToken(res.data.token);
-    setRefreshToken(res.data.refreshToken ?? null);
     const u = userFromAuthResponse(res.data);
     setUser(u);
     setUserState(u);
@@ -201,8 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Required by the backend's @AssertTrue gate.
       acceptedTos,
     });
-    setToken(res.data.token);
-    setRefreshToken(res.data.refreshToken ?? null);
+    // Security Wave 2 — cookies set by the server on this response.
     const u = userFromAuthResponse(res.data, phoneNumber);
     setUser(u);
     setUserState(u);
@@ -219,6 +217,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout(): void {
+    // Security Wave 2 — fire-and-forget the server-side cookie clear
+    // ({@code Set-Cookie: anvi_access=; Max-Age=0} etc.). We don't await
+    // to keep the sign-out UX snappy; the local state clear below runs
+    // unconditionally so the UI reflects sign-out even if the network
+    // hop fails (browser will still hold the httpOnly cookie in that
+    // failure mode, but the 401 interceptor will bounce the user to
+    // login on the next request).
+    void api.post('/auth/logout').catch(() => { /* best-effort */ });
     clearAuth();
     setUserState(null);
   }

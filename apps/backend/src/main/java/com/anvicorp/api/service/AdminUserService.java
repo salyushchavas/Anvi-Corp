@@ -1422,7 +1422,16 @@ public class AdminUserService {
      */
     private void nullOut(Map<String, Long> deleted, String tableName,
                          String sql, Object... args) {
+        // Security Wave 2 — regex-guard the identifier before it lands
+        // in a SAVEPOINT statement. tableName is call-site-controlled
+        // (internal), never a user value, but the sanitiser + explicit
+        // regex here means a future refactor cannot smuggle SQL through
+        // this path.
         String savepoint = "spn_" + tableName.replaceAll("[^a-zA-Z0-9_]", "_");
+        if (!savepoint.matches("[a-zA-Z_][a-zA-Z0-9_]{0,62}")) {
+            throw new IllegalStateException(
+                    "Refused illegal savepoint identifier derived from: " + tableName);
+        }
         try {
             jdbcTemplate.execute("SAVEPOINT " + savepoint);
         } catch (Exception spErr) {
@@ -1454,7 +1463,13 @@ public class AdminUserService {
     }
 
     private void del(Map<String, Long> deleted, String tableName, String sql, Object... args) {
+        // Security Wave 2 — regex-guard the identifier before it lands
+        // in a SAVEPOINT statement (same rationale as nullOut).
         String savepoint = "sp_" + tableName.replaceAll("[^a-zA-Z0-9_]", "_");
+        if (!savepoint.matches("[a-zA-Z_][a-zA-Z0-9_]{0,62}")) {
+            throw new IllegalStateException(
+                    "Refused illegal savepoint identifier derived from: " + tableName);
+        }
         try {
             jdbcTemplate.execute("SAVEPOINT " + savepoint);
         } catch (Exception spErr) {
@@ -1541,7 +1556,14 @@ public class AdminUserService {
                 "SELECT COUNT(*) FROM evaluations WHERE evaluator_id = ?");
 
         for (Map.Entry<String, String> e : probes.entrySet()) {
+            // Security Wave 2 — regex-guard the identifier before it lands
+            // in a SAVEPOINT statement (same rationale as del / nullOut).
             String savepoint = "probe_" + e.getKey().replaceAll("[^a-zA-Z0-9_]", "_");
+            if (!savepoint.matches("[a-zA-Z_][a-zA-Z0-9_]{0,62}")) {
+                log.warn("[AdminUserService] refused illegal savepoint identifier "
+                        + "from probe key: {}", e.getKey());
+                continue;
+            }
             try {
                 jdbcTemplate.execute("SAVEPOINT " + savepoint);
                 Long n;

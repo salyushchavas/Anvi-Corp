@@ -638,6 +638,15 @@ public class WeeklyReportService {
         } catch (java.io.IOException e) {
             throw new BadRequestException("Could not read uploaded bytes: " + e.getMessage());
         }
+        // Security Wave 2 — magic-byte check. Weekly-report attachments
+        // allow PDF / DOC / DOCX (matches ATTACHMENT_ALLOWED_MIMES above);
+        // the resume preset covers the same shapes plus safe images.
+        com.anvicorp.api.security.FileContentValidator.MagicSignature matched =
+                com.anvicorp.api.security.FileContentValidator.requireOneOf(
+                        bytes,
+                        com.anvicorp.api.security.FileContentValidator.RESUME_ATTACHMENTS,
+                        "weekly-report attachment");
+        com.anvicorp.api.security.FileContentValidator.assertMimeConsistent(mime, matched);
 
         Document saved = documentVault.saveDocument(
                 actor.getId(),

@@ -253,6 +253,27 @@ public class EditableTemplateAdminService {
                     "Uploaded file is not present in storage yet — the direct-to-S3 "
                             + "upload may have failed. Try uploading again.");
         }
+        // Security Wave 2 — download the bytes from S3 and validate:
+        // (1) magic-byte check confirms it's a real OOXML zip, not e.g.
+        //     an HTML page renamed .docx (presign PUT accepts any bytes);
+        // (2) zip-bomb guard walks the archive and caps entry count /
+        //     ratio / total uncompressed size so a malicious template
+        //     can't OOM docx-preview or the extract pipeline.
+        try {
+            byte[] docxBytes = s3.getObject(doc.getStorageKey());
+            com.anvicorp.api.security.FileContentValidator.requireOneOf(
+                    docxBytes,
+                    com.anvicorp.api.security.FileContentValidator.DOCX_ONLY,
+                    "editable template DOCX");
+            com.anvicorp.api.security.DocxSafetyValidator.assertSafe(
+                    docxBytes, "editable template DOCX");
+        } catch (com.anvicorp.api.exception.BadRequestException validationErr) {
+            // Best-effort delete of the just-uploaded S3 object so a rejected
+            // upload doesn't linger in storage.
+            try { s3.deleteObject(doc.getStorageKey()); }
+            catch (Exception ignore) { /* leak-safe: audit trail wins over vault cleanliness */ }
+            throw validationErr;
+        }
         UUID previous = t.getSourceDocumentId();
         boolean isReupload = previous != null;
         t.setSourceDocumentId(doc.getId());
@@ -353,7 +374,14 @@ public class EditableTemplateAdminService {
         // re-runs the same normaliser as a last-mile guard.
         String normalizedHtml =
                 com.anvicorp.api.erm.idms.XhtmlNormalizer.toXhtmlFragment(html);
-        t.setCanonicalHtml(normalizedHtml);
+        // Security Wave 2 (M) — sanitize the canonical HTML before persist.
+        // Strips <script>, on* handlers, javascript: URLs, and any tag /
+        // attribute / protocol not on the safelist. Preserves formatting,
+        // <span data-field-id="…"> field anchors, and data: URLs on
+        // signature <img> tags. See CanonicalHtmlSanitizer for the policy.
+        String sanitizedHtml =
+                com.anvicorp.api.security.CanonicalHtmlSanitizer.sanitize(normalizedHtml);
+        t.setCanonicalHtml(sanitizedHtml);
         t.setFieldSchemaJson(fieldsJson);
         t.setFidelityWarningsJson(warningsJson);
         repo.save(t);

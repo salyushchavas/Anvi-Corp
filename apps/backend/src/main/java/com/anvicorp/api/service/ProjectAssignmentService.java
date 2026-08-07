@@ -1077,6 +1077,22 @@ public class ProjectAssignmentService {
             throw new BadRequestException("Could not read uploaded bytes: " + e.getMessage());
         }
         String mime = file.getContentType();
+        // Security Wave 2 — magic-byte check. Project attachments allow a
+        // broad mix (PDF / DOC / DOCX / PPT / XLS / images / ZIP); the
+        // RESUME_ATTACHMENTS preset covers PDF+DOC+ZIP+PNG+JPEG+WebP which
+        // is the intersection with real magic-byte-detectable formats.
+        // TXT/MD/PPT/XLS still pass the extension gate above but skip the
+        // magic-byte check (they have no reliable header signature).
+        String lower = filename == null ? "" : filename.toLowerCase();
+        boolean skipMagic = lower.endsWith(".txt") || lower.endsWith(".md")
+                || lower.endsWith(".ppt") || lower.endsWith(".xls")
+                || lower.endsWith(".gif");
+        if (!skipMagic) {
+            com.anvicorp.api.security.FileContentValidator.requireOneOf(
+                    bytes,
+                    com.anvicorp.api.security.FileContentValidator.RESUME_ATTACHMENTS,
+                    "project submission attachment");
+        }
         Document saved = documentVault.saveDocument(
                 actor.getId(),
                 filename != null ? filename : "submission-attachment.bin",

@@ -138,6 +138,13 @@ public class InternDocumentService {
 
         try {
             byte[] bytes = file.getBytes();
+            // Security Wave 2 — magic-byte check on top of the MIME +
+            // filename gate above. Rejects .exe / .zip / .html renamed to
+            // .pdf before the bytes reach the vault.
+            com.anvicorp.api.security.FileContentValidator.requireOneOf(
+                    bytes,
+                    com.anvicorp.api.security.FileContentValidator.PDF_ONLY,
+                    "onboarding document");
             Document saved = documentVault.saveDocument(
                     caller.getId(),
                     filename != null ? filename : "filled.pdf",
