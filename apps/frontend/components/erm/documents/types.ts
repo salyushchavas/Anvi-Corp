@@ -199,18 +199,9 @@ export type ReviewTaskRequest = {
   internalNote?: string | null;
 };
 
-export type BulkReviewRequest = {
-  taskIds: string[];
-  decision: 'ACCEPT';
-  reasonCode?: string | null;
-  reasonText?: string | null;
-};
-
-export type BulkReviewResult = {
-  accepted: number;
-  skipped: number;
-  skippedReasons: { taskId: string; reason: string }[];
-};
+// Bulk-review types removed — every document is reviewed individually
+// so the download-before-verify gate + per-task comments loop stay
+// intact.
 
 // Intern-facing variants — strict subset of the ERM types, with ERM-only
 // fields stripped at the server.

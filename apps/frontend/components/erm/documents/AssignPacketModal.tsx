@@ -90,6 +90,28 @@ export default function AssignPacketModal({
     });
   }
 
+  // Select-all / deselect-all scoped to every row currently rendered in
+  // the checklist. No filter on this modal, so "visible" = every
+  // pickable row. Header controls flip based on whether every visible
+  // row is already selected.
+  const visibleKeys = useMemo(() => (rows ?? []).map((r) => r.key), [rows]);
+  const allVisibleSelected =
+    visibleKeys.length > 0 && visibleKeys.every((k) => selected.has(k));
+  function selectAllVisible() {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      for (const k of visibleKeys) next.add(k);
+      return next;
+    });
+  }
+  function deselectAllVisible() {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      for (const k of visibleKeys) next.delete(k);
+      return next;
+    });
+  }
+
   async function submit() {
     if (selected.size === 0) {
       setErr('Pick at least one document.');
@@ -159,6 +181,33 @@ export default function AssignPacketModal({
           )}
           {rows === null && !loadErr && (
             <div className="h-32 animate-pulse rounded-md bg-slate-100" />
+          )}
+
+          {rows !== null && rows.length > 0 && (
+            <div className="mb-3 flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+              <span className="text-slate-600">
+                <strong className="text-slate-900">{selected.size}</strong> of{' '}
+                <strong className="text-slate-900">{rows.length}</strong> selected
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllVisible}
+                  disabled={allVisibleSelected}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  onClick={deselectAllVisible}
+                  disabled={selected.size === 0}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                >
+                  Deselect all
+                </button>
+              </div>
+            </div>
           )}
 
           {rows !== null && categories.map((cat) => {

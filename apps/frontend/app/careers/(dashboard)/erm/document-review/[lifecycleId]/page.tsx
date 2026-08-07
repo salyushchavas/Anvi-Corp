@@ -35,8 +35,6 @@ function InternQueue() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [openTaskId, setOpenTaskId] = useState<string | null>(focus);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulking, setBulking] = useState(false);
 
   const load = useCallback(async () => {
     if (!lifecycleId) return;
@@ -57,40 +55,13 @@ function InternQueue() {
 
   useEffect(() => { void load(); }, [load]);
 
-  function toggle(id: string) {
-    setSelected((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
-
-  async function bulkAccept() {
-    if (selected.size === 0) return;
-    if (!confirm(`Accept ${selected.size} submissions?`)) return;
-    setBulking(true);
-    try {
-      await api.post('/api/v1/erm/document-review/tasks/bulk-review', {
-        taskIds: Array.from(selected),
-        decision: 'ACCEPT',
-      });
-      setSelected(new Set());
-      await load();
-    } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      alert(ax.response?.data?.error ?? ax.message ?? 'Failed');
-    } finally {
-      setBulking(false);
-    }
-  }
-
   const internName = data?.items[0]?.internName ?? '—';
 
   return (
     <>
       <PageHeader
         title={`Documents for ${internName}`}
-        subtitle="Accept / reject / request resend per document. Bulk-accept is scoped to this intern."
+        subtitle="Accept / reject / request re-send per document. Every document is reviewed individually."
       />
       <p className="mb-3 text-xs">
         <Link href="/careers/erm/document-review" className="text-brand-700 hover:underline">
@@ -104,18 +75,10 @@ function InternQueue() {
         </p>
       )}
 
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3">
         <p className="text-xs text-slate-500">
           {data ? `${data.totalElements} awaiting review` : ''}
         </p>
-        <button
-          type="button"
-          onClick={bulkAccept}
-          disabled={selected.size === 0 || bulking}
-          className="rounded-md bg-green-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-800 disabled:bg-slate-300"
-        >
-          Bulk-accept {selected.size} selected
-        </button>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
@@ -129,7 +92,6 @@ function InternQueue() {
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50">
               <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                <th className="px-2 py-2"></th>
                 <th className="px-3 py-2">Document</th>
                 <th className="px-3 py-2">Submitted</th>
                 <th className="px-3 py-2">Waiting</th>
@@ -141,8 +103,6 @@ function InternQueue() {
                 <TaskRow
                   key={r.taskId}
                   r={r}
-                  checked={selected.has(r.taskId)}
-                  onToggle={() => toggle(r.taskId)}
                   onOpen={() => setOpenTaskId(r.taskId)}
                 />
               ))}
@@ -163,18 +123,13 @@ function InternQueue() {
 }
 
 function TaskRow({
-  r, checked, onToggle, onOpen,
+  r, onOpen,
 }: {
   r: DocumentTaskRow;
-  checked: boolean;
-  onToggle: () => void;
   onOpen: () => void;
 }) {
   return (
     <tr>
-      <td className="px-2 py-2">
-        <input type="checkbox" checked={checked} onChange={onToggle} />
-      </td>
       <td className="px-3 py-2 text-xs text-slate-700">
         {r.templateTitle}
         {r.category && (

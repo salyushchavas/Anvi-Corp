@@ -210,20 +210,9 @@ public final class DocumentDtos {
             String internalNote
     ) {}
 
-    public record BulkReviewRequest(
-            List<UUID> taskIds,
-            String decision,                 // ACCEPT only — bulk-reject requires per-task comments
-            String reasonCode,
-            String reasonText
-    ) {}
-
-    public record BulkReviewResult(
-            int accepted,
-            int skipped,
-            List<BulkSkipReason> skippedReasons
-    ) {}
-
-    public record BulkSkipReason(UUID taskId, String reason) {}
+    // Bulk-review was removed — every document is reviewed individually
+    // so ERM can't sign off on N submissions in one click without the
+    // per-task download-before-verify gate + per-task comments loop.
 
     public record ReasonCodeOption(String code, String label, boolean requiresFreeText) {}
 
