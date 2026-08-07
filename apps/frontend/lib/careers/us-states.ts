@@ -52,3 +52,10 @@ export const US_STATES: { code: string; name: string }[] = [
   { code: 'WI', name: 'Wisconsin' },
   { code: 'WY', name: 'Wyoming' },
 ];
+
+/**
+ * B2 profile expansion — shared US ZIP validator. Matches 5-digit
+ * ({@code 12345}) or 5+4 ({@code 12345-6789}). Mirrors the server
+ * {@code US_ZIP} regex in UserProfileService.
+ */
+export const US_ZIP_RE = /^\d{5}(-\d{4})?$/;

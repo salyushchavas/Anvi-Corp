@@ -29,6 +29,7 @@ import {
   Settings,
   ShieldCheck,
   Star,
+  UserCircle,
   UserPlus,
   Users,
   Video,
@@ -68,6 +69,7 @@ interface StaffLink {
 const STAFF_ROLE_LINKS: Record<UserRole, StaffLink[]> = {
   INTERN: [
     { icon: Home,           label: 'Home',              href: '/careers/intern',             moduleKey: 'home' },
+    { icon: UserCircle,     label: 'Profile',           href: '/careers/intern/profile' },
     { icon: Briefcase,      label: 'Job Postings',      href: '/careers/intern/jobs',        moduleKey: 'jobPostings' },
     { icon: ListChecks,     label: 'My Applications',   href: '/careers/intern/applications', moduleKey: 'myApplications' },
     { icon: Video,          label: 'Interview Center',  href: '/careers/intern/interviews',  moduleKey: 'interviewCenter' },

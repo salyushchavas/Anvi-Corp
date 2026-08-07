@@ -5,6 +5,7 @@ import com.anvicorp.api.enums.DegreeLevel;
 import com.anvicorp.api.enums.WorkAuthTrack;
 import lombok.*;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Set;
 import java.util.UUID;
@@ -51,6 +52,27 @@ public class UserProfileResponse {
     private WorkAuthTrack expectedTrack;
     private LocalDate validityDate;
     private LocalDate validityStartDate;
+
+    // ── B2 profile expansion ────────────────────────────────────────────
+    // US address (candidate-row columns, all nullable).
+    private String addressStreet;
+    private String addressApt;
+    private String addressCity;
+    private String addressState;
+    private String addressZip;
+    private String addressCountry;
+
+    // WorkAuthorizationRecord dates surfaced through the profile work step.
+    private LocalDate authorizedFrom;
+    private LocalDate authorizedUntil;
+
+    /**
+     * One-shot stamp of the first time this candidate's profile met the
+     * stricter submission bar. Non-null means the ERM submission-ack
+     * notification has already fired for this candidate; further edits
+     * fire the (throttled) edit-notify path instead.
+     */
+    private Instant profileSubmittedAt;
 
     /**
      * Zoom host email — populated for any staff user (TRAINER, ERM,

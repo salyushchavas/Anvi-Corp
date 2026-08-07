@@ -259,6 +259,43 @@ public class User {
     @Column(name = "mail_handover_at")
     private Instant mailHandoverAt;
 
+    // ── Security Wave 1 — login lockout + verify-code brute-force cap ──────
+    // Persisted counters so the lockout survives replica restarts + is shared
+    // across the 2 Railway replicas. Optimistic (no @Version): a race between
+    // replicas can nudge the counter slightly high — that's acceptable for a
+    // lockout signal and preferable to failing the login save.
+
+    /**
+     * Consecutive wrong-password login attempts since the last successful
+     * login (or last lockout unlock). Reset to 0 on successful login. When it
+     * reaches 5, {@link #lockedUntil} is set to +15min and this counter is
+     * reset so a fresh 5-strike window starts after unlock.
+     */
+    @Column(name = "failed_login_count", nullable = false,
+            columnDefinition = "integer not null default 0")
+    @Builder.Default
+    private Integer failedLoginCount = 0;
+
+    /**
+     * When non-null AND in the future, login is refused with the SAME
+     * generic "Invalid credentials" message (never surfaced as a distinct
+     * "locked" state — that would be an enumeration oracle). Cleared to
+     * null on successful login.
+     */
+    @Column(name = "locked_until")
+    private Instant lockedUntil;
+
+    /**
+     * Consecutive wrong 6-digit email-verification code submissions since
+     * the current code was issued. When it reaches 5 the code is
+     * invalidated (nulled out) and the user must request a fresh one via
+     * /auth/resend-verification. Reset on successful verify + on resend.
+     */
+    @Column(name = "verify_code_attempts", nullable = false,
+            columnDefinition = "integer not null default 0")
+    @Builder.Default
+    private Integer verifyCodeAttempts = 0;
+
     /**
      * The user's original personal Gmail, archived once the login
      * {@code email} is swapped to their company address. Null while

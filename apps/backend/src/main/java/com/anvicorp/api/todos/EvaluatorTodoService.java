@@ -26,9 +26,9 @@ import java.util.UUID;
  * <p>Every bucket reuses the exact WHERE clause of the corresponding
  * evaluator service so the panel and the queue page stay in lock-step:</p>
  * <ul>
- *   <li>Projects awaiting evaluation (viva queue) — {@code PendingVivasService.list}
- *       ({@code projects.status='PENDING_VIVA'} + evaluator scope with single-
- *       evaluator null fallback).</li>
+ *   <li>Projects awaiting evaluation (viva queue) — inline SQL below in
+ *       {@link #pendingVivas} ({@code projects.status='PENDING_VIVA'} +
+ *       evaluator scope with single-evaluator null fallback).</li>
  *   <li>Sessions to conduct — {@code PendingEvaluationsService.list} scheduled tab
  *       ({@code intern_evaluations.status IN ('SCHEDULED','IN_PROGRESS')}).</li>
  *   <li>Pending acknowledgments — {@code EvaluatorDashboardService.kpiPendingAcknowledgments}

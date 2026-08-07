@@ -43,11 +43,21 @@ import java.util.UUID;
 @Slf4j
 public class InternDocumentService {
 
-    private static final long MAX_UPLOAD_BYTES = 10L * 1024 * 1024;
+    /**
+     * B2 — onboarding document uploads are capped at 2 MB. The tighter cap
+     * only applies to this intern-facing onboarding surface (packet task
+     * PDFs the intern re-scans after filling in). Resume uploads (via
+     * ResumeController) and evaluation recording uploads (via
+     * EvaluationRecordingController) keep their existing caps.
+     */
+    private static final long MAX_UPLOAD_BYTES = 2L * 1024 * 1024;
     private static final String PDF_MIME = "application/pdf";
     private static final String PDF_REJECT_MSG =
             "Only PDF files are accepted. Please scan all filled pages into a single PDF "
             + "using your phone's scanner app (Adobe Scan, Microsoft Lens, Apple Notes, etc.).";
+    private static final String SIZE_REJECT_MSG =
+            "Upload exceeds 2 MB. Re-scan at a lower resolution or use your scanner "
+            + "app's built-in size reduction, then try again.";
 
     private final DocumentPacketRepository packetRepository;
     private final DocumentTaskRepository taskRepository;
@@ -89,7 +99,7 @@ public class InternDocumentService {
             throw new BadRequestException("file is required");
         }
         if (file.getSize() > MAX_UPLOAD_BYTES) {
-            throw new BadRequestException("Upload exceeds 10 MB limit");
+            throw new BadRequestException(SIZE_REJECT_MSG);
         }
         // ERM Phase 8.2 — strict PDF gate. Some browsers leave the MIME
         // null/empty on slow uploads; we still require the filename to

@@ -30,6 +30,25 @@ public class EvaluationHistoryService {
             MonthRange range,   // scopes rows by published_at within the month; null → all
             int page,
             int pageSize) {
+        return list(caller, search, type, status, /* filter */ null,
+                range, page, pageSize);
+    }
+
+    /**
+     * Overload that honours the {@code ?filter=} URL param. Currently one
+     * value is recognised — {@code UNACKNOWLEDGED} — which restricts the
+     * result to published rows with no acknowledgment yet. Callers may pass
+     * {@code null} / blank to keep the legacy behaviour.
+     */
+    public EvaluatorPhase4Dtos.HistoryPage list(
+            User caller,
+            String search,
+            String type,
+            String status,
+            String filter,
+            MonthRange range,
+            int page,
+            int pageSize) {
 
         int safePage = Math.max(0, page);
         int safeSize = Math.min(Math.max(1, pageSize), 100);
@@ -102,6 +121,20 @@ public class EvaluationHistoryService {
             monthlyBranch.append(" AND ev.status = ? ");
             i983Branch.append(" AND ev.status = ? ");
             monthlyParams.add(status); i983Params.add(status);
+        }
+        // Phase-4 "?filter=unacknowledged" — restrict to published rows the
+        // intern hasn't acknowledged yet. Case-insensitive match on the
+        // param so ?filter=Unacknowledged / UNACKNOWLEDGED / unacknowledged
+        // all work.
+        boolean unackedOnly = filter != null
+                && "UNACKNOWLEDGED".equalsIgnoreCase(filter.trim());
+        if (unackedOnly) {
+            monthlyBranch.append(
+                    " AND ev.status = 'PUBLISHED' "
+                            + " AND ev.intern_acknowledged_at IS NULL ");
+            i983Branch.append(
+                    " AND ev.status = 'PUBLISHED' "
+                            + " AND ev.acknowledged_at IS NULL ");
         }
         // Month scoping — filter by published_at within the selected
         // month. Ordering already puts NULL-published rows at the
