@@ -17,8 +17,6 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
-import ProtectedRoute from '@/components/ProtectedRoute';
-import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import InstanceRenderer from '@/components/idms/InstanceRenderer';
 import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
 import SignatureCapture from '@/components/idms/SignatureCapture';
@@ -46,18 +44,13 @@ import {
  * pipeline. Same split-view + save-race contract as the ERM fill page
  * with roles inverted; see the ERM page's header comment for the
  * reactive-completeness + save/send-race guarantees.
+ *
+ * <p>Renders content-only — the ProtectedRoute (INTERN gate) and
+ * DashboardLayout (sidebar + top bar) are supplied by
+ * {@code intern/layout.tsx}. Wrapping them here again would double
+ * the shell.</p>
  */
 export default function InternOfferLetterFillPage() {
-  return (
-    <ProtectedRoute requiredRoles={['INTERN']}>
-      <DashboardLayout title="Your Offer Letter">
-        <PageContent />
-      </DashboardLayout>
-    </ProtectedRoute>
-  );
-}
-
-function PageContent() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
 

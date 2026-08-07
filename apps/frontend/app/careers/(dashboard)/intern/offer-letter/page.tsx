@@ -13,8 +13,6 @@ import {
   ShieldOff,
 } from 'lucide-react';
 import api from '@/lib/careers/api';
-import ProtectedRoute from '@/components/ProtectedRoute';
-import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import {
   RETURN_REASONS,
   humanDate,
@@ -31,18 +29,13 @@ import {
  * offer-signing stepper, and a state-appropriate CTA that deep-links
  * to the F1-F19 fill/sign surface at {@code /careers/intern/offer-
  * letter/{id}}. Executed offers surface the PDF download.</p>
+ *
+ * <p>Renders content-only — the ProtectedRoute (INTERN gate) and
+ * DashboardLayout (sidebar + top bar) are supplied by
+ * {@code intern/layout.tsx}. Wrapping them here again would double
+ * the shell.</p>
  */
 export default function InternOfferLetterPage() {
-  return (
-    <ProtectedRoute requiredRoles={['INTERN']}>
-      <DashboardLayout title="Your Offer Letter">
-        <PageContent />
-      </DashboardLayout>
-    </ProtectedRoute>
-  );
-}
-
-function PageContent() {
   const [offer, setOffer] = useState<InstanceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
