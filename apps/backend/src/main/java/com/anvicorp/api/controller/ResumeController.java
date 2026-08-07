@@ -4,10 +4,11 @@ import com.anvicorp.api.dto.ResumeResponse;
 import com.anvicorp.api.entity.Resume;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
-import com.anvicorp.api.exception.ForbiddenException;
+import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.repository.ApplicationRepository;
 import com.anvicorp.api.service.ResumeService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -24,6 +25,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/resumes")
 @RequiredArgsConstructor
+@Slf4j
 public class ResumeController {
 
     private final ResumeService resumeService;
@@ -97,26 +99,40 @@ public class ResumeController {
     }
 
     private void ensureCanDownload(Resume resume, User caller) {
-        // Staff roles that may view a candidate's resume when the row is
-        // linked to an application they can see. Prior copy-paste artifact
-        // had UserRole.ERM listed three times — fixed here while widening
-        // to MANAGER + SUPER_ADMIN for the Manager Hire Approvals path.
-        boolean privileged = caller.getRoles() != null && (
-                caller.getRoles().contains(UserRole.ERM)
-                        || caller.getRoles().contains(UserRole.MANAGER)
-                        || caller.getRoles().contains(UserRole.SUPER_ADMIN));
+        // SUPER_ADMIN always bypasses — operational override.
+        boolean superAdmin = caller.getRoles() != null
+                && caller.getRoles().contains(UserRole.SUPER_ADMIN);
+        if (superAdmin) return;
 
         boolean isOwner = resume.getCandidate() != null
                 && resume.getCandidate().getUser() != null
                 && resume.getCandidate().getUser().getId().equals(caller.getId());
-
         if (isOwner) return;
 
-        if (privileged) {
-            if (applicationRepository.existsByResumeId(resume.getId())) return;
-            throw new ForbiddenException("Resume not linked to any application visible to you");
+        // Staff roles that may view a candidate's resume when the row is
+        // linked to an application they can see. ERM has org-wide review
+        // scope by design; MANAGER's read is gated by the same
+        // "linked-to-any-application" check (there's no manager_id FK on
+        // JobPosting to further narrow to a specific manager's roster —
+        // MANAGER is an organization-level oversight role per the
+        // canonical design mirrored in ManagerTimesheetApprovalService).
+        boolean isErm = caller.getRoles() != null
+                && caller.getRoles().contains(UserRole.ERM);
+        boolean isManager = caller.getRoles() != null
+                && caller.getRoles().contains(UserRole.MANAGER);
+        if ((isErm || isManager)
+                && applicationRepository.existsByResumeId(resume.getId())) {
+            return;
         }
-        throw new ForbiddenException("Not allowed to download this resume");
+
+        // Anti-enumeration: same 404 a bogus id would produce. Log WARN
+        // so operators can spot probing.
+        log.warn("[IDOR-guard] resume.download caller={} resource={} reason={}",
+                caller.getId(), resume.getId(),
+                (isErm || isManager)
+                        ? "resume-not-linked-to-any-application"
+                        : "caller-not-owner-and-not-privileged");
+        throw new ResourceNotFoundException("Resume not found: " + resume.getId());
     }
 
     private String sanitizeFileName(String name) {

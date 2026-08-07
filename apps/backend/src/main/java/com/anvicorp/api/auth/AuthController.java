@@ -47,6 +47,10 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest req,
                                               HttpServletRequest httpRequest) {
+        // Per-email + per-IP throttle in front of the BCrypt cost. Bounds
+        // credential-stuffing throughput even before the per-account
+        // lockout counter kicks in.
+        rateLimiter.enforceLogin(req.email(), httpRequest);
         return ResponseEntity.ok(authService.login(req, httpRequest));
     }
 
@@ -62,20 +66,36 @@ public class AuthController {
     }
 
     @PostMapping("/forgot-password")
-    public ResponseEntity<Map<String, String>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {
+    public ResponseEntity<Map<String, String>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req,
+                                                              HttpServletRequest httpRequest) {
+        // Tight per-email + per-IP cap — mail-bomb protection against a
+        // specific inbox and against wide-net probing from one IP. Still
+        // returns the generic "If the email is registered…" message on
+        // success so account existence stays hidden.
+        rateLimiter.enforceForgotPassword(req.email(), httpRequest);
         authService.forgotPassword(req);
         return ResponseEntity.ok(Map.of("message",
                 "If the email is registered, a reset code has been sent"));
     }
 
     @PostMapping("/reset-password")
-    public ResponseEntity<Map<String, String>> resetPassword(@Valid @RequestBody ResetPasswordRequest req) {
+    public ResponseEntity<Map<String, String>> resetPassword(@Valid @RequestBody ResetPasswordRequest req,
+                                                             HttpServletRequest httpRequest) {
+        // The 6-digit reset code is the primary brute-force surface. This
+        // rate limit is a network-side backstop; the per-token
+        // invalidation happens at the service.
+        rateLimiter.enforceResetPassword(req.email(), httpRequest);
         authService.resetPassword(req);
         return ResponseEntity.ok(Map.of("message", "Password reset successful"));
     }
 
     @PostMapping("/verify-email")
-    public ResponseEntity<VerifyEmailResponse> verifyEmail(@Valid @RequestBody VerifyEmailRequest req) {
+    public ResponseEntity<VerifyEmailResponse> verifyEmail(@Valid @RequestBody VerifyEmailRequest req,
+                                                           HttpServletRequest httpRequest) {
+        // Rate-limit belt-and-suspenders around the 6-digit verification
+        // code. The per-account 5-strike cap in AuthService.verifyEmail
+        // is the primary defense.
+        rateLimiter.enforceVerifyEmail(req.email(), httpRequest);
         return ResponseEntity.ok(authService.verifyEmail(req));
     }
 

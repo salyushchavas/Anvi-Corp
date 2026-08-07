@@ -4,8 +4,11 @@ import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.exception.ForbiddenException;
+import com.anvicorp.api.exception.ResourceNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
+import java.util.UUID;
 
 /**
  * Single source of truth for "may this caller act as Trainer on this
@@ -61,6 +64,28 @@ public class TrainerScopeGuard {
         if (!caller.getId().equals(lc.getTrainerId())) {
             throw new ForbiddenException(
                     "Intern is not in your roster (assigned to a different Trainer).");
+        }
+    }
+
+    /**
+     * IDOR-safe variant that hides existence on unowned access. Throws
+     * {@link ResourceNotFoundException} instead of {@link ForbiddenException}
+     * so the client sees the same 404 they'd see for a genuinely bogus id
+     * — cross-Trainer probing can't confirm whether a target row exists.
+     * SUPER_ADMIN bypass is preserved.
+     *
+     * @param resourceId caller-supplied id used only for structured logging
+     *                   context on the failure path.
+     */
+    public void requireTrainerOwnershipOr404(InternLifecycle lc, User caller, UUID resourceId) {
+        try {
+            requireTrainerOwnership(lc, caller);
+        } catch (ForbiddenException fe) {
+            UUID callerId = caller != null ? caller.getId() : null;
+            UUID lcId = lc != null ? lc.getId() : null;
+            log.warn("[IDOR-guard] trainer ownership caller={} resource={} lifecycle={} reason={}",
+                    callerId, resourceId, lcId, fe.getMessage());
+            throw new ResourceNotFoundException("Not found");
         }
     }
 }
