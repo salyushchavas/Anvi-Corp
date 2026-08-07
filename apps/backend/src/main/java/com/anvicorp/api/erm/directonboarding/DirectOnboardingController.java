@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.mail.service.CareersMailProvisioningService;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +21,8 @@ import org.springframework.web.multipart.MultipartHttpServletRequest;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * ERM Direct Onboarding — the endpoint the wizard POSTs to. Accepts
@@ -51,6 +55,15 @@ public class DirectOnboardingController {
     private final DirectOnboardingService directOnboardingService;
     private final CareersMailProvisioningService mailProvisioningService;
     private final ObjectMapper objectMapper;
+    /**
+     * Security Wave 3 — the metadata JSON part is parsed manually (multipart
+     * upload can't use {@code @RequestBody @Valid} for a JSON string). Bean
+     * validation is re-run below via this injected {@link Validator} so the
+     * constraints on {@link DirectOnboardingDtos.DirectOnboardingRequest}
+     * fire the same way they would on a plain {@code @Valid @RequestBody}
+     * endpoint.
+     */
+    private final Validator validator;
 
     @PostMapping(consumes = "multipart/form-data")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
@@ -67,6 +80,17 @@ public class DirectOnboardingController {
         } catch (Exception e) {
             throw new BadRequestException(
                     "Could not parse metadata JSON: " + e.getMessage());
+        }
+        // Security Wave 3 — manual bean-validation because the multipart
+        // metadata part can't be annotated with @Valid @RequestBody. Runs
+        // the same constraint set the plain-JSON endpoints get for free.
+        Set<ConstraintViolation<DirectOnboardingDtos.DirectOnboardingRequest>> violations =
+                validator.validate(req);
+        if (!violations.isEmpty()) {
+            String detail = violations.stream()
+                    .map(v -> v.getPropertyPath() + ": " + v.getMessage())
+                    .collect(Collectors.joining("; "));
+            throw new BadRequestException("Invalid metadata: " + detail);
         }
 
         // Harvest every doc_<key> file part into a name→file map. The

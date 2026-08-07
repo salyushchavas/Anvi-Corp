@@ -25,6 +25,7 @@ import com.anvicorp.api.notification.EmailDeliveryException;
 import com.anvicorp.api.notification.EmailProvider;
 import com.anvicorp.api.repository.AuditLogRepository;
 import com.anvicorp.api.repository.UserRepository;
+import com.anvicorp.api.repository.UserSessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -103,6 +104,7 @@ public class AdminUserService {
     private final BrandConfig brand;
     private final MailDomainRepository mailDomainRepository;
     private final MailAccountRepository mailAccountRepository;
+    private final UserSessionRepository userSessionRepository;
 
     @Transactional(readOnly = true)
     public List<AdminUserResponse> list(UserRole roleFilter, String search) {
@@ -462,6 +464,32 @@ public class AdminUserService {
             snap.put("active", nextActive);
             snap.put("targetEmail", target.getEmail());
             writeAudit("USER_ACTIVATION_CHANGE", target, caller, snap);
+
+            // Security Wave 3 — proactive session revocation on deactivate.
+            // JwtAuthenticationFilter already rejects a deactivated user's
+            // httpOnly cookie at request time (the DB-hit for the active
+            // check refuses the SecurityContext), so a stolen access token
+            // stops working immediately. This additionally purges the
+            // refresh-token side: the deactivated user's UserSession rows
+            // flip to revoked=true so a stolen refresh token cannot rotate
+            // itself into a fresh access cookie either. Belt-and-suspenders
+            // — the filter is the load-bearing defense; this closes the
+            // refresh-window seam.
+            if (!nextActive) {
+                try {
+                    int n = userSessionRepository.revokeAllForUser(
+                            target.getId(), null, java.time.Instant.now(),
+                            "user_deactivated_by_admin");
+                    log.info("[AdminUserService] deactivated user {} — "
+                            + "revoked {} active session(s)", target.getId(), n);
+                } catch (Exception e) {
+                    // Filter rejection remains the load-bearing defense —
+                    // a repo failure here doesn't leave the user reachable.
+                    log.warn("[AdminUserService] session revoke on deactivate "
+                            + "failed for user {} (non-fatal, filter still refuses): {}",
+                            target.getId(), e.getMessage());
+                }
+            }
         }
         return toResponse(target);
     }

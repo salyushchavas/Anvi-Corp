@@ -161,7 +161,7 @@ public class ErmIdmsController {
     @PostMapping
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail create(
-            @RequestBody DocumentInstanceDtos.CreateInstanceRequest req,
+            @jakarta.validation.Valid @RequestBody DocumentInstanceDtos.CreateInstanceRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.create(req, caller);
     }
@@ -204,7 +204,7 @@ public class ErmIdmsController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail fill(
             @PathVariable UUID id,
-            @RequestBody DocumentInstanceDtos.FillFieldsRequest req,
+            @jakarta.validation.Valid @RequestBody DocumentInstanceDtos.FillFieldsRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.fillFields(id, req, caller);
     }
@@ -213,7 +213,7 @@ public class ErmIdmsController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail sign(
             @PathVariable UUID id,
-            @RequestBody DocumentInstanceDtos.SignFieldRequest req,
+            @jakarta.validation.Valid @RequestBody DocumentInstanceDtos.SignFieldRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.signField(id, req, caller);
     }
@@ -222,7 +222,7 @@ public class ErmIdmsController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail send(
             @PathVariable UUID id,
-            @RequestBody(required = false) DocumentInstanceDtos.SendRequest req,
+            @jakarta.validation.Valid @RequestBody(required = false) DocumentInstanceDtos.SendRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.send(id, req, caller);
     }
@@ -231,7 +231,7 @@ public class ErmIdmsController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail verify(
             @PathVariable UUID id,
-            @RequestBody(required = false) DocumentInstanceDtos.VerifyRequest req,
+            @jakarta.validation.Valid @RequestBody(required = false) DocumentInstanceDtos.VerifyRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.verify(id, req, caller);
     }
@@ -240,7 +240,7 @@ public class ErmIdmsController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail finalizeInstance(
             @PathVariable UUID id,
-            @RequestBody(required = false) DocumentInstanceDtos.FinalizeRequest req,
+            @jakarta.validation.Valid @RequestBody(required = false) DocumentInstanceDtos.FinalizeRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.finalize(id, req, caller);
     }
@@ -249,7 +249,7 @@ public class ErmIdmsController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail returnDoc(
             @PathVariable UUID id,
-            @RequestBody DocumentInstanceDtos.ReturnRequest req,
+            @jakarta.validation.Valid @RequestBody DocumentInstanceDtos.ReturnRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.returnForCorrections(id, req, caller);
     }
@@ -258,7 +258,7 @@ public class ErmIdmsController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail revoke(
             @PathVariable UUID id,
-            @RequestBody DocumentInstanceDtos.RevokeRequest req,
+            @jakarta.validation.Valid @RequestBody DocumentInstanceDtos.RevokeRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.revoke(id, req, caller);
     }

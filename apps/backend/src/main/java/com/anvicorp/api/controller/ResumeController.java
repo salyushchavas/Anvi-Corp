@@ -1,5 +1,6 @@
 package com.anvicorp.api.controller;
 
+import com.anvicorp.api.auth.RegistrationRateLimiter;
 import com.anvicorp.api.dto.ResumeResponse;
 import com.anvicorp.api.entity.Resume;
 import com.anvicorp.api.entity.User;
@@ -30,11 +31,14 @@ public class ResumeController {
 
     private final ResumeService resumeService;
     private final ApplicationRepository applicationRepository;
+    private final RegistrationRateLimiter rateLimiter;
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('INTERN')")
     public ResponseEntity<ResumeResponse> upload(@RequestParam("file") MultipartFile file,
                                                  @AuthenticationPrincipal User user) {
+        // Security Wave 3 — per-user upload throttle (10/user/min).
+        rateLimiter.enforceAuthenticatedUpload(user == null ? null : user.getId());
         ResumeResponse created = resumeService.upload(user, file);
         return ResponseEntity.created(URI.create("/api/v1/resumes/" + created.getId()))
                 .body(created);

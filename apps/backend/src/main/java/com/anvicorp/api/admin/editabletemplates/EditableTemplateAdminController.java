@@ -49,7 +49,7 @@ public class EditableTemplateAdminController {
     @PostMapping
     @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'JOBS_ADMIN')")
     public EditableTemplateDtos.TemplateRow create(
-            @RequestBody EditableTemplateDtos.CreateTemplateRequest req,
+            @jakarta.validation.Valid @RequestBody EditableTemplateDtos.CreateTemplateRequest req,
             @AuthenticationPrincipal User caller) {
         return service.create(req, caller);
     }
@@ -58,7 +58,7 @@ public class EditableTemplateAdminController {
     @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'JOBS_ADMIN')")
     public EditableTemplateDtos.TemplateRow updateMetadata(
             @PathVariable UUID id,
-            @RequestBody EditableTemplateDtos.UpdateTemplateMetadataRequest req,
+            @jakarta.validation.Valid @RequestBody EditableTemplateDtos.UpdateTemplateMetadataRequest req,
             @AuthenticationPrincipal User caller) {
         return service.updateMetadata(id, req, caller);
     }
@@ -78,7 +78,7 @@ public class EditableTemplateAdminController {
     @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'JOBS_ADMIN')")
     public EditableTemplateDtos.PresignUploadResponse presignUpload(
             @PathVariable UUID id,
-            @RequestBody EditableTemplateDtos.PresignUploadRequest req,
+            @jakarta.validation.Valid @RequestBody EditableTemplateDtos.PresignUploadRequest req,
             @AuthenticationPrincipal User caller) {
         return service.presignUpload(id, req, caller);
     }
@@ -87,7 +87,7 @@ public class EditableTemplateAdminController {
     @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'JOBS_ADMIN')")
     public EditableTemplateDtos.TemplateRow attachSourceFile(
             @PathVariable UUID id,
-            @RequestBody EditableTemplateDtos.AttachSourceRequest req,
+            @jakarta.validation.Valid @RequestBody EditableTemplateDtos.AttachSourceRequest req,
             @AuthenticationPrincipal User caller) {
         return service.attachSourceFile(id, req, caller);
     }
@@ -98,7 +98,7 @@ public class EditableTemplateAdminController {
     @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'JOBS_ADMIN')")
     public EditableTemplateDtos.TemplateRow saveSchema(
             @PathVariable UUID id,
-            @RequestBody EditableTemplateDtos.SaveSchemaRequest req,
+            @jakarta.validation.Valid @RequestBody EditableTemplateDtos.SaveSchemaRequest req,
             @AuthenticationPrincipal User caller) {
         return service.saveSchema(id, req, caller);
     }

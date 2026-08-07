@@ -1,5 +1,12 @@
 package com.anvicorp.api.admin.editabletemplates;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -59,24 +66,27 @@ public final class EditableTemplateDtos {
     // ── Create / update / soft-delete ────────────────────────────────
 
     public record CreateTemplateRequest(
-            /** Optional — derived from title when null. */
+            /** Optional — derived from title when null. Wave 3 — capped
+             *  at 50 chars + kebab-slug shape when supplied. */
+            @Size(max = 50) @Pattern(regexp = "^[a-z0-9][a-z0-9_-]*$|^$",
+                    message = "key must be lowercase kebab/snake shape")
             String key,
-            String title,
-            String description
+            @NotBlank @Size(max = 200) String title,
+            @Size(max = 500) String description
     ) {}
 
     public record UpdateTemplateMetadataRequest(
-            String title,
-            String description,
-            Integer sortOrder
+            @NotBlank @Size(max = 200) String title,
+            @Size(max = 500) String description,
+            @Min(0) @Max(1_000) Integer sortOrder
     ) {}
 
     // ── Source DOCX upload (presign → attach) ────────────────────────
 
     public record PresignUploadRequest(
-            String fileName,
-            String contentType,
-            Long fileSize
+            @NotBlank @Size(max = 260) String fileName,
+            @NotBlank @Size(max = 120) String contentType,
+            @NotNull @Min(1) @Max(25L * 1024 * 1024) Long fileSize
     ) {}
 
     public record PresignUploadResponse(
@@ -87,7 +97,7 @@ public final class EditableTemplateDtos {
     ) {}
 
     public record AttachSourceRequest(
-            UUID documentId
+            @NotNull UUID documentId
     ) {}
 
     // ── Save canonical HTML + schema ─────────────────────────────────
@@ -95,15 +105,21 @@ public final class EditableTemplateDtos {
     public record SaveSchemaRequest(
             /** Full canonical HTML the studio serialised — includes the
              *  {@code <span data-field-id="…" class="doc-field">} wrappers
-             *  around every selected range. */
-            String canonicalHtml,
+             *  around every selected range. Wave 3 — capped at 5 MB
+             *  (comfortably above any real docx-preview render output but
+             *  short of a DoS payload). Sanitized separately in
+             *  {@code EditableTemplateAdminService.saveSchema} via
+             *  CanonicalHtmlSanitizer. */
+            @NotBlank @Size(max = 5_000_000) String canonicalHtml,
             /** Array of field entries. Server persists the JSON verbatim
-             *  after a minimal structural + duplicate-name validation. */
-            List<FieldEntry> fields,
+             *  after a minimal structural + duplicate-name validation.
+             *  Capped at 500 entries — no real template legitimately has
+             *  more than a few dozen fields. */
+            @NotNull @Size(max = 500) List<@NotNull FieldEntry> fields,
             /** Optional — docx-preview conversion warnings captured at
              *  render time. Persisted verbatim as
              *  {@code fidelity_warnings JSONB}. */
-            List<String> fidelityWarnings
+            @Size(max = 1000) List<@Size(max = 1000) String> fidelityWarnings
     ) {}
 
     /**
@@ -116,19 +132,25 @@ public final class EditableTemplateDtos {
             /** UUID string — matches the {@code data-field-id} attribute
              *  on the corresponding span in {@link
              *  SaveSchemaRequest#canonicalHtml}. */
-            String id,
+            @NotBlank @Size(max = 100) String id,
             /** Admin-supplied human name (e.g. "Full legal name"). Must
              *  be unique across the template's fields. */
-            String name,
+            @NotBlank @Size(max = 200) String name,
             /** {@code text | date | signature | content_block}. */
+            @NotBlank
+            @Pattern(regexp = "^(text|date|signature|content_block)$",
+                    message = "type must be text | date | signature | content_block")
             String type,
             /** {@code ERM | INTERN | AUTO}. */
+            @NotBlank
+            @Pattern(regexp = "^(ERM|INTERN|AUTO)$",
+                    message = "assignee must be ERM | INTERN | AUTO")
             String assignee,
             boolean required,
             /** For {@code assignee = AUTO}: which binding source Phase 2
              *  should pull the value from (e.g. {@code intern.fullName},
              *  {@code intern.employeeId}, {@code today}, {@code position}).
              *  Null otherwise. */
-            String defaultSource
+            @Size(max = 100) String defaultSource
     ) {}
 }

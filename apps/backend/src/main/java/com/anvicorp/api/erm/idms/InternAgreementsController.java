@@ -61,7 +61,7 @@ public class InternAgreementsController {
     @PreAuthorize("hasRole('INTERN')")
     public DocumentInstanceDtos.InstanceDetail fill(
             @PathVariable UUID id,
-            @RequestBody DocumentInstanceDtos.FillFieldsRequest req,
+            @jakarta.validation.Valid @RequestBody DocumentInstanceDtos.FillFieldsRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.fillFields(id, req, caller);
     }
@@ -70,7 +70,7 @@ public class InternAgreementsController {
     @PreAuthorize("hasRole('INTERN')")
     public DocumentInstanceDtos.InstanceDetail sign(
             @PathVariable UUID id,
-            @RequestBody DocumentInstanceDtos.SignFieldRequest req,
+            @jakarta.validation.Valid @RequestBody DocumentInstanceDtos.SignFieldRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.signField(id, req, caller);
     }
@@ -79,7 +79,7 @@ public class InternAgreementsController {
     @PreAuthorize("hasRole('INTERN')")
     public DocumentInstanceDtos.InstanceDetail submit(
             @PathVariable UUID id,
-            @RequestBody(required = false) DocumentInstanceDtos.InternSubmitRequest req,
+            @jakarta.validation.Valid @RequestBody(required = false) DocumentInstanceDtos.InternSubmitRequest req,
             @AuthenticationPrincipal User caller) {
         return instanceService.internSubmit(id, req, caller);
     }

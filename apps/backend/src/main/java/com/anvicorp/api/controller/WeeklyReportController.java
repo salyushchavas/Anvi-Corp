@@ -59,6 +59,7 @@ import java.util.UUID;
 public class WeeklyReportController {
 
     private final WeeklyReportService service;
+    private final com.anvicorp.api.auth.RegistrationRateLimiter rateLimiter;
 
     // ── Intern commands ─────────────────────────────────────────────────────
 
@@ -136,6 +137,8 @@ public class WeeklyReportController {
             @PathVariable UUID id,
             @RequestParam("file") MultipartFile file,
             @AuthenticationPrincipal User user) {
+        // Security Wave 3 — per-user upload throttle (10/user/min).
+        rateLimiter.enforceAuthenticatedUpload(user == null ? null : user.getId());
         return service.uploadAttachment(id, file, user);
     }
 

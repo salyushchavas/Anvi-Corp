@@ -34,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserProfileController {
 
     private final UserProfileService userProfileService;
+    private final com.anvicorp.api.auth.RegistrationRateLimiter rateLimiter;
 
     @GetMapping("/me")
     @PreAuthorize("isAuthenticated()")
@@ -53,6 +54,10 @@ public class UserProfileController {
     public ResponseEntity<Void> changePassword(@Valid @RequestBody ChangePasswordRequest req,
                                                @AuthenticationPrincipal User caller,
                                                HttpServletRequest request) {
+        // Security Wave 3 — per-user throttle (3/user/hour). A compromised
+        // session cannot rapid-cycle passwords to defeat the "revoke other
+        // sessions" side-effect of a successful change.
+        rateLimiter.enforcePasswordChange(caller == null ? null : caller.getId());
         Object raw = request.getAttribute(JwtAuthenticationFilter.CURRENT_SESSION_ID_ATTR);
         UUID currentSessionId = raw instanceof UUID u ? u : null;
         userProfileService.changePassword(caller, req, currentSessionId);

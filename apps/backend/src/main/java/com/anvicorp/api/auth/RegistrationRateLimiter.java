@@ -104,6 +104,39 @@ public class RegistrationRateLimiter {
     public static final int PUBLIC_APPLY_PER_IP_LIMIT = 3;
     public static final Duration PUBLIC_APPLY_PER_IP_WINDOW = Duration.ofHours(1);
 
+    // ── Security Wave 3 — authenticated per-user limits ─────────────────────
+    // Applied to expensive / abuse-prone endpoints where an authenticated
+    // account could otherwise pull the system down. Keyed by userId (from
+    // @AuthenticationPrincipal.getId().toString()) so each user gets their
+    // own budget; different users don't share buckets.
+
+    /** File upload endpoints (resume / documents / attachments) — 10 per
+     *  user per minute. Legitimate upload flows do 1-2 files per action;
+     *  a rate over 10/min is either a rerun script or an abuse burst. */
+    public static final int UPLOAD_PER_USER_LIMIT = 10;
+    public static final Duration UPLOAD_PER_USER_WINDOW = Duration.ofMinutes(1);
+
+    /** Password-change endpoint — 3 per user per hour. Password rotation
+     *  is a rare event; a burst is either a shell-history replay or a
+     *  compromised session trying to change credentials before the real
+     *  user notices. */
+    public static final int PASSWORD_CHANGE_PER_USER_LIMIT = 3;
+    public static final Duration PASSWORD_CHANGE_PER_USER_WINDOW = Duration.ofHours(1);
+
+    /** Notification-trigger endpoints an authenticated user can fire
+     *  (resend invite, resend acknowledgment, etc.) — 5 per user per
+     *  hour. Prevents an authenticated account from turning a shared
+     *  inbox into a mail-bomb target. */
+    public static final int NOTIFY_PER_USER_LIMIT = 5;
+    public static final Duration NOTIFY_PER_USER_WINDOW = Duration.ofHours(1);
+
+    /** Bulk-export / ZIP endpoints — 5 per user per hour. Bulk exports
+     *  are expensive server-side; the cap prevents an accidental (or
+     *  intentional) refresh-loop from spawning tens of concurrent zip
+     *  builds. */
+    public static final int EXPORT_PER_USER_LIMIT = 5;
+    public static final Duration EXPORT_PER_USER_WINDOW = Duration.ofHours(1);
+
     private final Map<String, Deque<Instant>> buckets = new ConcurrentHashMap<>();
 
     /** Register throttle — throws if the IP has exceeded its budget. */
@@ -215,6 +248,62 @@ public class RegistrationRateLimiter {
                 PUBLIC_APPLY_PER_IP_LIMIT, PUBLIC_APPLY_PER_IP_WINDOW,
                 "Too many application submissions from your network. "
                         + "Try again later.");
+    }
+
+    // ── Security Wave 3 — authenticated per-user enforcement ────────────────
+
+    /**
+     * File-upload rate limit (per authenticated user). Wired into resume /
+     * document / weekly-report / project-attachment upload endpoints. Keyed
+     * by the caller's user id so distinct users get distinct budgets.
+     */
+    public void enforceAuthenticatedUpload(java.util.UUID userId) {
+        if (userId == null) return; // anonymous requests skip — the auth
+                                    // filter already rejected them upstream.
+        enforce("upload:user:" + userId,
+                UPLOAD_PER_USER_LIMIT, UPLOAD_PER_USER_WINDOW,
+                "Too many uploads in a short period. "
+                        + "Wait a moment before uploading again.");
+    }
+
+    /**
+     * Password-change rate limit (per authenticated user). Wired into the
+     * self-service change-password endpoint so a compromised session
+     * cannot rapidly cycle passwords to defeat the "revoke other sessions"
+     * side effect built into a successful change.
+     */
+    public void enforcePasswordChange(java.util.UUID userId) {
+        if (userId == null) return;
+        enforce("pwchange:user:" + userId,
+                PASSWORD_CHANGE_PER_USER_LIMIT, PASSWORD_CHANGE_PER_USER_WINDOW,
+                "Too many password change attempts. "
+                        + "Wait an hour before trying again.");
+    }
+
+    /**
+     * Notification-trigger rate limit (per authenticated user). Applies to
+     * resend-invite / resend-acknowledgment / re-notify actions an
+     * authenticated staff member can fire.
+     */
+    public void enforceAuthenticatedNotify(java.util.UUID userId) {
+        if (userId == null) return;
+        enforce("notify:user:" + userId,
+                NOTIFY_PER_USER_LIMIT, NOTIFY_PER_USER_WINDOW,
+                "Too many notifications requested in a short period. "
+                        + "Try again later.");
+    }
+
+    /**
+     * Bulk-export rate limit (per authenticated user). Wired into the
+     * ERM/Manager document-gallery ZIP export + any other bulk export
+     * endpoints that would be expensive to spin up in a tight loop.
+     */
+    public void enforceAuthenticatedExport(java.util.UUID userId) {
+        if (userId == null) return;
+        enforce("export:user:" + userId,
+                EXPORT_PER_USER_LIMIT, EXPORT_PER_USER_WINDOW,
+                "Too many bulk exports in a short period. "
+                        + "Wait a moment before requesting another export.");
     }
 
     private void enforce(String key, int limit, Duration window, String errMsg) {
