@@ -181,17 +181,24 @@ public class DocumentInstancePdfRenderer {
                 + "</html>";
     }
 
-    /** openhtmltopdf's XHTML parser is stricter than a browser — normalise
-     *  a handful of common HTML artifacts (void tags without self-close,
-     *  &nbsp; entity) so the render doesn't SAX-crash on well-formed but
-     *  non-XHTML input. Best-effort. */
+    /**
+     * openhtmltopdf's XHTML SAX parser is stricter than a browser: any
+     * unclosed block tag (e.g. a bare {@code <p>...} the docx-preview
+     * canvas emitted) crashes the render with SAXParseException. The
+     * old regex-based sanitiser could self-close void tags but could
+     * not repair mis-nested / unclosed block structure — that's what
+     * this instance was hitting.
+     *
+     * <p>Delegates to {@link XhtmlNormalizer#toXhtmlFragment(String)},
+     * which parses the fragment with jsoup's HTML5-lenient parser
+     * (auto-closes tags per the tag-closing rules) and re-emits as
+     * XML syntax so every void self-closes and every open tag has a
+     * matching end tag. Applied to the FULLY interpolated body —
+     * signature {@code <img>} elements and field-text spans go in raw
+     * and come out well-formed on the way to openhtmltopdf.</p>
+     */
     private String sanitiseForXhtml(String html) {
-        if (html == null) return "";
-        return html
-                .replaceAll("(?i)<br(?!/)([^>]*?)>", "<br$1 />")
-                .replaceAll("(?i)<hr(?!/)([^>]*?)>", "<hr$1 />")
-                .replaceAll("(?i)<img([^>]*?)(?<!/)>", "<img$1 />")
-                .replace("&nbsp;", "&#160;");
+        return XhtmlNormalizer.toXhtmlFragment(html);
     }
 
     /** For fully-controlled substitution — the studio's raw text passes

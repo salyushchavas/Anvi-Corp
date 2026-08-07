@@ -344,7 +344,16 @@ public class EditableTemplateAdminService {
         } catch (JsonProcessingException e) {
             throw new BadRequestException("Could not serialise schema JSON: " + e.getMessage());
         }
-        t.setCanonicalHtml(html);
+        // Normalise the studio's serialised HTML to well-formed XHTML
+        // before persisting. The docx-preview canvas emits browser-
+        // tolerant HTML (unclosed <p>, non-self-closed <br>/<img>, bare
+        // &nbsp;) that openhtmltopdf's strict SAX parser rejects at
+        // finalize time. Running the round-trip HERE means new/re-
+        // saved templates land clean on disk; the render path still
+        // re-runs the same normaliser as a last-mile guard.
+        String normalizedHtml =
+                com.anvicorp.api.erm.idms.XhtmlNormalizer.toXhtmlFragment(html);
+        t.setCanonicalHtml(normalizedHtml);
         t.setFieldSchemaJson(fieldsJson);
         t.setFidelityWarningsJson(warningsJson);
         repo.save(t);

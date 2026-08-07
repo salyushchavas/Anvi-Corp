@@ -126,6 +126,21 @@
             <version>${openhtmltopdf.version}</version>
         </dependency>
 
+        <!-- IDMS Phase 2 — jsoup normalises stored canonical HTML (from
+             docx-preview + hand-authored templates) into well-formed
+             XHTML before it reaches openhtmltopdf's strict SAX parser.
+             The regex sanitiser this replaces couldn't repair unclosed
+             block tags (the finalize path SAX-crashed on unclosed <p>);
+             jsoup parses HTML5-lenient and emits with syntax=xml so
+             every void self-closes and every open tag matches an end
+             tag. Also used by the studio save path + the one-shot
+             backfill so newly-authored templates land clean. -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.17.2</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

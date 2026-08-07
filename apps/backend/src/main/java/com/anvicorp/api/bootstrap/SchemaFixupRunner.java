@@ -1671,6 +1671,15 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // idempotent; the backfill is gated by a migration_log row so the
         // insert only fires on first boot after this ships.
         ensureB2ProfileExpansionSchema();
+
+        // IDMS — repair every stored editable_templates.canonical_html
+        // via jsoup (HTML→XHTML round-trip) so already-authored
+        // templates land well-formed for openhtmltopdf's strict SAX
+        // parser. Fixes the finalize SAXParseException on unclosed
+        // <p> that surfaced on the offer-letter template. Gated by a
+        // migration_log row so it only runs on first boot after this
+        // ships; new + re-saved templates are normalised at save time.
+        backfillIdmsCanonicalHtmlXhtml();
     }
 
     /**
@@ -6000,6 +6009,127 @@ public class SchemaFixupRunner implements CommandLineRunner {
         } catch (Exception e) {
             log.warn("[SchemaFixupRunner] job_postings.job_id widen skipped: {}",
                     e.getMessage());
+        }
+    }
+
+    /**
+     * One-shot idempotent backfill — repair every
+     * {@code editable_templates.canonical_html} to well-formed XHTML.
+     *
+     * <p>The studio persists whatever docx-preview writes to the canvas,
+     * which is browser-tolerant HTML (unclosed {@code <p>}, non-self-
+     * closed {@code <br>} / {@code <img>}, bare {@code &nbsp;}). That
+     * blows up openhtmltopdf's strict SAX parser at finalize time
+     * ({@code element type 'p' must be terminated by matching end-tag}).
+     * From this ship, {@code EditableTemplateAdminService.saveSchema}
+     * normalises via {@link com.anvicorp.api.erm.idms.XhtmlNormalizer}
+     * before persisting, so new + re-saved templates land clean. This
+     * backfill fixes the ones that already exist.</p>
+     *
+     * <p>Gated by a {@code migration_log} row keyed
+     * {@code BACKFILL_IDMS_CANONICAL_HTML_XHTML_V1} so it only runs on
+     * first boot after this ships. Also self-heals inside the row loop:
+     * an already-well-formed row round-trips to a byte-equal (or
+     * whitespace-only-diff) output and gets skipped; only rows that
+     * actually changed are UPDATE'd, and the count is stamped on the
+     * migration_log row for post-mortem.</p>
+     */
+    private void backfillIdmsCanonicalHtmlXhtml() {
+        final String migKey = "BACKFILL_IDMS_CANONICAL_HTML_XHTML_V1";
+        try {
+            Integer existing = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM migration_log WHERE migration_key = ?",
+                    Integer.class, migKey);
+            if (existing != null && existing > 0) {
+                log.info("[SchemaFixup] {} already applied — skip", migKey);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] migration_log lookup failed for {} "
+                    + "(non-fatal, continuing): {}", migKey, e.getMessage());
+        }
+
+        // Defensive — the editable_templates table won't exist on a
+        // brand-new boot before the JPA schema creator has run this
+        // migration cycle. Skip cleanly in that case.
+        try {
+            Integer tableExists = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                            + "WHERE table_name = 'editable_templates'",
+                    Integer.class);
+            if (tableExists == null || tableExists == 0) {
+                log.info("[SchemaFixup] {} — editable_templates table not present yet, skip",
+                        migKey);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] {} table-exists probe failed (skip): {}",
+                    migKey, e.getMessage());
+            return;
+        }
+
+        java.util.List<java.util.Map<String, Object>> rows;
+        try {
+            rows = jdbcTemplate.queryForList(
+                    "SELECT id, canonical_html FROM editable_templates "
+                            + "WHERE canonical_html IS NOT NULL "
+                            + "  AND LENGTH(canonical_html) > 0");
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] {} — read failed (non-fatal): {}",
+                    migKey, e.getMessage());
+            return;
+        }
+
+        int repaired = 0;
+        int untouched = 0;
+        int failed = 0;
+        for (java.util.Map<String, Object> row : rows) {
+            java.util.UUID id = (java.util.UUID) row.get("id");
+            String original = (String) row.get("canonical_html");
+            String normalized;
+            try {
+                normalized = com.anvicorp.api.erm.idms.XhtmlNormalizer
+                        .toXhtmlFragment(original);
+            } catch (Exception e) {
+                failed++;
+                log.warn("[SchemaFixup] {} — normalise failed for template {}: {}",
+                        migKey, id, e.getMessage());
+                continue;
+            }
+            if (normalized != null && !normalized.equals(original)) {
+                try {
+                    jdbcTemplate.update(
+                            "UPDATE editable_templates "
+                                    + "   SET canonical_html = ? "
+                                    + " WHERE id = ?",
+                            normalized, id);
+                    repaired++;
+                } catch (Exception e) {
+                    failed++;
+                    log.warn("[SchemaFixup] {} — update failed for template {}: {}",
+                            migKey, id, e.getMessage());
+                }
+            } else {
+                untouched++;
+            }
+        }
+        log.info("[SchemaFixup] {} — scanned={} repaired={} already-clean={} failed={}",
+                migKey, rows.size(), repaired, untouched, failed);
+
+        try {
+            jdbcTemplate.update(
+                    "INSERT INTO migration_log "
+                            + "(id, migration_key, executed_at, rows_migrated, notes) "
+                            + "VALUES (?, ?, NOW(), ?, ?) "
+                            + "ON CONFLICT (migration_key) DO NOTHING",
+                    java.util.UUID.randomUUID(), migKey, repaired,
+                    "scanned=" + rows.size()
+                            + " repaired=" + repaired
+                            + " already_clean=" + untouched
+                            + " failed=" + failed);
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] insert migration_log({}) skipped (non-fatal): {}",
+                    migKey, e.getMessage());
         }
     }
 }
