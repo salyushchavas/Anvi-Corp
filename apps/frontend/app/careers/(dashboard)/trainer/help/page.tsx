@@ -157,7 +157,7 @@ export default function TrainerHelpPage() {
           <HelpCircle className="h-3.5 w-3.5" />
           FAQ
         </h2>
-        <div className="divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="divide-y divide-slate-200 overflow-x-auto rounded-lg border border-slate-200 bg-white">
           {FAQS.map((f, i) => <FaqItem key={i} q={f.q} a={f.a} />)}
         </div>
       </section>

@@ -60,7 +60,7 @@ export default function HireApprovalsPage() {
         </p>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         {loading && !data ? (
           <div className="h-48 animate-pulse" />
         ) : !data || data.items.length === 0 ? (
