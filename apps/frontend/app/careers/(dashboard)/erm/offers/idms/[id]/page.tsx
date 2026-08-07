@@ -85,18 +85,37 @@ function PageContent() {
   const signatureBlobs = useSignatureBlobs(detail);
 
   async function act(
-    path: string, key: string, body?: unknown,
+    path: string, key: string, body?: Record<string, unknown>,
   ): Promise<boolean> {
     if (!detail) return false;
     setBusy(key);
     try {
-      const res = await api.post<InstanceDetail>(`/api/v1/erm/idms/${detail.id}/${path}`, body ?? {});
+      // Every transition carries expectedUpdatedAt so a stale second tab
+      // (or a double-click that races past the button's own disabled
+      // state) surfaces a clean 409 instead of a silent lost update.
+      const expectedUpdatedAt = detail.updatedAt
+        ? Date.parse(detail.updatedAt) || undefined
+        : undefined;
+      const payload = { ...(body ?? {}), expectedUpdatedAt };
+      const res = await api.post<InstanceDetail>(
+        `/api/v1/erm/idms/${detail.id}/${path}`, payload);
       setDetail(res.data);
       toast.success('Done.');
       return true;
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } } };
-      toast.error(ax.response?.data?.error ?? 'Action failed');
+      const ax = e as {
+        response?: { status?: number; data?: { error?: string } };
+      };
+      // 409 = someone else moved the document out from under us. Refetch
+      // so the cockpit shows the terminal state (verified elsewhere,
+      // revoked elsewhere) instead of a mystery error.
+      if (ax.response?.status === 409) {
+        toast.error(ax.response.data?.error
+          ?? 'This document changed elsewhere — reloading the latest state.');
+        void load();
+      } else {
+        toast.error(ax.response?.data?.error ?? 'Action failed');
+      }
       return false;
     } finally {
       setBusy(null);

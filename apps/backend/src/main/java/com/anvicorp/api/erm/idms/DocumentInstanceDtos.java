@@ -170,7 +170,17 @@ public final class DocumentInstanceDtos {
     public record FillFieldsRequest(
             /** Field values keyed by fieldId. Signature fields are handled
              *  via {@link SignFieldRequest} instead. */
-            Map<String, String> values
+            Map<String, String> values,
+            /**
+             * Optional optimistic-lock token — the client's cached
+             * {@code detail.updatedAt} in millis-since-epoch. When
+             * supplied AND ≥ 5 s older than the server's current
+             * updatedAt, the server rejects with 409 "changed
+             * elsewhere". Small tolerance covers the client's own
+             * concurrent /sign call bumping updatedAt between renders.
+             * Omit for legacy callers.
+             */
+            Long expectedUpdatedAt
     ) {}
 
     public record SignFieldRequest(
@@ -183,19 +193,44 @@ public final class DocumentInstanceDtos {
     ) {}
 
     // ── State transitions ────────────────────────────────────────────
+    // Every transition request accepts an optional
+    // {@code expectedUpdatedAt} (millis) — the client's cached
+    // detail.updatedAt. If supplied AND stale by > 5 s, the server
+    // 409s with a "changed elsewhere" message so cross-tab / cross-
+    // actor conflicts surface cleanly instead of silently overwriting.
+    // Send + InternSubmit additionally accept a values map so the
+    // transition atomically persists the client's authoritative bytes
+    // in the same DB transaction — a final keystroke can never be
+    // dropped between debounced auto-save and the send/submit click.
 
-    public record SendRequest() {}
-    public record InternSubmitRequest() {}
-    public record VerifyRequest() {}
+    public record SendRequest(
+            Map<String, String> values,
+            Long expectedUpdatedAt
+    ) {}
+
+    public record InternSubmitRequest(
+            Map<String, String> values,
+            Long expectedUpdatedAt
+    ) {}
+
+    public record VerifyRequest(
+            Long expectedUpdatedAt
+    ) {}
+
+    public record FinalizeRequest(
+            Long expectedUpdatedAt
+    ) {}
 
     public record ReturnRequest(
             String reasonCode,
-            String comments
+            String comments,
+            Long expectedUpdatedAt
     ) {}
 
     public record RevokeRequest(
             String reasonCode,
-            String comments
+            String comments,
+            Long expectedUpdatedAt
     ) {}
 
     // ── Awaiting-offer bridge (reused shape) ─────────────────────────

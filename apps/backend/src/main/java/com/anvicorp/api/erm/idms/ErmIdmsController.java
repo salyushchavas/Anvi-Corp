@@ -222,24 +222,27 @@ public class ErmIdmsController {
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail send(
             @PathVariable UUID id,
+            @RequestBody(required = false) DocumentInstanceDtos.SendRequest req,
             @AuthenticationPrincipal User caller) {
-        return instanceService.send(id, caller);
+        return instanceService.send(id, req, caller);
     }
 
     @PostMapping("/{id}/verify")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail verify(
             @PathVariable UUID id,
+            @RequestBody(required = false) DocumentInstanceDtos.VerifyRequest req,
             @AuthenticationPrincipal User caller) {
-        return instanceService.verify(id, caller);
+        return instanceService.verify(id, req, caller);
     }
 
     @PostMapping("/{id}/finalize")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail finalizeInstance(
             @PathVariable UUID id,
+            @RequestBody(required = false) DocumentInstanceDtos.FinalizeRequest req,
             @AuthenticationPrincipal User caller) {
-        return instanceService.finalize(id, caller);
+        return instanceService.finalize(id, req, caller);
     }
 
     @PostMapping("/{id}/return")

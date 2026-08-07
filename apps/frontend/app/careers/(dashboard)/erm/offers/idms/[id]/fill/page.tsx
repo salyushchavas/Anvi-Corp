@@ -10,6 +10,7 @@ import {
   Cloud,
   CloudOff,
   Loader2,
+  RefreshCw,
   Send,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -20,6 +21,11 @@ import InstanceRenderer from '@/components/idms/InstanceRenderer';
 import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
 import SignatureCapture from '@/components/idms/SignatureCapture';
 import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
+import {
+  useCoalescedAutoSave,
+  type SaveState,
+} from '@/components/idms/useCoalescedAutoSave';
+import { useFillCompleteness } from '@/components/idms/useFillCompleteness';
 import { useAuth } from '@/lib/careers/auth-context';
 import {
   humanDate,
@@ -32,6 +38,22 @@ import {
  * ERM fill page — LEFT: live document preview (read-only, click any anchor
  * to focus its field in the panel). RIGHT: field panel with guided checklist,
  * completion count, auto-save. Send transitions DRAFT → SENT_TO_INTERN.
+ *
+ * <h3>Structural corrective — reactive derivation</h3>
+ * <p>The completeness counter, Send-button gate, and blocking-reason banner
+ * are ALL derived from {@link useFillCompleteness}, a single reactive
+ * selector over (fields, textValues, detail.values, optimisticSignatures).
+ * The three surfaces cannot disagree on what "complete" means — the F1
+ * exemplar bug (Send stuck disabled because a derived-from-snapshot flag
+ * went stale) has exactly one place to be audited.</p>
+ *
+ * <h3>Save/Send race</h3>
+ * <p>Auto-save runs through {@link useCoalescedAutoSave} — a single-slot
+ * queue that never drops the latest keystroke and never fires two
+ * concurrent /fill calls. Send explicitly flushes pending saves via
+ * {@code controller.flush(textValues)} and then posts the SAME values
+ * on the {@code /send} body as the server-side authority — a final
+ * keystroke can never be dropped between save and transition.</p>
  */
 export default function ErmFillPage() {
   return (
@@ -42,15 +64,6 @@ export default function ErmFillPage() {
     </ProtectedRoute>
   );
 }
-
-const AUTO_SAVE_DEBOUNCE_MS = 800;
-
-type SaveState =
-  | { kind: 'idle' }
-  | { kind: 'dirty' }
-  | { kind: 'saving' }
-  | { kind: 'saved'; at: Date }
-  | { kind: 'error'; message: string };
 
 function PageContent() {
   const params = useParams<{ id: string }>();
@@ -66,21 +79,15 @@ function PageContent() {
   const [activeSignature, setActiveSignature] = useState<string | null>(null);
   const [typedName, setTypedName] = useState('');
   const [focusedField, setFocusedField] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
   const [stagedSignature, setStagedSignature] = useState<string | null>(null);
+  // Optimistic signature tracking — after the drawer's Save signature
+  // returns, the fieldId sits here until the next detail refetch fills
+  // detail.values[id].signatureUrl. Without this the completeness selector
+  // would flash "incomplete" for ~200 ms after signing (F15).
+  const [optimisticSigned, setOptimisticSigned] = useState<Set<string>>(new Set());
 
   const { user } = useAuth();
   const fieldFormRef = useRef<FieldFormHandle | null>(null);
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const skipNextAutoSaveRef = useRef(false); // seeds don't count as dirty
-  // Auto-save uses refs for detail + fields so its effect can depend ONLY
-  // on textValues — otherwise every server response setDetail cycles
-  // detail/persistText identity and restarts the debounce (the exemplar
-  // "Send stuck disabled" bug the audit found). lastSavedKeyRef guards
-  // against re-saving an unchanged payload if the effect ever does re-fire.
-  const detailRef = useRef<InstanceDetail | null>(null);
-  const ermFieldsRef = useRef<FieldSchemaEntry[]>([]);
-  const lastSavedKeyRef = useRef<string>('');
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -92,16 +99,8 @@ function PageContent() {
       for (const [k, v] of Object.entries(res.data.values ?? {})) {
         if (v.valueText != null && v.type !== 'signature') seed[k] = v.valueText;
       }
-      skipNextAutoSaveRef.current = true;
       setTextValues(seed);
-      // Seed lastSaved so an auto-save fired with the exact just-loaded
-      // values (rare, but possible via HMR / re-mount) is a no-op.
-      const seedPayload: Record<string, string> = {};
-      const ermFieldsInSeed = parseFieldSchema(res.data.fieldSchemaJson)
-        .filter((f) => f.assignee === 'ERM' && f.type !== 'signature');
-      for (const f of ermFieldsInSeed) seedPayload[f.id] = seed[f.id] ?? '';
-      lastSavedKeyRef.current = JSON.stringify(seedPayload);
-      setSaveState({ kind: 'idle' });
+      setOptimisticSigned(new Set());
       setErr(null);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -117,99 +116,78 @@ function PageContent() {
     [detail],
   );
   const signatureBlobs = useSignatureBlobs(detail);
-  const ermFields = useMemo(() => fields.filter((f) => f.assignee === 'ERM'), [fields]);
-  // Keep refs mirrored so the auto-save effect (deps: [textValues]) can
-  // read the latest detail + fields without re-arming on their change.
+  // Refs so persist() reads the FRESH detail (expectedUpdatedAt) and
+  // field list without re-arming the auto-save on every server response.
+  const detailRef = useRef<InstanceDetail | null>(null);
+  const fieldsRef = useRef<FieldSchemaEntry[]>([]);
   useEffect(() => { detailRef.current = detail; }, [detail]);
-  useEffect(() => { ermFieldsRef.current = ermFields; }, [ermFields]);
-  const ermRequiredMissing = useMemo(() => {
-    if (!detail) return [] as string[];
-    const miss: string[] = [];
-    for (const f of ermFields) {
-      if (!f.required) continue;
-      if (f.type === 'signature') {
-        if (!detail.values[f.id]?.signatureUrl) miss.push(f.name);
-      } else if (!(textValues[f.id] ?? '').trim()) {
-        miss.push(f.name);
-      }
-    }
-    return miss;
-  }, [detail, ermFields, textValues]);
+  useEffect(() => { fieldsRef.current = fields; }, [fields]);
 
-  // ── Auto-save on textValues change (debounced) ─────────────────────
-  // Reads detail + ermFields from refs so its identity is STABLE across
-  // renders. Returns true iff the round-trip persisted the current
-  // payload — send() awaits and refuses to proceed on false so a silent
-  // failed save can never let stale bytes ship.
-  const persistText = useCallback(async (
+  const completeness = useFillCompleteness({
+    detail,
+    fields,
+    role: 'ERM',
+    textValues,
+    optimisticallySignedFieldIds: optimisticSigned,
+  });
+
+  // ── Auto-save: coalesced single-slot with content-equal no-op ──────
+  const persist = useCallback(async (
     values: Record<string, string>,
   ): Promise<boolean> => {
     const currentDetail = detailRef.current;
-    const currentErmFields = ermFieldsRef.current;
+    const currentFields = fieldsRef.current;
     if (!currentDetail) return false;
     const payload: Record<string, string> = {};
-    for (const f of currentErmFields) {
-      if (f.type !== 'signature') payload[f.id] = values[f.id] ?? '';
+    for (const f of currentFields) {
+      if (f.assignee !== 'ERM') continue;
+      if (f.type === 'signature') continue;
+      payload[f.id] = values[f.id] ?? '';
     }
-    if (Object.keys(payload).length === 0) {
-      setSaveState({ kind: 'idle' });
-      lastSavedKeyRef.current = '';
-      return true;
-    }
-    const key = JSON.stringify(payload);
-    if (key === lastSavedKeyRef.current) {
-      // Content-identical to the last successful save — no-op. This is
-      // the second layer of protection against the auto-save loop; the
-      // primary is the effect deps.
-      setSaveState({ kind: 'saved', at: new Date() });
-      return true;
-    }
-    setSaveState({ kind: 'saving' });
-    try {
-      const res = await api.post<InstanceDetail>(
-        `/api/v1/erm/idms/${currentDetail.id}/fill`, { values: payload });
-      // Refresh persisted values from server without stomping on the
-      // user's in-flight typing (we do NOT reseed textValues).
-      setDetail(res.data);
-      lastSavedKeyRef.current = key;
-      setSaveState({ kind: 'saved', at: new Date() });
-      return true;
-    } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } } };
-      setSaveState({
-        kind: 'error',
-        message: ax.response?.data?.error ?? 'Save failed',
-      });
-      return false;
-    }
+    if (Object.keys(payload).length === 0) return true;
+    const res = await api.post<InstanceDetail>(
+      `/api/v1/erm/idms/${currentDetail.id}/fill`,
+      {
+        values: payload,
+        expectedUpdatedAt: currentDetail.updatedAt
+          ? Date.parse(currentDetail.updatedAt) || undefined
+          : undefined,
+      },
+    );
+    setDetail(res.data);
+    return true;
   }, []);
 
-  // Effect deps: ONLY textValues. detail/persistText changes never
-  // restart the debounce, so a server response can't re-arm the timer.
+  const saveController = useCoalescedAutoSave<Record<string, string>>({
+    persist,
+    enabled: true,
+    onConflict: () => { void load(); },
+  });
+  const { saveState, scheduleSave, flush, retry, seedLastSavedKey } = saveController;
+
+  // Seed the last-saved key on load so an initial no-op scheduleSave
+  // (from setTextValues in load()) is short-circuited.
   useEffect(() => {
-    if (!detailRef.current) return;
-    if (skipNextAutoSaveRef.current) {
-      skipNextAutoSaveRef.current = false;
-      return;
-    }
-    // Fast-path: if textValues match the last-saved payload, skip.
-    // This handles the case where the effect fires for any reason
-    // (mount, HMR, etc.) but the user hasn't actually changed anything.
-    const currentErmFields = ermFieldsRef.current;
+    if (!detail) return;
+    const currentFields = fieldsRef.current;
     const payload: Record<string, string> = {};
-    for (const f of currentErmFields) {
-      if (f.type !== 'signature') payload[f.id] = textValues[f.id] ?? '';
+    for (const f of currentFields) {
+      if (f.assignee !== 'ERM' || f.type === 'signature') continue;
+      payload[f.id] = textValues[f.id] ?? '';
     }
-    if (JSON.stringify(payload) === lastSavedKeyRef.current) return;
-    setSaveState({ kind: 'dirty' });
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-    debounceTimerRef.current = setTimeout(() => {
-      void persistText(textValues);
-    }, AUTO_SAVE_DEBOUNCE_MS);
-    return () => {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-    };
-  }, [textValues, persistText]);
+    seedLastSavedKey(payload);
+    // Intentionally seeds only on detail identity (fresh load / server
+    // response) — not on every textValues keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail, seedLastSavedKey]);
+
+  function onTextChange(id: string, v: string) {
+    setTextValues((p) => {
+      const next = { ...p, [id]: v };
+      scheduleSave(next);
+      return next;
+    });
+  }
 
   // Prompt if the user tries to close/navigate mid-debounce.
   useEffect(() => {
@@ -229,12 +207,20 @@ function PageContent() {
       toast.error('Prepare a signature first.');
       return;
     }
+    const fieldId = activeSignature;
     try {
       const res = await api.post<InstanceDetail>(
         `/api/v1/erm/idms/${detail.id}/sign`,
-        { fieldId: activeSignature, signatureImageDataUrl: stagedSignature, typedName },
+        { fieldId, signatureImageDataUrl: stagedSignature, typedName },
       );
       setDetail(res.data);
+      // Optimistically mark done — the returned detail already has the
+      // signatureUrl but this handles any renderer race.
+      setOptimisticSigned((s) => {
+        const n = new Set(s);
+        n.add(fieldId);
+        return n;
+      });
       setStagedSignature(null);
       setActiveSignature(null);
       setTypedName('');
@@ -246,30 +232,48 @@ function PageContent() {
 
   async function send() {
     if (!detail) return;
-    if (ermRequiredMissing.length > 0) {
-      toast.error('Complete required fields first: ' + ermRequiredMissing.join(', '));
+    if (!completeness.canTransition) {
+      toast.error(completeness.blockingReason ?? 'Complete required fields first.');
       return;
     }
     if (!confirm('Send this document to the intern? They’ll be notified to fill and sign.')) return;
     setSending(true);
     try {
-      // Cancel any pending debounced save, flush the final state
-      // synchronously so the server has everything before SEND. If the
-      // flush fails, REFUSE to proceed — otherwise the intern would get
-      // a doc missing the latest bytes.
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      const saved = await persistText(textValues);
+      // Flush any pending debounced save with the LATEST values — the
+      // controller awaits in-flight + coalesced pending. If the flush
+      // fails, refuse to proceed so the intern can't receive stale bytes.
+      const saved = await flush(textValues);
       if (!saved) {
         toast.error("Couldn't save your latest changes — please try again in a moment.");
         setSending(false);
         return;
       }
-      await api.post(`/api/v1/erm/idms/${detail.id}/send`);
+      // Post the SAME values as the authority on /send so a final
+      // keystroke can't be dropped between save and transition.
+      const latestUpdatedAt = detailRef.current?.updatedAt;
+      const payload: Record<string, string> = {};
+      for (const f of fields) {
+        if (f.assignee !== 'ERM' || f.type === 'signature') continue;
+        payload[f.id] = textValues[f.id] ?? '';
+      }
+      await api.post(`/api/v1/erm/idms/${detail.id}/send`, {
+        values: payload,
+        expectedUpdatedAt: latestUpdatedAt
+          ? Date.parse(latestUpdatedAt) || undefined
+          : undefined,
+      });
       toast.success('Sent to intern.');
       router.push(`/careers/erm/offers/idms/${detail.id}`);
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } } };
-      toast.error(ax.response?.data?.error ?? 'Send failed');
+      const ax = e as {
+        response?: { status?: number; data?: { error?: string } };
+      };
+      if (ax.response?.status === 409) {
+        toast.error('This document changed elsewhere — reloading the latest state.');
+        void load();
+      } else {
+        toast.error(ax.response?.data?.error ?? 'Send failed');
+      }
       setSending(false);
     }
   }
@@ -318,8 +322,12 @@ function PageContent() {
     );
   }
 
-  const sendDisabled = sending || ermRequiredMissing.length > 0
-    || saveState.kind === 'saving' || saveState.kind === 'dirty';
+  // Send stays disabled while a save is actively in flight (dirty is
+  // fine — flush() will settle it, so we don't block the button on the
+  // debounce window). Completeness comes from the shared selector.
+  const sendDisabled = sending
+    || !completeness.canTransition
+    || saveState.kind === 'saving';
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -340,12 +348,15 @@ function PageContent() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <SaveIndicator state={saveState} />
+          <span className="text-xs text-slate-500">
+            {completeness.ownDone} of {completeness.ownTotal} complete
+          </span>
+          <SaveIndicator state={saveState} onRetry={retry} />
           <button
             type="button"
             onClick={send}
             disabled={sendDisabled}
-            title={sendReasonWhenDisabled(sendDisabled, ermRequiredMissing, saveState)}
+            title={sendReasonWhenDisabled(sendDisabled, completeness.blockingReason, saveState)}
             className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
           >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -354,13 +365,10 @@ function PageContent() {
         </div>
       </header>
 
-      {ermRequiredMissing.length > 0 && (
+      {completeness.blockingReason && (
         <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            Send is disabled until you complete:{' '}
-            <span className="font-medium">{ermRequiredMissing.join(', ')}</span>
-          </p>
+          <p>{completeness.blockingReason}</p>
         </div>
       )}
 
@@ -388,7 +396,7 @@ function PageContent() {
               fields={fields}
               role="ERM"
               textValues={textValues}
-              onTextChange={(id, v) => setTextValues((p) => ({ ...p, [id]: v }))}
+              onTextChange={onTextChange}
               onOpenSignature={(fid) => setActiveSignature(fid)}
               activeSignatureFieldId={activeSignature}
               focusedFieldId={focusedField}
@@ -451,7 +459,13 @@ function PageContent() {
   );
 }
 
-function SaveIndicator({ state }: { state: SaveState }) {
+function SaveIndicator({
+  state,
+  onRetry,
+}: {
+  state: SaveState;
+  onRetry: () => void;
+}) {
   if (state.kind === 'saving') {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
@@ -478,9 +492,21 @@ function SaveIndicator({ state }: { state: SaveState }) {
   }
   if (state.kind === 'error') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-red-700" title={state.message}>
-        <CloudOff className="h-3.5 w-3.5" />
-        Not saved
+      <span className="inline-flex items-center gap-2 text-xs text-red-700" title={state.message}>
+        <span className="inline-flex items-center gap-1.5">
+          <CloudOff className="h-3.5 w-3.5" />
+          {state.message}
+        </span>
+        {state.retriable && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-1.5 py-0.5 text-[11px] font-medium text-red-700 hover:bg-red-50"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Retry
+          </button>
+        )}
       </span>
     );
   }
@@ -489,12 +515,11 @@ function SaveIndicator({ state }: { state: SaveState }) {
 
 function sendReasonWhenDisabled(
   disabled: boolean,
-  missing: string[],
+  blockingReason: string | null,
   state: SaveState,
 ): string {
   if (!disabled) return 'Send to intern';
   if (state.kind === 'saving') return 'Saving your changes — the Send button unlocks in a moment.';
-  if (state.kind === 'dirty') return 'Saving your changes — the Send button unlocks in a moment.';
-  if (missing.length > 0) return 'Complete ' + missing.join(', ') + ' before sending.';
+  if (blockingReason) return blockingReason;
   return 'Send to intern';
 }

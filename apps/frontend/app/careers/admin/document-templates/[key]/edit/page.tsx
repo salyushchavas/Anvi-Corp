@@ -109,6 +109,28 @@ function PageContent() {
   const [previewMode, setPreviewMode] = useState<PreviewMode>('edit');
   const [reuploadOpen, setReuploadOpen] = useState(false);
 
+  // Dirty-tracking for the studio (F13 + F14). savedFieldsKeyRef is the
+  // canonical field-list at load or last-successful save; any deviation
+  // in `fields` flips `dirty` true. Wraps the beforeunload guard + the
+  // extra reupload confirmation so an admin can't overwrite the source
+  // and silently lose an in-flight redesign of the field list.
+  const savedFieldsKeyRef = useRef<string>('');
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    const currentKey = JSON.stringify(fields);
+    setDirty(savedFieldsKeyRef.current !== '' && currentKey !== savedFieldsKeyRef.current);
+  }, [fields]);
+  useEffect(() => {
+    function beforeUnload(e: BeforeUnloadEvent) {
+      if (dirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    }
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, [dirty]);
+
   // ── Load the template detail ─────────────────────────────────────
   const load = useCallback(async () => {
     if (!key) return;
@@ -118,7 +140,9 @@ function PageContent() {
         `/api/v1/admin/editable-templates/by-key/${encodeURIComponent(key)}`,
       );
       setTemplate(res.data);
-      setFields(parseFieldSchema(res.data.fieldSchemaJson));
+      const loaded = parseFieldSchema(res.data.fieldSchemaJson);
+      setFields(loaded);
+      savedFieldsKeyRef.current = JSON.stringify(loaded);
       setLoadErr(null);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -457,7 +481,9 @@ function PageContent() {
         },
       );
       setTemplate(res.data);
-      setFields(parseFieldSchema(res.data.fieldSchemaJson));
+      const savedFields = parseFieldSchema(res.data.fieldSchemaJson);
+      setFields(savedFields);
+      savedFieldsKeyRef.current = JSON.stringify(savedFields);
       toast.success('Template saved.');
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
@@ -635,6 +661,7 @@ function PageContent() {
       {reuploadOpen && (
         <ReuploadDialog
           template={template}
+          hasUnsavedChanges={dirty}
           onClose={() => setReuploadOpen(false)}
           onUpload={reuploadSource}
         />
@@ -1093,16 +1120,22 @@ const inputClass =
 
 function ReuploadDialog({
   template,
+  hasUnsavedChanges,
   onClose,
   onUpload,
 }: {
   template: TemplateRow;
+  hasUnsavedChanges: boolean;
   onClose: () => void;
   onUpload: (f: File) => Promise<void>;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Confirm-losing-unsaved-work check (F14): if the admin has dirty
+  // field edits, require them to actively acknowledge those are about
+  // to be discarded — a re-upload clears the schema server-side.
+  const [ackedDirty, setAckedDirty] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   async function submit() {
@@ -1158,6 +1191,27 @@ function ReuploadDialog({
             resets the field list.
           </p>
         )}
+        {hasUnsavedChanges && (
+          <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+            <p className="flex items-start gap-2 font-medium">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              You have unsaved field changes on this template.
+            </p>
+            <p className="mt-1 pl-5">
+              Replacing the source now will discard those edits. Consider
+              cancelling first, saving your changes, then replacing.
+            </p>
+            <label className="mt-2 flex items-start gap-2 pl-5">
+              <input
+                type="checkbox"
+                checked={ackedDirty}
+                onChange={(e) => setAckedDirty(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 rounded border-red-300"
+              />
+              <span>Yes, discard my unsaved edits and replace the source.</span>
+            </label>
+          </div>
+        )}
         {error && (
           <p className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800">
             {error}
@@ -1175,7 +1229,7 @@ function ReuploadDialog({
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={!file || uploading}
+            disabled={!file || uploading || (hasUnsavedChanges && !ackedDirty)}
             className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
           >
             {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}

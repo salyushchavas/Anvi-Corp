@@ -245,45 +245,8 @@ public class DocumentInstanceService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Document instance not found: " + instanceId));
         String callerRole = requireCanFill(instance, caller);
-        List<FieldSchemaEntry> schema = parseSchema(instance.getSnapshotFieldSchemaJson());
-        Map<String, FieldSchemaEntry> byId = schema.stream()
-                .collect(java.util.stream.Collectors.toMap(FieldSchemaEntry::id, f -> f));
-
-        Instant now = Instant.now();
-        for (Map.Entry<String, String> e : req.values().entrySet()) {
-            String fieldId = e.getKey();
-            FieldSchemaEntry f = byId.get(fieldId);
-            if (f == null) {
-                throw new BadRequestException("Unknown field id: " + fieldId);
-            }
-            String type = f.type() == null ? "TEXT" : f.type().toUpperCase(Locale.ROOT);
-            if ("SIGNATURE".equals(type)) {
-                throw new BadRequestException("Signature fields go through /sign, not /fill.");
-            }
-            requireFieldOwner(callerRole, f.assignee(), f.name());
-            String value = e.getValue();
-            DocumentInstanceFieldValue existing = valueRepo
-                    .findByInstanceIdAndFieldId(instance.getId(), fieldId)
-                    .orElse(null);
-            if (existing == null) {
-                existing = DocumentInstanceFieldValue.builder()
-                        .instanceId(instance.getId())
-                        .fieldId(fieldId)
-                        .fieldName(f.name())
-                        .valueText(value)
-                        .filledByUserId(caller.getId())
-                        .filledByRole(callerRole)
-                        .filledAt(now)
-                        .build();
-            } else {
-                existing.setValueText(value);
-                existing.setFieldName(f.name());
-                existing.setFilledByUserId(caller.getId());
-                existing.setFilledByRole(callerRole);
-                existing.setFilledAt(now);
-            }
-            valueRepo.save(existing);
-        }
+        assertNotStaleForWrite(instance, req.expectedUpdatedAt());
+        applyFieldValues(instance, req.values(), callerRole, caller);
         writeAudit("FILL", instance, caller,
                 Map.of("fieldCount", req.values().size(), "role", callerRole));
         return toDetail(instance, caller);
@@ -362,15 +325,34 @@ public class DocumentInstanceService {
     // ── State transitions ────────────────────────────────────────────
 
     @Transactional
-    public DocumentInstanceDtos.InstanceDetail send(UUID instanceId, User caller) {
+    public DocumentInstanceDtos.InstanceDetail send(
+            UUID instanceId,
+            DocumentInstanceDtos.SendRequest req,
+            User caller) {
         requireErmOrAdmin(caller);
         DocumentInstance instance = instanceRepo.findByIdForUpdate(instanceId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Document instance not found: " + instanceId));
+        // Idempotency: if already SENT (double-click, retry after
+        // network hiccup, browser back+forward), return current state
+        // — no re-notify, no re-audit, no duplicate side effects.
+        if (instance.getStatus() == DocumentInstanceStatus.SENT_TO_INTERN) {
+            return toDetail(instance, caller);
+        }
         if (instance.getStatus() != DocumentInstanceStatus.DRAFT) {
             throw new ConflictException(
                     "Only draft documents can be sent. Current state: "
                             + instance.getStatus());
+        }
+        assertNotStaleForTransition(instance,
+                req == null ? null : req.expectedUpdatedAt());
+        // Authoritative-payload: the client's latest values ride on the
+        // send request itself, persisted in this same transaction so a
+        // final keystroke between debounced auto-save and Send can
+        // never be lost. Backwards-compat: if omitted, use whatever
+        // fillFields last persisted.
+        if (req != null && req.values() != null && !req.values().isEmpty()) {
+            applyFieldValues(instance, req.values(), "ERM", caller);
         }
         assertRequiredFieldsCompleteFor(instance, "ERM");
         Instant now = Instant.now();
@@ -388,17 +370,29 @@ public class DocumentInstanceService {
     }
 
     @Transactional
-    public DocumentInstanceDtos.InstanceDetail internSubmit(UUID instanceId, User caller) {
+    public DocumentInstanceDtos.InstanceDetail internSubmit(
+            UUID instanceId,
+            DocumentInstanceDtos.InternSubmitRequest req,
+            User caller) {
         DocumentInstance instance = instanceRepo.findByIdForUpdate(instanceId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Document instance not found: " + instanceId));
         if (!caller.getId().equals(instance.getInternUserId())) {
             throw new ForbiddenException("Only the assigned intern can submit this document.");
         }
+        // Idempotency: already INTERN_SUBMITTED → no-op, return state.
+        if (instance.getStatus() == DocumentInstanceStatus.INTERN_SUBMITTED) {
+            return toDetail(instance, caller);
+        }
         if (instance.getStatus() != DocumentInstanceStatus.SENT_TO_INTERN
                 && instance.getStatus() != DocumentInstanceStatus.RETURNED) {
             throw new ConflictException(
                     "You can only submit documents that are awaiting your response.");
+        }
+        assertNotStaleForTransition(instance,
+                req == null ? null : req.expectedUpdatedAt());
+        if (req != null && req.values() != null && !req.values().isEmpty()) {
+            applyFieldValues(instance, req.values(), "INTERN", caller);
         }
         assertRequiredFieldsCompleteFor(instance, "INTERN");
         Instant now = Instant.now();
@@ -441,10 +435,15 @@ public class DocumentInstanceService {
         DocumentInstance instance = instanceRepo.findByIdForUpdate(instanceId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Document instance not found: " + instanceId));
+        // Idempotency: already RETURNED → no-op, no re-audit / re-notify.
+        if (instance.getStatus() == DocumentInstanceStatus.RETURNED) {
+            return toDetail(instance, caller);
+        }
         if (instance.getStatus() != DocumentInstanceStatus.INTERN_SUBMITTED) {
             throw new ConflictException(
                     "Only submitted documents can be returned for corrections.");
         }
+        assertNotStaleForTransition(instance, req.expectedUpdatedAt());
         Instant now = Instant.now();
         instance.setStatus(DocumentInstanceStatus.RETURNED);
         instance.setReturnedAt(now);
@@ -465,11 +464,18 @@ public class DocumentInstanceService {
     }
 
     @Transactional
-    public DocumentInstanceDtos.InstanceDetail verify(UUID instanceId, User caller) {
+    public DocumentInstanceDtos.InstanceDetail verify(
+            UUID instanceId,
+            DocumentInstanceDtos.VerifyRequest req,
+            User caller) {
         requireErmOrAdmin(caller);
         DocumentInstance instance = instanceRepo.findByIdForUpdate(instanceId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Document instance not found: " + instanceId));
+        // Idempotency: already VERIFIED → no-op, return state.
+        if (instance.getStatus() == DocumentInstanceStatus.VERIFIED) {
+            return toDetail(instance, caller);
+        }
         if (instance.getStatus() != DocumentInstanceStatus.INTERN_SUBMITTED) {
             throw new ConflictException(
                     "Only submitted documents can be verified. Current state: "
@@ -479,6 +485,8 @@ public class DocumentInstanceService {
             throw new ConflictException(
                     "Please open and review the completed document before verifying.");
         }
+        assertNotStaleForTransition(instance,
+                req == null ? null : req.expectedUpdatedAt());
         Instant now = Instant.now();
         instance.setStatus(DocumentInstanceStatus.VERIFIED);
         instance.setVerifiedAt(now);
@@ -495,16 +503,28 @@ public class DocumentInstanceService {
      * SUPERSEDES target as SUPERSEDED.
      */
     @Transactional
-    public DocumentInstanceDtos.InstanceDetail finalize(UUID instanceId, User caller) {
+    public DocumentInstanceDtos.InstanceDetail finalize(
+            UUID instanceId,
+            DocumentInstanceDtos.FinalizeRequest req,
+            User caller) {
         requireErmOrAdmin(caller);
         DocumentInstance instance = instanceRepo.findByIdForUpdate(instanceId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Document instance not found: " + instanceId));
+        // Idempotency: already FINALIZED → no-op. Critically, this
+        // avoids re-rendering the PDF on a duplicate click, which would
+        // waste executor slots + emit a duplicate notify + duplicate
+        // audit row + a second PDF Document in the vault.
+        if (instance.getStatus() == DocumentInstanceStatus.FINALIZED) {
+            return toDetail(instance, caller);
+        }
         if (instance.getStatus() != DocumentInstanceStatus.VERIFIED) {
             throw new ConflictException(
                     "Only verified documents can be finalized. Current state: "
                             + instance.getStatus());
         }
+        assertNotStaleForTransition(instance,
+                req == null ? null : req.expectedUpdatedAt());
 
         // Build the text + signature-url maps for the renderer. Date-type
         // fields get normalised to MM/DD/YYYY here so the PDF matches the
@@ -599,6 +619,11 @@ public class DocumentInstanceService {
         DocumentInstance instance = instanceRepo.findByIdForUpdate(instanceId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Document instance not found: " + instanceId));
+        // Idempotency: already REVOKED → no-op. Prevents duplicate
+        // notify to the intern on double-click of the danger button.
+        if (instance.getStatus() == DocumentInstanceStatus.REVOKED) {
+            return toDetail(instance, caller);
+        }
         if (!DocumentInstanceStatus.REVOCABLE.contains(instance.getStatus())) {
             throw new ConflictException(
                     "This document isn't in a state that can be revoked (state="
@@ -611,6 +636,7 @@ public class DocumentInstanceService {
         if (!gate.allowed()) {
             throw new ConflictException(gate.reason());
         }
+        assertNotStaleForTransition(instance, req.expectedUpdatedAt());
         Instant now = Instant.now();
         instance.setStatus(DocumentInstanceStatus.REVOKED);
         instance.setRevokedAt(now);
@@ -800,6 +826,92 @@ public class DocumentInstanceService {
                 intern.getId(), employeeId, lc.getId(), application.getId());
         return lc;
     }
+
+    // ── Helpers: shared write path + version check ───────────────────
+
+    /**
+     * Persist a batch of text/date/content_block values on the instance,
+     * enforcing per-field owner (ERM writes ERM fields; INTERN writes
+     * INTERN fields; AUTO fields refused). Shared between {@link #fillFields},
+     * {@link #send} (when values ride on the send payload), and
+     * {@link #internSubmit} (same). Signature fields are rejected here —
+     * they go through {@link #signField}.
+     */
+    private void applyFieldValues(
+            DocumentInstance instance,
+            Map<String, String> values,
+            String callerRole,
+            User caller) {
+        List<FieldSchemaEntry> schema = parseSchema(instance.getSnapshotFieldSchemaJson());
+        Map<String, FieldSchemaEntry> byId = schema.stream()
+                .collect(java.util.stream.Collectors.toMap(FieldSchemaEntry::id, f -> f));
+        Instant now = Instant.now();
+        for (Map.Entry<String, String> e : values.entrySet()) {
+            String fieldId = e.getKey();
+            FieldSchemaEntry f = byId.get(fieldId);
+            if (f == null) {
+                throw new BadRequestException("Unknown field id: " + fieldId);
+            }
+            String type = f.type() == null ? "TEXT" : f.type().toUpperCase(Locale.ROOT);
+            if ("SIGNATURE".equals(type)) {
+                throw new BadRequestException("Signature fields go through /sign, not /fill.");
+            }
+            requireFieldOwner(callerRole, f.assignee(), f.name());
+            String value = e.getValue();
+            DocumentInstanceFieldValue existing = valueRepo
+                    .findByInstanceIdAndFieldId(instance.getId(), fieldId)
+                    .orElse(null);
+            if (existing == null) {
+                existing = DocumentInstanceFieldValue.builder()
+                        .instanceId(instance.getId())
+                        .fieldId(fieldId)
+                        .fieldName(f.name())
+                        .valueText(value)
+                        .filledByUserId(caller.getId())
+                        .filledByRole(callerRole)
+                        .filledAt(now)
+                        .build();
+            } else {
+                existing.setValueText(value);
+                existing.setFieldName(f.name());
+                existing.setFilledByUserId(caller.getId());
+                existing.setFilledByRole(callerRole);
+                existing.setFilledAt(now);
+            }
+            valueRepo.save(existing);
+        }
+    }
+
+    /**
+     * Optimistic lock — reject when the caller's cached {@code updatedAt}
+     * is more than {@link #STALE_WRITE_GRACE_MS} milliseconds behind the
+     * server's current value. The grace covers the caller's own
+     * concurrent /sign call (which bumps updatedAt) between renders;
+     * genuine cross-tab conflicts are always well beyond that window.
+     * Optional per request: null {@code expectedUpdatedAt} skips the
+     * check (legacy caller, or the endpoint doesn't need it).
+     */
+    private void assertNotStaleForWrite(
+            DocumentInstance instance, Long expectedUpdatedAtMs) {
+        if (expectedUpdatedAtMs == null) return;
+        long serverMs = instance.getUpdatedAt() == null
+                ? 0L : instance.getUpdatedAt().toEpochMilli();
+        if (serverMs - expectedUpdatedAtMs > STALE_WRITE_GRACE_MS) {
+            throw new ConflictException(
+                    "This document changed elsewhere — refresh to see the "
+                            + "latest state and try again.");
+        }
+    }
+
+    /** Stricter variant for state transitions (send / verify / finalize /
+     *  return / revoke). Same rule, same grace — but transitions carry a
+     *  cleaner intent so we prefer to 409 rather than silently overwrite. */
+    private void assertNotStaleForTransition(
+            DocumentInstance instance, Long expectedUpdatedAtMs) {
+        assertNotStaleForWrite(instance, expectedUpdatedAtMs);
+    }
+
+    private static final long STALE_WRITE_GRACE_MS = 5_000L;
 
     // ── Helpers: guards ──────────────────────────────────────────────
 

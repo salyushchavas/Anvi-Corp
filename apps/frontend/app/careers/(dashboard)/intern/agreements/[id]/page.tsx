@@ -12,6 +12,7 @@ import {
   Download,
   Loader2,
   MessageSquareWarning,
+  RefreshCw,
   Send,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -22,6 +23,11 @@ import InstanceRenderer from '@/components/idms/InstanceRenderer';
 import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
 import SignatureCapture from '@/components/idms/SignatureCapture';
 import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
+import {
+  useCoalescedAutoSave,
+  type SaveState,
+} from '@/components/idms/useCoalescedAutoSave';
+import { useFillCompleteness } from '@/components/idms/useFillCompleteness';
 import { useAuth } from '@/lib/careers/auth-context';
 import {
   RETURN_REASONS,
@@ -32,8 +38,11 @@ import {
   type InstanceDetail,
 } from '@/lib/careers/idms';
 
-/** Intern-side fill + sign page. Same split-view + auto-save contract as
- *  the ERM fill page with roles inverted. */
+/**
+ * Intern-side fill + sign page. Same split-view + save-race contract as
+ * the ERM fill page with roles inverted — see the ERM page's header
+ * comment for the reactive-completeness + save/send-race guarantees.
+ */
 export default function InternAgreementFillPage() {
   return (
     <ProtectedRoute requiredRoles={['INTERN']}>
@@ -43,15 +52,6 @@ export default function InternAgreementFillPage() {
     </ProtectedRoute>
   );
 }
-
-const AUTO_SAVE_DEBOUNCE_MS = 800;
-
-type SaveState =
-  | { kind: 'idle' }
-  | { kind: 'dirty' }
-  | { kind: 'saving' }
-  | { kind: 'saved'; at: Date }
-  | { kind: 'error'; message: string };
 
 function PageContent() {
   const params = useParams<{ id: string }>();
@@ -66,19 +66,11 @@ function PageContent() {
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
   const [stagedSignature, setStagedSignature] = useState<string | null>(null);
+  const [optimisticSigned, setOptimisticSigned] = useState<Set<string>>(new Set());
 
   const { user } = useAuth();
   const fieldFormRef = useRef<FieldFormHandle | null>(null);
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const skipNextAutoSaveRef = useRef(false);
-  // Auto-save-loop fix: refs so the effect can depend only on textValues.
-  // Also drives 409-refetch on stale canEdit after a concurrent revoke.
-  const detailRef = useRef<InstanceDetail | null>(null);
-  const internFieldsRef = useRef<FieldSchemaEntry[]>([]);
-  const canEditRef = useRef<boolean>(false);
-  const lastSavedKeyRef = useRef<string>('');
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -90,15 +82,8 @@ function PageContent() {
       for (const [k, v] of Object.entries(res.data.values ?? {})) {
         if (v.valueText != null && v.type !== 'signature') seed[k] = v.valueText;
       }
-      skipNextAutoSaveRef.current = true;
       setTextValues(seed);
-      // Seed lastSaved so a stray effect-fire doesn't re-POST identical bytes.
-      const seedPayload: Record<string, string> = {};
-      const internSeed = parseFieldSchema(res.data.fieldSchemaJson)
-        .filter((f) => f.assignee === 'INTERN' && f.type !== 'signature');
-      for (const f of internSeed) seedPayload[f.id] = seed[f.id] ?? '';
-      lastSavedKeyRef.current = JSON.stringify(seedPayload);
-      setSaveState({ kind: 'idle' });
+      setOptimisticSigned(new Set());
       setErr(null);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -113,106 +98,78 @@ function PageContent() {
     () => detail ? parseFieldSchema(detail.fieldSchemaJson) : [],
     [detail]);
   const signatureBlobs = useSignatureBlobs(detail);
-  const internFields = useMemo(
-    () => fields.filter((f) => f.assignee === 'INTERN'),
-    [fields]);
-  const missing = useMemo(() => {
-    if (!detail) return [] as string[];
-    const m: string[] = [];
-    for (const f of internFields) {
-      if (!f.required) continue;
-      if (f.type === 'signature') {
-        if (!detail.values[f.id]?.signatureUrl) m.push(f.name);
-      } else if (!(textValues[f.id] ?? '').trim()) {
-        m.push(f.name);
-      }
-    }
-    return m;
-  }, [detail, internFields, textValues]);
 
   const canEdit = Boolean(detail && (detail.status === 'SENT_TO_INTERN' || detail.status === 'RETURNED'));
   const isRevoked = detail?.status === 'REVOKED';
   const isFinalized = detail?.status === 'FINALIZED';
-  // Mirror refs — auto-save reads through these so its effect can
-  // depend on textValues only.
+
+  const detailRef = useRef<InstanceDetail | null>(null);
+  const fieldsRef = useRef<FieldSchemaEntry[]>([]);
+  const canEditRef = useRef<boolean>(false);
   useEffect(() => { detailRef.current = detail; }, [detail]);
-  useEffect(() => { internFieldsRef.current = internFields; }, [internFields]);
+  useEffect(() => { fieldsRef.current = fields; }, [fields]);
   useEffect(() => { canEditRef.current = canEdit; }, [canEdit]);
 
-  // ── Auto-save (only when the intern is allowed to edit) ─────────────
-  // Reads detail/fields/canEdit through refs so the effect can depend on
-  // textValues only — otherwise every server response setDetail cycles
-  // the identity and restarts the debounce (the audit's exemplar loop).
-  const persistText = useCallback(async (
+  const completeness = useFillCompleteness({
+    detail,
+    fields,
+    role: 'INTERN',
+    textValues,
+    optimisticallySignedFieldIds: optimisticSigned,
+  });
+
+  const persist = useCallback(async (
     values: Record<string, string>,
   ): Promise<boolean> => {
     const currentDetail = detailRef.current;
-    const currentInternFields = internFieldsRef.current;
+    const currentFields = fieldsRef.current;
     if (!currentDetail || !canEditRef.current) return false;
     const payload: Record<string, string> = {};
-    for (const f of currentInternFields) {
-      if (f.type !== 'signature') payload[f.id] = values[f.id] ?? '';
+    for (const f of currentFields) {
+      if (f.assignee !== 'INTERN') continue;
+      if (f.type === 'signature') continue;
+      payload[f.id] = values[f.id] ?? '';
     }
-    if (Object.keys(payload).length === 0) {
-      setSaveState({ kind: 'idle' });
-      lastSavedKeyRef.current = '';
-      return true;
-    }
-    const key = JSON.stringify(payload);
-    if (key === lastSavedKeyRef.current) {
-      setSaveState({ kind: 'saved', at: new Date() });
-      return true;
-    }
-    setSaveState({ kind: 'saving' });
-    try {
-      const res = await api.post<InstanceDetail>(
-        `/api/v1/intern/agreements/${currentDetail.id}/fill`, { values: payload });
-      setDetail(res.data);
-      lastSavedKeyRef.current = key;
-      setSaveState({ kind: 'saved', at: new Date() });
-      return true;
-    } catch (e) {
-      const ax = e as {
-        response?: { status?: number; data?: { error?: string } };
-      };
-      // 409 during auto-save means the doc state moved out from under
-      // us (typically ERM revoked). Refetch — the load() re-renders
-      // with the terminal state banner, and the effect stops firing
-      // because canEditRef flips to false.
-      if (ax.response?.status === 409) {
-        setSaveState({ kind: 'idle' });
-        void load();
-        return false;
-      }
-      setSaveState({
-        kind: 'error',
-        message: ax.response?.data?.error ?? 'Save failed',
-      });
-      return false;
-    }
-  }, [load]);
+    if (Object.keys(payload).length === 0) return true;
+    const res = await api.post<InstanceDetail>(
+      `/api/v1/intern/agreements/${currentDetail.id}/fill`,
+      {
+        values: payload,
+        expectedUpdatedAt: currentDetail.updatedAt
+          ? Date.parse(currentDetail.updatedAt) || undefined
+          : undefined,
+      },
+    );
+    setDetail(res.data);
+    return true;
+  }, []);
+
+  const saveController = useCoalescedAutoSave<Record<string, string>>({
+    persist,
+    enabled: canEdit,
+    onConflict: () => { void load(); },
+  });
+  const { saveState, scheduleSave, flush, retry, seedLastSavedKey } = saveController;
 
   useEffect(() => {
-    if (!detailRef.current || !canEditRef.current) return;
-    if (skipNextAutoSaveRef.current) {
-      skipNextAutoSaveRef.current = false;
-      return;
-    }
-    const currentInternFields = internFieldsRef.current;
+    if (!detail) return;
+    const currentFields = fieldsRef.current;
     const payload: Record<string, string> = {};
-    for (const f of currentInternFields) {
-      if (f.type !== 'signature') payload[f.id] = textValues[f.id] ?? '';
+    for (const f of currentFields) {
+      if (f.assignee !== 'INTERN' || f.type === 'signature') continue;
+      payload[f.id] = textValues[f.id] ?? '';
     }
-    if (JSON.stringify(payload) === lastSavedKeyRef.current) return;
-    setSaveState({ kind: 'dirty' });
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-    debounceTimerRef.current = setTimeout(() => {
-      void persistText(textValues);
-    }, AUTO_SAVE_DEBOUNCE_MS);
-    return () => {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-    };
-  }, [textValues, persistText]);
+    seedLastSavedKey(payload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail, seedLastSavedKey]);
+
+  function onTextChange(fid: string, v: string) {
+    setTextValues((p) => {
+      const next = { ...p, [fid]: v };
+      scheduleSave(next);
+      return next;
+    });
+  }
 
   useEffect(() => {
     function beforeUnload(e: BeforeUnloadEvent) {
@@ -231,12 +188,18 @@ function PageContent() {
       toast.error('Prepare a signature first.');
       return;
     }
+    const fieldId = activeSignature;
     try {
       const res = await api.post<InstanceDetail>(
         `/api/v1/intern/agreements/${detail.id}/sign`,
-        { fieldId: activeSignature, signatureImageDataUrl: stagedSignature, typedName },
+        { fieldId, signatureImageDataUrl: stagedSignature, typedName },
       );
       setDetail(res.data);
+      setOptimisticSigned((s) => {
+        const n = new Set(s);
+        n.add(fieldId);
+        return n;
+      });
       setStagedSignature(null);
       setActiveSignature(null);
       setTypedName('');
@@ -248,21 +211,33 @@ function PageContent() {
 
   async function submit() {
     if (!detail) return;
-    if (missing.length > 0) {
-      toast.error('Please complete: ' + missing.join(', '));
+    if (!completeness.canTransition) {
+      toast.error(completeness.blockingReason ?? 'Complete required fields first.');
       return;
     }
     setSubmitting(true);
     try {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      const saved = await persistText(textValues);
+      const saved = await flush(textValues);
       if (!saved) {
         toast.error("Couldn't save your latest changes — please try again in a moment.");
         setSubmitting(false);
         return;
       }
+      const latestUpdatedAt = detailRef.current?.updatedAt;
+      const payload: Record<string, string> = {};
+      for (const f of fields) {
+        if (f.assignee !== 'INTERN' || f.type === 'signature') continue;
+        payload[f.id] = textValues[f.id] ?? '';
+      }
       const res = await api.post<InstanceDetail>(
-        `/api/v1/intern/agreements/${detail.id}/submit`);
+        `/api/v1/intern/agreements/${detail.id}/submit`,
+        {
+          values: payload,
+          expectedUpdatedAt: latestUpdatedAt
+            ? Date.parse(latestUpdatedAt) || undefined
+            : undefined,
+        },
+      );
       setDetail(res.data);
       setConfirmOpen(false);
       toast.success('Submitted to your ERM.');
@@ -270,9 +245,6 @@ function PageContent() {
       const ax = e as {
         response?: { status?: number; data?: { error?: string } };
       };
-      // 409 from /submit means the ERM revoked or the state moved.
-      // Refetch + re-render so the intern sees the terminal state
-      // instead of a mystery error.
       if (ax.response?.status === 409) {
         toast.error("This document isn't awaiting your response anymore.");
         void load();
@@ -310,8 +282,9 @@ function PageContent() {
     );
   }
 
-  const submitDisabled = submitting || missing.length > 0
-    || saveState.kind === 'saving' || saveState.kind === 'dirty';
+  const submitDisabled = submitting
+    || !completeness.canTransition
+    || saveState.kind === 'saving';
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -334,7 +307,12 @@ function PageContent() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {canEdit && <SaveIndicator state={saveState} />}
+          {canEdit && (
+            <span className="text-xs text-slate-500">
+              {completeness.ownDone} of {completeness.ownTotal} complete
+            </span>
+          )}
+          {canEdit && <SaveIndicator state={saveState} onRetry={retry} />}
           {isFinalized && detail.finalPdfUrl && (
             <a
               href={detail.finalPdfUrl}
@@ -351,7 +329,7 @@ function PageContent() {
               type="button"
               onClick={() => setConfirmOpen(true)}
               disabled={submitDisabled}
-              title={submitReasonWhenDisabled(submitDisabled, missing, saveState)}
+              title={submitReasonWhenDisabled(submitDisabled, completeness.blockingReason, saveState)}
               className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
             >
               <Send className="h-4 w-4" />
@@ -390,13 +368,10 @@ function PageContent() {
         </div>
       )}
 
-      {canEdit && missing.length > 0 && (
+      {canEdit && completeness.blockingReason && (
         <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            Submit is disabled until you complete:{' '}
-            <span className="font-medium">{missing.join(', ')}</span>
-          </p>
+          <p>{completeness.blockingReason}</p>
         </div>
       )}
 
@@ -425,7 +400,7 @@ function PageContent() {
                 fields={fields}
                 role="INTERN"
                 textValues={textValues}
-                onTextChange={(id, v) => setTextValues((p) => ({ ...p, [id]: v }))}
+                onTextChange={onTextChange}
                 onOpenSignature={(fid) => setActiveSignature(fid)}
                 activeSignatureFieldId={activeSignature}
                 focusedFieldId={focusedField}
@@ -529,7 +504,13 @@ function ConfirmSubmitDialog({
   );
 }
 
-function SaveIndicator({ state }: { state: SaveState }) {
+function SaveIndicator({
+  state,
+  onRetry,
+}: {
+  state: SaveState;
+  onRetry: () => void;
+}) {
   if (state.kind === 'saving') {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
@@ -556,9 +537,21 @@ function SaveIndicator({ state }: { state: SaveState }) {
   }
   if (state.kind === 'error') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-red-700" title={state.message}>
-        <CloudOff className="h-3.5 w-3.5" />
-        Not saved
+      <span className="inline-flex items-center gap-2 text-xs text-red-700" title={state.message}>
+        <span className="inline-flex items-center gap-1.5">
+          <CloudOff className="h-3.5 w-3.5" />
+          {state.message}
+        </span>
+        {state.retriable && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-1.5 py-0.5 text-[11px] font-medium text-red-700 hover:bg-red-50"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Retry
+          </button>
+        )}
       </span>
     );
   }
@@ -567,13 +560,12 @@ function SaveIndicator({ state }: { state: SaveState }) {
 
 function submitReasonWhenDisabled(
   disabled: boolean,
-  missing: string[],
+  blockingReason: string | null,
   state: SaveState,
 ): string {
   if (!disabled) return 'Submit';
   if (state.kind === 'saving') return 'Saving your changes — Submit unlocks in a moment.';
-  if (state.kind === 'dirty') return 'Saving your changes — Submit unlocks in a moment.';
-  if (missing.length > 0) return 'Complete ' + missing.join(', ') + ' before submitting.';
+  if (blockingReason) return blockingReason;
   return 'Submit';
 }
 

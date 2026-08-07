@@ -97,10 +97,17 @@ const SignatureCapture = forwardRef<SignatureCaptureHandle, SignatureCaptureProp
       }
     }, [mode, drawUrl, uploadUrl, generateUrl, cleanUrl]);
 
+    // Ref-wrap onChange so the effect below only re-fires when `active`
+    // actually changes — otherwise a parent that recreates the onChange
+    // closure on every render would spam onChange (F19-class effect-dep
+    // footgun). Callers can freely pass inline arrows now.
+    const onChangeRef = useRef(onChange);
+    useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+
     // Report the active mode's staged URL to the parent whenever it changes.
     useEffect(() => {
-      onChange(active);
-    }, [active, onChange]);
+      onChangeRef.current(active);
+    }, [active]);
 
     useImperativeHandle(ref, () => ({
       reset() {
@@ -422,6 +429,15 @@ function CleanTab({ disabled, value, onChange }: {
 }) {
   const [rawUrl, setRawUrl] = useState<string | null>(null);
   const [threshold, setThreshold] = useState<number>(180); // higher = more permissive to lighter strokes
+  // debouncedThreshold trails threshold by ~120 ms so a slider drag
+  // (which fires ~30 change events for a full sweep) doesn't re-run the
+  // full grayscale/threshold/trim pipeline on every step (F18). The
+  // number the user sees updates immediately; the actual pipeline waits.
+  const [debouncedThreshold, setDebouncedThreshold] = useState<number>(180);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedThreshold(threshold), 120);
+    return () => clearTimeout(t);
+  }, [threshold]);
   const [darkPct, setDarkPct] = useState<number>(0);       // rough "how much ink survived" gauge
   const [err, setErr] = useState<string | null>(null);
   const beforeRef = useRef<HTMLCanvasElement | null>(null);
@@ -445,10 +461,14 @@ function CleanTab({ disabled, value, onChange }: {
     reader.readAsDataURL(f);
   }
 
-  // Re-run the cleanup whenever the raw image or threshold changes.
+  // Re-run the cleanup whenever the raw image or (debounced) threshold changes.
+  // Also refs onChange so a parent re-render doesn't re-fire this pipeline
+  // just because the onChange closure identity flipped.
+  const cleanOnChangeRef = useRef(onChange);
+  useEffect(() => { cleanOnChangeRef.current = onChange; }, [onChange]);
   useEffect(() => {
     if (!rawUrl) {
-      onChange(null);
+      cleanOnChangeRef.current(null);
       setDarkPct(0);
       return;
     }
@@ -487,7 +507,7 @@ function CleanTab({ disabled, value, onChange }: {
             const i = (y * w + x) * 4;
             const r = px[i], g = px[i + 1], b = px[i + 2];
             const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-            if (gray <= threshold) {
+            if (gray <= debouncedThreshold) {
               // Ink stroke — keep as near-black, boost contrast a bit.
               const contrast = Math.max(0, gray - 30);
               px[i]     = contrast;
@@ -536,17 +556,17 @@ function CleanTab({ disabled, value, onChange }: {
         const outUrl = trimmed.toDataURL('image/png');
         if (!underSizeCap(outUrl)) {
           setErr('Cleaned image is still over the 500 KB cap — try a lower threshold.');
-          onChange(null);
+          cleanOnChangeRef.current(null);
         } else {
           setErr(null);
-          onChange(outUrl);
+          cleanOnChangeRef.current(outUrl);
         }
       };
       img.onerror = () => setErr('Could not read that image.');
       img.src = rawUrl;
     })();
     return () => { cancelled = true; };
-  }, [rawUrl, threshold, onChange]);
+  }, [rawUrl, debouncedThreshold]);
 
   const looksEmpty = rawUrl != null && darkPct < 0.2;
   const looksNoisy = rawUrl != null && darkPct > 30;

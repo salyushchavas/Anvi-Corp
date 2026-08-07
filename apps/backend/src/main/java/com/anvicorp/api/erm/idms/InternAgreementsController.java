@@ -79,8 +79,9 @@ public class InternAgreementsController {
     @PreAuthorize("hasRole('INTERN')")
     public DocumentInstanceDtos.InstanceDetail submit(
             @PathVariable UUID id,
+            @RequestBody(required = false) DocumentInstanceDtos.InternSubmitRequest req,
             @AuthenticationPrincipal User caller) {
-        return instanceService.internSubmit(id, caller);
+        return instanceService.internSubmit(id, req, caller);
     }
 
     private static String stageLabel(DocumentInstanceStatus s) {
