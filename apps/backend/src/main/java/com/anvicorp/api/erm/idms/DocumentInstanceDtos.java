@@ -1,5 +1,9 @@
 package com.anvicorp.api.erm.idms;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -169,8 +173,12 @@ public final class DocumentInstanceDtos {
 
     public record FillFieldsRequest(
             /** Field values keyed by fieldId. Signature fields are handled
-             *  via {@link SignFieldRequest} instead. */
-            Map<String, String> values,
+             *  via {@link SignFieldRequest} instead. Wave 3 — the map itself
+             *  is required (empty is fine — a no-op autosave), and each
+             *  value string is capped at 5000 chars to prevent an attacker
+             *  from writing megabytes into the canonical HTML through a
+             *  single field. */
+            @NotNull Map<String, @Size(max = 5000) String> values,
             /**
              * Optional optimistic-lock token — the client's cached
              * {@code detail.updatedAt} in millis-since-epoch. When
@@ -184,12 +192,14 @@ public final class DocumentInstanceDtos {
     ) {}
 
     public record SignFieldRequest(
-            String fieldId,
-            /** Base64 PNG data URL from the SignaturePad component. */
-            String signatureImageDataUrl,
+            @NotBlank @Size(max = 200) String fieldId,
+            /** Base64 PNG data URL from the SignaturePad component. Signature
+             *  payloads legitimately run to a few tens of KB; 200 KB is well
+             *  above any real touchpad rendering but short of DoS payloads. */
+            @NotBlank @Size(max = 200_000) String signatureImageDataUrl,
             /** Optional typed name (SignaturePad already renders the initials
              *  strip; typed name is captured for the audit row). */
-            String typedName
+            @Size(max = 200) String typedName
     ) {}
 
     // ── State transitions ────────────────────────────────────────────
@@ -204,12 +214,12 @@ public final class DocumentInstanceDtos {
     // dropped between debounced auto-save and the send/submit click.
 
     public record SendRequest(
-            Map<String, String> values,
+            Map<String, @Size(max = 5000) String> values,
             Long expectedUpdatedAt
     ) {}
 
     public record InternSubmitRequest(
-            Map<String, String> values,
+            Map<String, @Size(max = 5000) String> values,
             Long expectedUpdatedAt
     ) {}
 
@@ -222,14 +232,14 @@ public final class DocumentInstanceDtos {
     ) {}
 
     public record ReturnRequest(
-            String reasonCode,
-            String comments,
+            @NotBlank @Size(max = 40) String reasonCode,
+            @Size(max = 2000) String comments,
             Long expectedUpdatedAt
     ) {}
 
     public record RevokeRequest(
-            String reasonCode,
-            String comments,
+            @NotBlank @Size(max = 40) String reasonCode,
+            @Size(max = 2000) String comments,
             Long expectedUpdatedAt
     ) {}
 

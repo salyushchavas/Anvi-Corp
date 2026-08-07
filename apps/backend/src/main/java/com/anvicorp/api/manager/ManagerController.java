@@ -226,7 +226,7 @@ public class ManagerController {
     @PreAuthorize("hasAnyRole('MANAGER', 'SUPER_ADMIN')")
     public ErmEscalationDtos.ExceptionDetail riskAssign(
             @PathVariable UUID id,
-            @RequestBody ManagerDtos.AssignRiskRequest req,
+            @jakarta.validation.Valid @RequestBody ManagerDtos.AssignRiskRequest req,
             @AuthenticationPrincipal User caller) {
         return riskCenterService.assign(id, req, caller);
     }
@@ -243,7 +243,7 @@ public class ManagerController {
     @PreAuthorize("hasAnyRole('MANAGER', 'SUPER_ADMIN')")
     public ErmEscalationDtos.ExceptionDetail riskAddNote(
             @PathVariable UUID id,
-            @RequestBody ManagerDtos.NoteRiskRequest req,
+            @jakarta.validation.Valid @RequestBody ManagerDtos.NoteRiskRequest req,
             @AuthenticationPrincipal User caller) {
         return riskCenterService.addNote(id, req, caller);
     }
@@ -252,7 +252,7 @@ public class ManagerController {
     @PreAuthorize("hasAnyRole('MANAGER', 'SUPER_ADMIN')")
     public ErmEscalationDtos.ExceptionDetail riskResolve(
             @PathVariable UUID id,
-            @RequestBody ManagerDtos.ResolveRiskRequest req,
+            @jakarta.validation.Valid @RequestBody ManagerDtos.ResolveRiskRequest req,
             @AuthenticationPrincipal User caller) {
         return riskCenterService.resolve(id, req, caller);
     }

@@ -1,5 +1,6 @@
 package com.anvicorp.api.erm.documents;
 
+import com.anvicorp.api.auth.RegistrationRateLimiter;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.erm.documents.DocumentDtos.InternPacketView;
 import com.anvicorp.api.erm.documents.DocumentDtos.InternTaskView;
@@ -25,6 +26,7 @@ import java.util.UUID;
 public class InternDocumentController {
 
     private final InternDocumentService service;
+    private final RegistrationRateLimiter rateLimiter;
 
     @GetMapping("/packet")
     @PreAuthorize("hasAnyRole('INTERN', 'SUPER_ADMIN')")
@@ -42,6 +44,8 @@ public class InternDocumentController {
             @PathVariable UUID id,
             @RequestParam("file") MultipartFile file,
             @AuthenticationPrincipal User caller) {
+        // Security Wave 3 — per-user upload throttle (10/user/min).
+        rateLimiter.enforceAuthenticatedUpload(caller == null ? null : caller.getId());
         return service.uploadFilled(id, file, caller);
     }
 

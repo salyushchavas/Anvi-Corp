@@ -1,5 +1,10 @@
 package com.anvicorp.api.erm.directonboarding;
 
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -29,10 +34,10 @@ public final class DirectOnboardingDtos {
      */
     public record DirectOnboardingRequest(
             // Step 1 — Personal ------------------------------------------------
-            String email,
-            String fullName,
-            String legalName,
-            String phoneNumber,
+            @NotBlank @Email @Size(max = 254) String email,
+            @NotBlank @Size(max = 200) String fullName,
+            @Size(max = 200) String legalName,
+            @Size(max = 40) String phoneNumber,
             /** True historical joining date (display-only fact). {@code startedAt}
              *  is stamped {@code now()} inside the service so month-wise tracking
              *  begins with the registration month, per the ERM ruleset. */
@@ -47,12 +52,15 @@ public final class DirectOnboardingDtos {
              *  Engagement.track; drives WorkAuthorizationRecord.workAuthType
              *  via the shared upsert. Also drives which of the per-type
              *  fields below are required (see DirectOnboardingService). */
+            @NotBlank
+            @Pattern(regexp = "^(US_CITIZEN|PERMANENT_RESIDENT|F1_CPT|F1_OPT|F1_STEM_OPT|H1B|H4|OTHER)$",
+                    message = "workAuthType must be one of the fixed 8-value enum")
             String workAuthType,
             LocalDate authorizedFrom,
             LocalDate authorizedUntil,
             /** EAD card number (F-1 OPT, F-1 STEM OPT, H-4, OTHER). AES-GCM
              *  encrypted server-side. */
-            String eadCardNumber,
+            @Size(max = 40) String eadCardNumber,
             /** EAD expiration (F-1 OPT, F-1 STEM OPT, H-4, OTHER). */
             LocalDate eadExpiration,
             LocalDate i20Expiration,
@@ -60,18 +68,18 @@ public final class DirectOnboardingDtos {
              *  service forces false for every other type to keep the
              *  compliance card honest. */
             Boolean i983Required,
-            String dsoName,
-            String dsoEmail,
-            String dsoPhone,
-            String workAuthNotes,
+            @Size(max = 200) String dsoName,
+            @Email @Size(max = 254) String dsoEmail,
+            @Size(max = 40) String dsoPhone,
+            @Size(max = 2000) String workAuthNotes,
             // Per-type extensions -----------------------------------------------
             /** SEVIS ID (F-1 CPT). AES-GCM encrypted server-side. */
-            String sevisNumber,
+            @Size(max = 40) String sevisNumber,
             /** CPT authorization end date (F-1 CPT). */
             LocalDate cptExpiration,
             /** USCIS receipt number for H-1B (I-797). AES-GCM encrypted
              *  server-side. */
-            String h1ReceiptNumber,
+            @Size(max = 40) String h1ReceiptNumber,
             LocalDate h1ReceiptStart,
             LocalDate h1ReceiptEnd,
 
@@ -85,8 +93,10 @@ public final class DirectOnboardingDtos {
             /** One entry per uploaded onboarding document. The document key
              *  MUST resolve to an active row in {@code onboarding_document_templates};
              *  the file bytes are attached as a multipart part whose name
-             *  matches {@link DocumentAssignment#formPartName()}. */
-            List<DocumentAssignment> documents,
+             *  matches {@link DocumentAssignment#formPartName()}. Capped at
+             *  50 entries — no realistic onboarding packet legitimately
+             *  requires more. */
+            @Size(max = 50) List<DocumentAssignment> documents,
 
             // Step 5 — Mailbox -------------------------------------------------
             /** When {@code true} the service defers to
@@ -96,8 +106,10 @@ public final class DirectOnboardingDtos {
              *  created with a null passwordHash and the ERM assigns a
              *  mailbox later via the existing AssignCompanyEmailDialog. */
             Boolean assignMailboxNow,
-            String mailboxLocalPart,
-            String mailboxStartingPassword
+            @Pattern(regexp = "^$|^[a-z0-9._-]{1,64}$",
+                    message = "mailboxLocalPart must be lowercase kebab/dotted shape")
+            @Size(max = 64) String mailboxLocalPart,
+            @Size(max = 128) String mailboxStartingPassword
     ) {}
 
     /**
@@ -109,17 +121,17 @@ public final class DirectOnboardingDtos {
      * storage pipeline the intern packet flow uses.
      */
     public record DocumentAssignment(
-            String documentKey,
+            @NotBlank @Size(max = 120) String documentKey,
             /** Name of the multipart file part carrying the bytes for this
              *  document. Convention: {@code doc_<documentKey>}. */
-            String formPartName,
+            @NotBlank @Size(max = 150) String formPartName,
             /** Only used for custom documents (documentKey starting with
              *  {@code CUSTOM_}). The ERM-typed display name lands on a
              *  freshly-seeded (inactive) onboarding_document_template row
              *  so the downstream display path — which resolves task labels
              *  through {@code onboarding_document_templates} — shows the
              *  ERM's chosen title. Null / ignored for enum-backed keys. */
-            String titleOverride
+            @Size(max = 200) String titleOverride
     ) {}
 
     /**

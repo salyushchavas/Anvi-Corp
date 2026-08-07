@@ -31,6 +31,7 @@ import java.util.UUID;
 public class ProjectAssignmentController {
 
     private final ProjectAssignmentService service;
+    private final com.anvicorp.api.auth.RegistrationRateLimiter rateLimiter;
 
     @PostMapping
     @PreAuthorize("hasAnyRole('TRAINER', 'SUPER_ADMIN')")
@@ -74,6 +75,8 @@ public class ProjectAssignmentController {
             @PathVariable UUID id,
             @RequestParam("file") MultipartFile file,
             @AuthenticationPrincipal User caller) {
+        // Security Wave 3 — per-user upload throttle (10/user/min).
+        rateLimiter.enforceAuthenticatedUpload(caller == null ? null : caller.getId());
         return service.uploadSubmissionAttachment(id, file, caller);
     }
 

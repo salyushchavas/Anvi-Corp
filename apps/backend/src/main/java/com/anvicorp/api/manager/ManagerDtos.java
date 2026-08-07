@@ -407,17 +407,29 @@ public final class ManagerDtos {
     ) {}
 
     /** Body for POST /risk-center/{id}/assign. */
-    public record AssignRiskRequest(UUID assigneeUserId) {}
+    public record AssignRiskRequest(
+            @jakarta.validation.constraints.NotNull UUID assigneeUserId
+    ) {}
 
     /** Body for POST /risk-center/{id}/note — note must be ≥5 chars
-     *  (mirrors the existing ERM constraint). */
-    public record NoteRiskRequest(String note) {}
+     *  (mirrors the existing ERM constraint). Wave 3 — bounds enforced
+     *  at the DTO layer so the service can trust the input shape. */
+    public record NoteRiskRequest(
+            @jakarta.validation.constraints.NotBlank
+            @jakarta.validation.constraints.Size(min = 5, max = 2000)
+            String note
+    ) {}
 
     /** Body for POST /risk-center/{id}/resolve — reasonCode required;
      *  resolutionNote required (≥10 chars per existing ERM constraint). */
     public record ResolveRiskRequest(
+            @jakarta.validation.constraints.NotBlank
+            @jakarta.validation.constraints.Size(max = 40)
             String reasonCode,
+            @jakarta.validation.constraints.Size(max = 500)
             String reasonText,
+            @jakarta.validation.constraints.NotBlank
+            @jakarta.validation.constraints.Size(min = 10, max = 2000)
             String resolutionNote
     ) {}
 }
