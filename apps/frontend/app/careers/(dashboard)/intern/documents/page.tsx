@@ -294,8 +294,12 @@ function TaskCard({ task, packet, onChanged }: {
         + 'single PDF using your phone\'s scanner app, then upload that PDF.');
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('File exceeds 10 MB limit.');
+    // B2 — onboarding document uploads capped at 2 MB. Backend enforces
+    // the same limit via InternDocumentService.MAX_UPLOAD_BYTES; this
+    // client check saves the round-trip on obviously oversized files.
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('File exceeds 2 MB. Re-scan at a lower resolution or use '
+        + 'your scanner app\'s built-in size reduction, then try again.');
       return;
     }
     setUploading(true);
@@ -423,7 +427,7 @@ function TaskCard({ task, packet, onChanged }: {
           )}
         </div>
         {canUpload && (
-          <p className="mt-1.5 text-[10px] text-slate-500">PDF only · max 10 MB</p>
+          <p className="mt-1.5 text-[10px] text-slate-500">PDF only · max 2 MB</p>
         )}
       </div>
     </section>

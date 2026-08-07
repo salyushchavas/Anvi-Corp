@@ -44,10 +44,17 @@ export default function EvaluationHistoryPage() {
 function EvaluationHistoryInner() {
   const sp = useSearchParams();
   const internFilter = sp?.get('intern') ?? '';
+  // ?filter=unacknowledged pins the extra filter selector on mount so the
+  // Evaluator can be deep-linked into the "unacked backlog" view from other
+  // parts of the app.
+  const initialFilter = (sp?.get('filter') ?? 'ALL').toUpperCase();
   const { selectedMonth, isCurrentMonth } = useEvaluatorDashboard();
   const [search, setSearch] = useState('');
   const [type, setType] = useState<string>('ALL');
   const [status, setStatus] = useState<string>('ALL');
+  const [filter, setFilter] = useState<string>(
+    initialFilter === 'UNACKNOWLEDGED' ? 'UNACKNOWLEDGED' : 'ALL',
+  );
   const [page, setPage] = useState(0);
   const [data, setData] = useState<HistoryPage | null>(null);
   const [loading, setLoading] = useState(true);
@@ -61,6 +68,7 @@ function EvaluationHistoryInner() {
       if (search.trim()) params.set('search', search.trim());
       if (type !== 'ALL') params.set('type', type);
       if (status !== 'ALL') params.set('status', status);
+      if (filter !== 'ALL') params.set('filter', filter);
       // Scope listings to the sticky selected month. Current-month
       // omits the param so the query still returns everything when
       // the URL is clean.
@@ -84,7 +92,7 @@ function EvaluationHistoryInner() {
     } finally {
       setLoading(false);
     }
-  }, [search, type, status, page, internFilter, selectedMonth, isCurrentMonth]);
+  }, [search, type, status, filter, page, internFilter, selectedMonth, isCurrentMonth]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -108,8 +116,21 @@ function EvaluationHistoryInner() {
         </p>
       </header>
 
+      {filter === 'UNACKNOWLEDGED' && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Showing published evaluations the intern hasn&apos;t acknowledged yet.{' '}
+          <button
+            type="button"
+            className="font-medium underline hover:no-underline"
+            onClick={() => { setFilter('ALL'); setPage(0); }}
+          >
+            Clear filter
+          </button>
+        </div>
+      )}
+
       <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
           <label className="md:col-span-2 block">
             <span className="mb-1 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
               <Search className="h-3 w-3" />
@@ -156,6 +177,20 @@ function EvaluationHistoryInner() {
               <option value="AMENDED">Amended</option>
               <option value="SCHEDULED">Scheduled</option>
               <option value="IN_PROGRESS">In progress</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              <Filter className="h-3 w-3" />
+              Ack filter
+            </span>
+            <select
+              value={filter}
+              onChange={(e) => { setFilter(e.target.value); setPage(0); }}
+              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+            >
+              <option value="ALL">All</option>
+              <option value="UNACKNOWLEDGED">Unacknowledged only</option>
             </select>
           </label>
         </div>

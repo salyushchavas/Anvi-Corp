@@ -124,6 +124,53 @@ public class Candidate {
     @Column(name = "validity_start_date")
     private LocalDate validityStartDate;
 
+    // ── B2 US address (self-service) ────────────────────────────────────────
+    // Full US postal address collected on the profile Address section. All
+    // nullable so pre-B2 rows keep rendering; server-side validation lives
+    // in UserProfileService (ZIP regex + 50-state whitelist mirror the
+    // client). country stored as ISO-2, defaulted 'US' by the DB DEFAULT.
+
+    @Column(name = "address_street", length = 200)
+    private String addressStreet;
+
+    @Column(name = "address_apt", length = 60)
+    private String addressApt;
+
+    @Column(name = "address_city", length = 120)
+    private String addressCity;
+
+    /** 2-letter US state code (or 'DC'). Uppercase on write. */
+    @Column(name = "address_state", length = 2)
+    private String addressState;
+
+    /** 5-digit or 5+4 ZIP as a plain string. */
+    @Column(name = "address_zip", length = 10)
+    private String addressZip;
+
+    /** ISO-2 country code — column default is 'US'. */
+    @Column(name = "address_country", length = 2)
+    private String addressCountry;
+
+    /**
+     * One-shot stamp fired the first time the profile satisfies the stricter
+     * submission bar (base fields + address + at least one education). Null
+     * on legacy rows and on candidates who haven't yet met the stricter bar;
+     * the stamp gates the ERM submission-ack email/in-app so it fires
+     * exactly once per intern.
+     */
+    @Column(name = "profile_submitted_at")
+    private Instant profileSubmittedAt;
+
+    /**
+     * Throttle guard for the post-submission edit notification — at most
+     * one email per intern per 15 minutes. Rapid edits collapse into one
+     * notification round; the next round only fires once this timestamp
+     * plus 15 minutes has passed. Null on legacy rows / rows that never
+     * emitted an edit notification.
+     */
+    @Column(name = "last_profile_notified_at")
+    private Instant lastProfileNotifiedAt;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 

@@ -50,4 +50,25 @@ public class UpdateProfileRequest {
     private WorkAuthTrack expectedTrack;
     private LocalDate validityDate;
     private LocalDate validityStartDate;
+
+    // ── B2 profile expansion ────────────────────────────────────────────
+    // US address (all optional at the DTO layer — server enforces the ZIP
+    // regex + 50-state whitelist when values are present).
+    @Size(max = 200) private String addressStreet;
+    @Size(max = 60)  private String addressApt;
+    @Size(max = 120) private String addressCity;
+    /** 2-letter US state code (or 'DC'). Server upper-cases + validates against the 51 whitelist. */
+    @Size(max = 2)   private String addressState;
+    /** 5-digit or 5+4 ZIP. Server validates {@code ^\d{5}(-\d{4})?$}. */
+    @Size(max = 10)  private String addressZip;
+    /** ISO-2 country code. Client omits this; server defaults 'US' when null on write. */
+    @Size(max = 2)   private String addressCountry;
+
+    // WorkAuthorizationRecord dates surfaced to the intern via the profile
+    // work step. Existing storage — Candidate's validityDate/StartDate is
+    // the pre-hire self-attestation, and these two are the post-hire WAR
+    // authorized-from/until dates. Wired through the existing WAR upsert
+    // path in UserProfileService.
+    private LocalDate authorizedFrom;
+    private LocalDate authorizedUntil;
 }

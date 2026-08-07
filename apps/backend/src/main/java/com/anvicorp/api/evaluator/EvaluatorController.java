@@ -26,7 +26,6 @@ public class EvaluatorController {
     private final EvaluatorRightPanelService rightPanelService;
     private final EvaluationWorkflowService workflowService;
     private final PendingEvaluationsService pendingService;
-    private final PendingVivasService pendingVivasService;
     private final I983EvaluationWorkflowService i983Workflow;
     private final EvaluationHistoryService historyService;
     private final EvaluatorReportsService reportsService;
@@ -140,23 +139,6 @@ public class EvaluatorController {
                 com.anvicorp.api.common.MonthRange.parse(month));
     }
 
-    /**
-     * Evaluator pending-Q&A queue — projects whose status is PENDING_VIVA
-     * (trainer approved; awaiting evaluator's Q&A session + final
-     * approval). Scoped to lifecycles where {@code evaluator_id} matches
-     * the caller or is null (single-evaluator-org fallback).
-     *
-     * <p>Wires into the existing {@code /api/v1/qa-sessions} surface —
-     * the frontend uses this list to schedule sessions, record conducted
-     * notes, sign off (marks + remarks), or return for revisions.</p>
-     */
-    @GetMapping("/pending-vivas")
-    @PreAuthorize("hasAnyRole('EVALUATOR', 'SUPER_ADMIN')")
-    public PendingVivasDtos.PendingVivasResponse pendingVivas(
-            @AuthenticationPrincipal User caller) {
-        return pendingVivasService.list(caller);
-    }
-
     // ── Phase 3 — I-983 evaluation workflow ──────────────────────────────
 
     @GetMapping("/i983-evaluations")
@@ -245,11 +227,12 @@ public class EvaluatorController {
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String type,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String filter,
             @RequestParam(required = false) String month,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @AuthenticationPrincipal User caller) {
-        return historyService.list(caller, search, type, status,
+        return historyService.list(caller, search, type, status, filter,
                 com.anvicorp.api.common.MonthRange.parse(month),
                 page, pageSize);
     }

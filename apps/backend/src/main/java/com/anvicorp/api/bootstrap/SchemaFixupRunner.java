@@ -958,8 +958,10 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // users.password_hash — drop NOT NULL so the activation-link admin
         // create flow can persist an unactivated row (no usable password
         // until the user redeems their activation link). AuthService.login
-        // refuses null-hash rows with a clear "Account not activated"
-        // error; setPassword via /auth/activate clears the null.
+        // now refuses null-hash rows with the generic "Invalid credentials"
+        // 401 (was a distinct "Account not activated" message — removed as
+        // an enumeration oracle in Security Wave 1); setPassword via
+        // /auth/activate clears the null.
         try {
             jdbcTemplate.execute(
                     "ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL");
@@ -1662,6 +1664,13 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // advisory). Idempotent one-shot UPDATE; rows already on the new
         // values are no-ops on subsequent boots.
         remapOverallRecommendation();
+
+        // B2 profile expansion — address columns, submission-ack + edit-
+        // notify timestamps, and the new multi-education table + one-shot
+        // backfill from the legacy single-degree candidate columns. All
+        // idempotent; the backfill is gated by a migration_log row so the
+        // insert only fires on first boot after this ships.
+        ensureB2ProfileExpansionSchema();
     }
 
     /**
@@ -5737,6 +5746,169 @@ public class SchemaFixupRunner implements CommandLineRunner {
         } catch (Exception e) {
             log.warn("[SchemaFixupRunner] user_todo_dismissals CREATE skipped "
                     + "(non-fatal): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * B2 profile expansion.
+     *
+     * <p>Three concerns bundled into one idempotent block:</p>
+     * <ol>
+     *   <li><b>Address columns on {@code candidates}</b> — street, apt/unit,
+     *       city, state (2-letter), zip, country (defaulted 'US').</li>
+     *   <li><b>Submission-ack + edit-notify timestamps on {@code candidates}
+     *       </b> — {@code profile_submitted_at} guards the one-shot ERM
+     *       submission email, {@code last_profile_notified_at} guards the
+     *       15-minute throttle on the post-submission edit notification.</li>
+     *   <li><b>{@code educations} table + one-shot backfill</b> from every
+     *       candidate that already has a legacy single-degree row (school /
+     *       degreeLevel / graduationYear populated). Backfilled row is
+     *       stamped {@code is_primary=TRUE} so the profile Education tab
+     *       renders it as the primary degree; the legacy candidate columns
+     *       stay in sync going forward via the EducationService write path
+     *       (every write to the primary row mirrors school + degreeLevel +
+     *       specialization + graduationYear back onto candidates so every
+     *       existing reader — ProfileCompletionService, UserProfileService
+     *       toResponse, ErmApplicationService.getDetail, CandidateDashboardService
+     *       — sees the same values it always did).</li>
+     * </ol>
+     *
+     * <p>Backfill is gated by a {@code migration_log} row keyed
+     * {@code B2_EDUCATIONS_BACKFILL_V1} so the INSERT only runs on first
+     * boot after this ships; subsequent boots see the ledger row and skip
+     * the rescan. Column ALTERs are ADD COLUMN IF NOT EXISTS so multiple
+     * boots stay safe.</p>
+     */
+    private void ensureB2ProfileExpansionSchema() {
+        // 1) Address + submission-ack + edit-notify columns on candidates.
+        String[] candidateCols = new String[] {
+                "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS address_street VARCHAR(200)",
+                "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS address_apt VARCHAR(60)",
+                "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS address_city VARCHAR(120)",
+                "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS address_state VARCHAR(2)",
+                "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS address_zip VARCHAR(10)",
+                "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS address_country VARCHAR(2) DEFAULT 'US'",
+                "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS profile_submitted_at TIMESTAMP",
+                "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS last_profile_notified_at TIMESTAMP"
+        };
+        int okCols = 0, failCols = 0;
+        for (String sql : candidateCols) {
+            try {
+                jdbcTemplate.execute(sql);
+                okCols++;
+            } catch (Exception e) {
+                failCols++;
+                log.warn("[SchemaFixup] B2 candidates ALTER skipped ({}): {}",
+                        sql, e.getMessage());
+            }
+        }
+        // Verify line — one probe on address_state confirms the ALTER round
+        // stuck. Boolean result is logged either way; the count above is a
+        // second confirmation.
+        try {
+            Boolean present = jdbcTemplate.queryForObject(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
+                            + "WHERE table_name='candidates' AND column_name='address_state')",
+                    Boolean.class);
+            log.info("[SchemaFixup] B2 candidate columns: {} OK, {} failed. "
+                    + "verify(address_state present)={}",
+                    okCols, failCols, present);
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] B2 candidate columns verify probe failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+
+        // 2) educations table.
+        try {
+            jdbcTemplate.execute(
+                    "CREATE TABLE IF NOT EXISTS educations ("
+                            + "  id UUID PRIMARY KEY,"
+                            + "  candidate_id UUID NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,"
+                            + "  degree_level VARCHAR(20),"
+                            + "  institution VARCHAR(200),"
+                            + "  field_of_study VARCHAR(200),"
+                            + "  graduation_date DATE,"
+                            + "  is_primary BOOLEAN NOT NULL DEFAULT FALSE,"
+                            + "  created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+                            + "  updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
+                            + ")");
+            jdbcTemplate.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_educations_candidate "
+                            + "ON educations (candidate_id)");
+            log.info("[SchemaFixup] B2 educations table + index ensured");
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] B2 educations CREATE skipped (non-fatal): {}",
+                    e.getMessage());
+        }
+        // Verify line for the table.
+        try {
+            Boolean present = jdbcTemplate.queryForObject(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.tables "
+                            + "WHERE table_name='educations')",
+                    Boolean.class);
+            log.info("[SchemaFixup] B2 educations table verify={}", present);
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] B2 educations table verify failed: {}",
+                    e.getMessage());
+        }
+
+        // 3) One-shot backfill from legacy single-degree candidate columns.
+        //    Gated by migration_log so it only runs on first boot after this
+        //    ships. Skipped if the ledger already has a success row for this
+        //    key. Inserts one is_primary=true education per eligible candidate.
+        final String migKey = "B2_EDUCATIONS_BACKFILL_V1";
+        try {
+            Integer already = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM migration_log WHERE migration_key = ?",
+                    Integer.class, migKey);
+            if (already != null && already > 0) {
+                log.info("[SchemaFixup] B2 educations backfill already applied — skipping");
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] B2 educations backfill ledger check failed "
+                    + "(will attempt backfill anyway): {}", e.getMessage());
+        }
+        int inserted = 0;
+        try {
+            // Only candidates with at least school OR degreeLevel OR degree
+            // populated qualify; the graduation_date is derived from
+            // graduation_year (June 1 of that year as a stable placeholder).
+            // Skip anyone who already has an educations row (idempotent-safe
+            // even if the ledger row got lost).
+            inserted = jdbcTemplate.update(
+                    "INSERT INTO educations (id, candidate_id, degree_level, "
+                            + "institution, field_of_study, graduation_date, "
+                            + "is_primary, created_at, updated_at) "
+                            + "SELECT gen_random_uuid(), c.id, c.degree_level, "
+                            + "       c.school, c.specialization, "
+                            + "       CASE WHEN c.graduation_year IS NOT NULL "
+                            + "            THEN make_date(c.graduation_year::int, 6, 1) "
+                            + "            ELSE NULL END, "
+                            + "       TRUE, NOW(), NOW() "
+                            + "  FROM candidates c "
+                            + " WHERE (c.school IS NOT NULL AND LENGTH(TRIM(c.school)) > 0 "
+                            + "    OR  c.degree_level IS NOT NULL "
+                            + "    OR  (c.degree IS NOT NULL AND LENGTH(TRIM(c.degree)) > 0)) "
+                            + "   AND NOT EXISTS ("
+                            + "         SELECT 1 FROM educations e WHERE e.candidate_id = c.id"
+                            + "       )");
+            log.info("[SchemaFixup] B2 educations backfill inserted {} rows", inserted);
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] B2 educations backfill INSERT failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.update(
+                    "INSERT INTO migration_log (id, migration_key, executed_at, rows_migrated, notes) "
+                            + "VALUES (gen_random_uuid(), ?, NOW(), ?, ?) "
+                            + "ON CONFLICT (migration_key) DO NOTHING",
+                    migKey, inserted,
+                    "B2 educations backfill from candidates.school/degree_level/graduation_year");
+        } catch (Exception e) {
+            log.warn("[SchemaFixup] B2 educations backfill ledger write failed "
+                    + "(non-fatal — next boot may re-attempt backfill, "
+                    + "which is already NOT EXISTS-guarded): {}", e.getMessage());
         }
     }
 

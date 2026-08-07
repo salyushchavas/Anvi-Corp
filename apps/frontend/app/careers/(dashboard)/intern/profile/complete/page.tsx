@@ -41,6 +41,9 @@ interface ProfileResponse {
   expectedTrack?: WorkAuthTrack;
   validityDate?: string;
   validityStartDate?: string;
+  // B2 additions — WAR-side authorization dates surfaced through the profile.
+  authorizedFrom?: string;
+  authorizedUntil?: string;
 }
 
 interface ResumeRow {
@@ -78,6 +81,10 @@ export default function CompleteProfilePage() {
   const [expectedTrack, setExpectedTrack] = useState<WorkAuthTrack | ''>('');
   const [validityDate, setValidityDate] = useState('');
   const [validityStartDate, setValidityStartDate] = useState('');
+  // B2 — WorkAuthorizationRecord authorizedFrom / authorizedUntil, disclosed
+  // by the intern pre-hire via this same profile step.
+  const [authorizedFrom, setAuthorizedFrom] = useState('');
+  const [authorizedUntil, setAuthorizedUntil] = useState('');
 
   const [resume, setResume] = useState<ResumeRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -115,6 +122,8 @@ export default function CompleteProfilePage() {
         setExpectedTrack(p.expectedTrack ?? '');
         setValidityDate(p.validityDate ?? '');
         setValidityStartDate(p.validityStartDate ?? '');
+        setAuthorizedFrom(p.authorizedFrom ?? '');
+        setAuthorizedUntil(p.authorizedUntil ?? '');
 
         const rows = Array.isArray(resumesRes.data) ? resumesRes.data : [];
         const best = rows.find((r) => r.isDefault) ?? rows[0] ?? null;
@@ -188,6 +197,8 @@ export default function CompleteProfilePage() {
       expectedTrack: expectedTrack || undefined,
       validityDate: showEndDate && validityDate ? validityDate : undefined,
       validityStartDate: showStartDate && validityStartDate ? validityStartDate : undefined,
+      authorizedFrom: authorizedFrom || undefined,
+      authorizedUntil: authorizedUntil || undefined,
     };
     try {
       setSaving(true);
@@ -439,6 +450,30 @@ export default function CompleteProfilePage() {
                 </FormField>
               )}
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Authorized from" htmlFor="authorizedFrom">
+                <input
+                  id="authorizedFrom"
+                  type="date"
+                  value={authorizedFrom}
+                  onChange={(e) => setAuthorizedFrom(e.target.value)}
+                  className={inputClass()}
+                />
+              </FormField>
+              <FormField label="Authorized until" htmlFor="authorizedUntil">
+                <input
+                  id="authorizedUntil"
+                  type="date"
+                  value={authorizedUntil}
+                  onChange={(e) => setAuthorizedUntil(e.target.value)}
+                  className={inputClass()}
+                />
+              </FormField>
+            </div>
+            <p className="text-xs text-slate-500">
+              Optional. Once ERM sets up your Compliance record these dates
+              carry over to the work-authorization record they see.
+            </p>
           </>
         )}
 
