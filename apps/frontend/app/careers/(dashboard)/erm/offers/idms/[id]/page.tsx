@@ -26,6 +26,7 @@ import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
 import {
   RETURN_REASONS,
   REVOKE_REASONS,
+  downloadIdmsFinalPdf,
   humanDate,
   parseFieldSchema,
   stageToneClass,
@@ -218,15 +219,23 @@ function PageContent() {
             </button>
           )}
           {detail.finalPdfUrl && (
-            <a
-              href={detail.finalPdfUrl}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await downloadIdmsFinalPdf(
+                    api, detail.finalPdfUrl!,
+                    (detail.templateTitle ?? 'Document') + '.pdf');
+                } catch (e) {
+                  const ax = e as { response?: { data?: { error?: string } }; message?: string };
+                  toast.error(ax.response?.data?.error ?? ax.message ?? 'Download failed');
+                }
+              }}
               className="inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-900"
             >
               <Download className="h-3.5 w-3.5" />
               Executed PDF
-            </a>
+            </button>
           )}
         </div>
       </header>

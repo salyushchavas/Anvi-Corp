@@ -84,6 +84,28 @@ public class InternAgreementsController {
         return instanceService.internSubmit(id, req, caller);
     }
 
+    /**
+     * Intern-side companion to the ERM download endpoint — same shape,
+     * same headers. Owner-only via
+     * {@link DocumentInstanceService#readFinalPdfBytes} which throws
+     * 403 unless the caller owns the instance.
+     */
+    @org.springframework.web.bind.annotation.GetMapping("/{id}/final-pdf")
+    @PreAuthorize("hasRole('INTERN')")
+    public org.springframework.http.ResponseEntity<byte[]> downloadFinalPdf(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User caller) {
+        DocumentInstanceService.FinalPdfPayload payload =
+                instanceService.readFinalPdfBytes(id, caller);
+        return org.springframework.http.ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.CONTENT_TYPE,
+                        "application/pdf")
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                        com.anvicorp.api.common.ContentDispositionFilenames
+                                .forFilename("attachment", payload.suggestedFilename()))
+                .body(payload.bytes());
+    }
+
     private static String stageLabel(DocumentInstanceStatus s) {
         if (s == null) return "";
         return switch (s) {

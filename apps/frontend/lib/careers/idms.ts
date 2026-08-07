@@ -189,6 +189,84 @@ export function humanDate(iso: string | null | undefined): string {
  * <p>Falls back to the input verbatim when the string isn't ISO-shaped
  * (safer than hiding a mis-stored value from the reader).</p>
  */
+/**
+ * Trigger a save-as download of the IDMS executed PDF via the
+ * authenticated backend endpoint.
+ *
+ * <p>The {@code finalPdfUrl} field returned by
+ * {@code /api/v1/erm/idms/{id}} and {@code /api/v1/intern/agreements/{id}}
+ * is now a same-origin path (e.g. {@code /api/v1/erm/idms/{id}/final-pdf}),
+ * not a presigned S3 URL. A plain {@code <a href={url}>} click on those
+ * paths won't send the Bearer JWT so the download would 401. This helper
+ * fetches the bytes via axios (headers attached) as a Blob, extracts
+ * the filename from Content-Disposition, then triggers a
+ * client-side {@code <a download>} click on a blob URL — same pattern
+ * as {@code ReviewTaskModal.downloadUpload}. Cleanly revokes the
+ * blob URL afterwards so we don't leak.</p>
+ *
+ * @param apiClient  the shared axios instance (imported from
+ *                   {@code @/lib/careers/api}). Injected instead of
+ *                   pulled here to keep this module dependency-light.
+ * @param url        relative path returned in {@code finalPdfUrl}
+ * @param fallback   filename to use if Content-Disposition is missing —
+ *                   e.g. {@code "Offer Letter.pdf"}
+ */
+export async function downloadIdmsFinalPdf(
+  apiClient: {
+    get<T>(url: string, config?: { responseType?: 'blob' }): Promise<{
+      data: T;
+      headers: Record<string, string> | { get?: (k: string) => string | null };
+    }>;
+  },
+  url: string,
+  fallback: string,
+): Promise<void> {
+  const res = await apiClient.get<Blob>(url, { responseType: 'blob' });
+  const filename = filenameFromContentDisposition(headerValue(res.headers, 'content-disposition'))
+    ?? fallback;
+  const blobUrl = URL.createObjectURL(res.data);
+  try {
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    // Give the browser a beat to actually start the download before
+    // revoking; some browsers cancel the download if the URL is revoked
+    // synchronously after click().
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5_000);
+  }
+}
+
+function headerValue(
+  h: Record<string, string> | { get?: (k: string) => string | null },
+  key: string,
+): string | undefined {
+  const asAxios = h as { get?: (k: string) => string | null };
+  if (typeof asAxios.get === 'function') {
+    const v = asAxios.get(key);
+    return v ?? undefined;
+  }
+  const asObj = h as Record<string, string>;
+  return asObj[key] ?? asObj[key.toLowerCase()];
+}
+
+/** Prefer RFC 5987 {@code filename*=UTF-8''<encoded>}; fall back to the
+ *  legacy {@code filename="ascii"} — matches the two-header pattern the
+ *  backend {@code ContentDispositionFilenames} emits. */
+function filenameFromContentDisposition(cd: string | undefined): string | null {
+  if (!cd) return null;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+  if (star && star[1]) {
+    try { return decodeURIComponent(star[1]); } catch { /* fall through */ }
+  }
+  const plain = /filename=("([^"]+)"|([^;]+))/i.exec(cd);
+  if (plain) return (plain[2] ?? plain[3] ?? '').trim() || null;
+  return null;
+}
+
 export function formatIsoDateMdy(v: string | null | undefined): string {
   if (!v) return '';
   // Accept both bare YYYY-MM-DD and full ISO timestamps.

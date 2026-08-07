@@ -275,13 +275,44 @@ public class S3StorageService {
      * this backend. TTL clamped to [1 minute, 7 days] (AWS limit).
      */
     public String presignGetUrl(String key, Duration ttl) {
+        return presignGetUrl(key, ttl, null, null);
+    }
+
+    /**
+     * Presigned GET URL with response-header overrides.
+     *
+     * <p>S3 supports {@code response-content-type} and
+     * {@code response-content-disposition} query params on presigned
+     * GETs — they replace the object's stored Content-Type + Content-
+     * Disposition when serving the response. Useful when the on-disk
+     * object was written with {@code application/octet-stream} + a
+     * generic {@code .bin} storage key but the browser should save
+     * with the true type + a meaningful filename.</p>
+     *
+     * <p>Not suitable for PII-encrypted content (like
+     * {@code EDITABLE_DOC_INSTANCE_PDF} vault docs): the presigned URL
+     * still serves the raw stored bytes — which is the AES envelope,
+     * not the cleartext. Those callers must proxy through
+     * {@link com.anvicorp.api.intern.DocumentVaultService#readDocument}
+     * so the decrypt-on-read branch runs.</p>
+     */
+    public String presignGetUrl(String key, Duration ttl,
+                                 String responseContentType,
+                                 String responseContentDisposition) {
         ensureReady();
         Duration clamped = clampPresignTtl(ttl);
+        GetObjectRequest.Builder getReq = GetObjectRequest.builder()
+                .bucket(bucket).key(key);
+        if (responseContentType != null && !responseContentType.isBlank()) {
+            getReq.responseContentType(responseContentType);
+        }
+        if (responseContentDisposition != null && !responseContentDisposition.isBlank()) {
+            getReq.responseContentDisposition(responseContentDisposition);
+        }
         PresignedGetObjectRequest signed = presigner().presignGetObject(
                 GetObjectPresignRequest.builder()
                         .signatureDuration(clamped)
-                        .getObjectRequest(GetObjectRequest.builder()
-                                .bucket(bucket).key(key).build())
+                        .getObjectRequest(getReq.build())
                         .build());
         return signed.url().toString();
     }

@@ -263,6 +263,33 @@ public class ErmIdmsController {
         return instanceService.revoke(id, req, caller);
     }
 
+    /**
+     * Stream the finalized PDF as {@code application/pdf} with a proper
+     * {@code Content-Disposition: attachment; filename=...} — the vault
+     * stores the object under a {@code .bin} storage key and the PII-
+     * encrypted branch means a plain S3 presign returns the AES envelope
+     * not the PDF. This endpoint reads through
+     * {@link DocumentInstanceService#readFinalPdfBytes} (which uses
+     * {@code DocumentVaultService.readDocument} — auto-decrypts) and
+     * emits the plaintext bytes with the right headers so the browser
+     * saves it as {@code "<template> - <intern>.pdf"} and opens as a PDF.
+     */
+    @GetMapping("/{id}/final-pdf")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public ResponseEntity<byte[]> downloadFinalPdf(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User caller) {
+        DocumentInstanceService.FinalPdfPayload payload =
+                instanceService.readFinalPdfBytes(id, caller);
+        return ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.CONTENT_TYPE,
+                        "application/pdf")
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                        com.anvicorp.api.common.ContentDispositionFilenames
+                                .forFilename("attachment", payload.suggestedFilename()))
+                .body(payload.bytes());
+    }
+
     /** Convenience — 204 wrapper for delete-esque flows if callers want it. */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('SUPER_ADMIN')")

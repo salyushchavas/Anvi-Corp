@@ -15,6 +15,7 @@ import {
 import api from '@/lib/careers/api';
 import {
   RETURN_REASONS,
+  downloadIdmsFinalPdf,
   humanDate,
   stageToneClass,
   type InstanceDetail,
@@ -213,15 +214,23 @@ function StateCard({ offer }: { offer: InstanceDetail }) {
           Documents page as soon as ERM assigns them.
         </p>
         {offer.finalPdfUrl && (
-          <a
-            href={offer.finalPdfUrl}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await downloadIdmsFinalPdf(
+                  api, offer.finalPdfUrl!,
+                  (offer.templateTitle ?? 'Offer Letter') + '.pdf');
+              } catch (e) {
+                const ax = e as { response?: { data?: { error?: string } }; message?: string };
+                alert(ax.response?.data?.error ?? ax.message ?? 'Download failed');
+              }
+            }}
             className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-900"
           >
             <Download className="h-4 w-4" />
             Download executed offer
-          </a>
+          </button>
         )}
       </section>
     );

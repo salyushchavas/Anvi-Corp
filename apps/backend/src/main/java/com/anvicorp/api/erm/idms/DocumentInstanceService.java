@@ -17,7 +17,6 @@ import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ConflictException;
 import com.anvicorp.api.exception.ForbiddenException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
-import com.anvicorp.api.integration.s3.S3StorageService;
 import com.anvicorp.api.intern.DocumentVaultService;
 import com.anvicorp.api.intern.ReportingStructureAutoLinker;
 import com.anvicorp.api.notification.UserNotificationDispatcher;
@@ -76,7 +75,6 @@ public class DocumentInstanceService {
     private static final String CATEGORY_INSTANCE_PDF = "EDITABLE_DOC_INSTANCE_PDF";
     private static final String CATEGORY_SIGNATURE = "SIGNATURE_IMAGE";
     private static final Duration SIGNATURE_URL_TTL = Duration.ofMinutes(15);
-    private static final Duration FINAL_PDF_URL_TTL = Duration.ofMinutes(30);
     private static final int SIGNATURE_MAX_BYTES = 500 * 1024; // 500KB
 
     private final DocumentInstanceRepository instanceRepo;
@@ -89,7 +87,10 @@ public class DocumentInstanceService {
     private final ApplicationRepository applicationRepo;
     private final DocumentRepository documentRepo;
     private final DocumentVaultService vault;
-    private final S3StorageService s3;
+    // S3StorageService no longer needed here — the final PDF is served
+    // by the /final-pdf endpoints via DocumentVaultService.readDocument
+    // (which auto-decrypts the PII envelope). Direct S3 presign would
+    // return the AES envelope, not the PDF.
     private final DocumentInstancePdfRenderer pdfRenderer;
     private final AuditLogRepository auditLogRepo;
     private final ObjectMapper objectMapper;
@@ -1090,16 +1091,30 @@ public class DocumentInstanceService {
                     v.getFilledAt()));
         }
 
+        // Point at our authenticated + decrypting endpoint (NOT a raw S3
+        // presign). The vault stores EDITABLE_DOC_INSTANCE_PDF rows as
+        // PII-encrypted AES envelopes under a .bin storage key, so a
+        // plain presigned URL returns the ciphertext + wrong headers.
+        // /final-pdf reads via DocumentVaultService.readDocument (which
+        // decrypts) and emits Content-Type: application/pdf +
+        // Content-Disposition: attachment; filename="<template> - <intern>.pdf".
+        // Frontend must fetch via axios (blob) so the Bearer JWT rides
+        // on the request.
         String finalPdfUrl = null;
-        if (instance.getFinalPdfDocumentId() != null && s3.isReady()) {
-            try {
-                Document pdf = documentRepo.findById(instance.getFinalPdfDocumentId()).orElse(null);
-                if (pdf != null && pdf.getDeletedAt() == null) {
-                    finalPdfUrl = s3.presignGetUrl(pdf.getStorageKey(), FINAL_PDF_URL_TTL);
-                }
-            } catch (Exception ex) {
-                log.debug("[IDMS] final PDF presign failed for {}: {}",
-                        instance.getFinalPdfDocumentId(), ex.getMessage());
+        if (instance.getFinalPdfDocumentId() != null) {
+            Document pdf = documentRepo.findById(instance.getFinalPdfDocumentId()).orElse(null);
+            if (pdf != null && pdf.getDeletedAt() == null) {
+                // Owner-intern gets the intern route; ERM/SUPER_ADMIN
+                // gets the ERM route. Either endpoint accepts the other
+                // caller too (both go through readFinalPdfBytes which
+                // does owner-OR-staff), so a misroute is harmless — this
+                // just keeps the URL role-shaped for readability.
+                boolean isOwner = caller != null
+                        && caller.getId() != null
+                        && caller.getId().equals(instance.getInternUserId());
+                finalPdfUrl = isOwner
+                        ? "/api/v1/intern/agreements/" + instance.getId() + "/final-pdf"
+                        : "/api/v1/erm/idms/" + instance.getId() + "/final-pdf";
             }
         }
 
@@ -1274,6 +1289,72 @@ public class DocumentInstanceService {
         if (internUserId == null) return Optional.empty();
         List<DocumentInstance> offers = instanceRepo.findOfferFamilyForIntern(internUserId);
         return offers.isEmpty() ? Optional.empty() : Optional.of(offers.get(0));
+    }
+
+    /**
+     * Return the decrypted final PDF bytes + a display filename for an
+     * instance the caller is authorized to read.
+     *
+     * <p>Auth: same RBAC as {@link #getDetail} + {@code
+     * DocumentVaultService.readDocument}. Any owner-intern or ERM /
+     * SUPER_ADMIN staff passes; anyone else gets 403. Missing / non-
+     * FINALIZED / soft-deleted PDF row → 404.</p>
+     *
+     * <p>Filename shape: {@code "<template title> - <intern name>.pdf"}
+     * with control chars + Windows-illegal set stripped by the shared
+     * {@link ContentDispositionFilenames#sanitizeFilename} helper. The
+     * caller wraps this in an {@code attachment} Content-Disposition
+     * with the RFC-5987 two-header pattern.</p>
+     */
+    public record FinalPdfPayload(byte[] bytes, String suggestedFilename) {}
+
+    @Transactional
+    public FinalPdfPayload readFinalPdfBytes(UUID instanceId, User caller) {
+        DocumentInstance instance = instanceRepo.findById(instanceId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Document instance not found: " + instanceId));
+        // Basic access — owner (intern) or ERM/SUPER_ADMIN. The
+        // vault.readDocument call below re-enforces owner/staff too;
+        // this pre-check produces the cleaner IDMS-shaped 403/404 for
+        // clients that don't authenticate.
+        boolean owner = caller != null
+                && caller.getId().equals(instance.getInternUserId());
+        boolean staff = caller != null && caller.getRoles() != null && (
+                caller.getRoles().contains(UserRole.ERM)
+                        || caller.getRoles().contains(UserRole.SUPER_ADMIN));
+        if (!owner && !staff) {
+            throw new ForbiddenException(
+                    "Only the assigned intern or ERM staff can download this document.");
+        }
+        if (instance.getStatus() != DocumentInstanceStatus.FINALIZED
+                && instance.getStatus() != DocumentInstanceStatus.SUPERSEDED) {
+            // Not-yet-executed instances have no PDF. SUPERSEDED
+            // preserves the download so an intern can still fetch the
+            // executed prior version after a re-issue.
+            throw new ResourceNotFoundException(
+                    "This document has no executed PDF yet (status "
+                            + instance.getStatus() + ").");
+        }
+        UUID pdfDocId = instance.getFinalPdfDocumentId();
+        if (pdfDocId == null) {
+            throw new ResourceNotFoundException(
+                    "This document's executed PDF is missing (finalize may have failed).");
+        }
+        // Vault read auto-decrypts the AES envelope when
+        // encryption_metadata_json is set. That's the ONLY path that
+        // works for EDITABLE_DOC_INSTANCE_PDF — a plain S3 presign
+        // would return the ciphertext.
+        byte[] plain = vault.readDocument(pdfDocId, caller);
+
+        User intern = userRepo.findById(instance.getInternUserId()).orElse(null);
+        String internName = intern != null && intern.getFullName() != null
+                ? intern.getFullName() : "Intern";
+        String base = (instance.getTemplateTitle() == null
+                ? "Document"
+                : instance.getTemplateTitle())
+                + " - " + internName + ".pdf";
+        return new FinalPdfPayload(plain,
+                com.anvicorp.api.common.ContentDispositionFilenames.sanitizeFilename(base));
     }
 
     private void notifyUser(UUID userId, String eventKey, String title,
