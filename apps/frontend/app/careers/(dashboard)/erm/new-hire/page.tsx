@@ -306,7 +306,7 @@ function UnifiedTable({
 }: { rows: NewHireRow[]; loading: boolean; emptyFor: FilterKey }) {
   if (loading) {
     return (
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <div className="space-y-2 p-4">
           <div className="h-12 animate-pulse rounded bg-slate-100" />
           <div className="h-12 animate-pulse rounded bg-slate-100" />
@@ -331,7 +331,7 @@ function UnifiedTable({
     );
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
       <table className="min-w-full divide-y divide-slate-200 text-sm">
         <thead className="bg-slate-50">
           <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">

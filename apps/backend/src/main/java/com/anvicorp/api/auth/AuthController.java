@@ -12,6 +12,7 @@ import com.anvicorp.api.auth.dto.VerifyEmailRequest;
 import com.anvicorp.api.auth.dto.VerifyEmailResponse;
 import com.anvicorp.api.entity.User;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -34,35 +35,90 @@ public class AuthController {
 
     private final AuthService authService;
     private final RegistrationRateLimiter rateLimiter;
+    private final AuthCookies authCookies;
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest req,
-                                                 HttpServletRequest httpRequest) {
+                                                 HttpServletRequest httpRequest,
+                                                 HttpServletResponse httpResponse) {
         // Per-IP rate limit on the public register endpoint — bot mitigation.
         // Rejected requests never reach the service so no User row is created.
         rateLimiter.enforceRegister(httpRequest);
-        return ResponseEntity.ok(authService.register(req, httpRequest));
+        AuthResponse body = authService.register(req, httpRequest);
+        writeSessionCookies(httpResponse, body);
+        return ResponseEntity.ok(body);
     }
 
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest req,
-                                              HttpServletRequest httpRequest) {
+                                              HttpServletRequest httpRequest,
+                                              HttpServletResponse httpResponse) {
         // Per-email + per-IP throttle in front of the BCrypt cost. Bounds
         // credential-stuffing throughput even before the per-account
         // lockout counter kicks in.
         rateLimiter.enforceLogin(req.email(), httpRequest);
-        return ResponseEntity.ok(authService.login(req, httpRequest));
+        AuthResponse body = authService.login(req, httpRequest);
+        writeSessionCookies(httpResponse, body);
+        return ResponseEntity.ok(body);
     }
 
     /**
      * Exchange a refresh token for a fresh access+refresh pair. The presented
      * refresh token is revoked on success (rotation); a replayed or revoked
      * token returns 401 and the device is effectively signed out.
+     *
+     * <p>Security Wave 2 — the refresh token is now transported in the
+     * httpOnly {@code anvi_refresh} cookie the browser sends automatically.
+     * The request body is optional (retained for backward compatibility
+     * during rollout and for any server-to-server caller that still POSTs
+     * the raw token). Cookie wins when both are supplied.</p>
      */
     @PostMapping("/refresh")
-    public ResponseEntity<AuthResponse> refresh(@Valid @RequestBody RefreshTokenRequest req,
-                                                HttpServletRequest httpRequest) {
-        return ResponseEntity.ok(authService.refresh(req.refreshToken(), httpRequest));
+    public ResponseEntity<AuthResponse> refresh(@RequestBody(required = false) RefreshTokenRequest req,
+                                                HttpServletRequest httpRequest,
+                                                HttpServletResponse httpResponse) {
+        String cookieToken = AuthCookies.readRefreshCookie(httpRequest);
+        String bodyToken = req == null ? null : req.refreshToken();
+        String token = cookieToken != null ? cookieToken : bodyToken;
+        if (token == null || token.isBlank()) {
+            throw new AuthException(HttpStatus.UNAUTHORIZED, "Refresh token missing");
+        }
+        AuthResponse body = authService.refresh(token, httpRequest);
+        writeSessionCookies(httpResponse, body);
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * Security Wave 2 — explicit logout endpoint. Clears the three
+     * session cookies ({@code anvi_access}, {@code anvi_refresh},
+     * {@code XSRF-TOKEN}) by re-issuing them with {@code Max-Age=0}.
+     * Does not revoke the DB session row — a stolen refresh token cannot
+     * be laundered through the cookie clear alone; use the session
+     * management endpoints to revoke. Idempotent: safe to call while
+     * unauthenticated (permits a "sign out from everywhere" UX).
+     */
+    @PostMapping("/logout")
+    public ResponseEntity<Map<String, String>> logout(HttpServletResponse httpResponse) {
+        authCookies.clearAuthCookies(httpResponse);
+        return ResponseEntity.ok(Map.of("message", "Signed out"));
+    }
+
+    /**
+     * Emits the httpOnly access + refresh cookies AND a fresh CSRF cookie
+     * every time a session is created (login / register / refresh /
+     * activate). Rotating the CSRF token on session rotation means a
+     * compromised prior CSRF value stops working the moment the user
+     * signs back in.
+     */
+    private void writeSessionCookies(HttpServletResponse response, AuthResponse body) {
+        if (body == null) return;
+        if (body.token() != null) {
+            authCookies.writeAccessCookie(response, body.token());
+        }
+        if (body.refreshToken() != null) {
+            authCookies.writeRefreshCookie(response, body.refreshToken());
+        }
+        authCookies.writeCsrfCookie(response, AuthCookies.mintCsrfToken());
     }
 
     @PostMapping("/forgot-password")

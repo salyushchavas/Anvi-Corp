@@ -128,7 +128,7 @@ export default function CompliancePipelinePage() {
           </p>
         )}
 
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
           {loading && !data ? (
             <div className="h-40 animate-pulse" />
           ) : !data || data.items.length === 0 ? (

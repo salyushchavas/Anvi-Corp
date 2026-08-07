@@ -137,7 +137,7 @@ function PageContent() {
       ) : filtered.length === 0 ? (
         <EmptyState hasAny={items.length > 0} />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>

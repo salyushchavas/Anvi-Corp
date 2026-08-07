@@ -91,6 +91,22 @@ public class ResumeService {
             throw new BadRequestException(
                     "Unsupported content type. Allowed: pdf, doc, docx, jpg, png, webp");
         }
+        // Security Wave 2 — magic-byte check. Guarantees a .exe renamed
+        // resume.pdf never lands in the vault. Reads the whole file once
+        // here so the validator sees the real first bytes; downstream
+        // .getInputStream() re-opens a fresh stream.
+        try {
+            byte[] head = file.getBytes();
+            com.anvicorp.api.security.FileContentValidator.MagicSignature matched =
+                    com.anvicorp.api.security.FileContentValidator.requireOneOf(
+                            head,
+                            com.anvicorp.api.security.FileContentValidator.RESUME_ATTACHMENTS,
+                            "resume");
+            com.anvicorp.api.security.FileContentValidator.assertMimeConsistent(
+                    contentType, matched);
+        } catch (java.io.IOException ioe) {
+            throw new BadRequestException("Could not read uploaded file bytes");
+        }
 
         // Lazy-create Candidate if missing — same safety net ApplicationService uses.
         // Newly registered candidates can hit upload before any code path materializes

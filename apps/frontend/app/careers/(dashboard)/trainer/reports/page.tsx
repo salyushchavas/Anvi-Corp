@@ -234,7 +234,7 @@ export default function TrainerReportsPage() {
             </ChartCard>
           </section>
 
-          <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <section className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
             <header className="border-b border-slate-200 bg-slate-50 px-4 py-2">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 Per-intern roll-up — {report.headline.monthYear}

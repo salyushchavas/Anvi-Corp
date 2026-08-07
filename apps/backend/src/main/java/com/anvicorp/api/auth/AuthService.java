@@ -170,7 +170,7 @@ public class AuthService {
                     "Couldn't send your verification code. Please try again in a moment.");
         }
         writeAccountAudit(user.getId(), "EMAIL_VERIFICATION_PENDING");
-        log.info("User registered: {}", user.getEmail());
+        log.info("User registered: {}", maskEmail(user.getEmail()));
 
         // SECURITY — the verification code is NEVER returned to the client.
         // It rides email only; in dev the LogEmailProvider also writes it to
@@ -221,7 +221,8 @@ public class AuthService {
                 user.setVerifyCodeAttempts(0);
                 userRepository.save(user);
                 log.warn("[VerifyEmailCap] user {} exceeded {} wrong-code attempts; "
-                        + "code invalidated", user.getEmail(), VERIFY_CODE_ATTEMPT_CAP);
+                        + "code invalidated",
+                        maskEmail(user.getEmail()), VERIFY_CODE_ATTEMPT_CAP);
                 throw new AuthException(HttpStatus.BAD_REQUEST,
                         "Too many incorrect attempts. Request a new verification code.");
             }
@@ -336,6 +337,27 @@ public class AuthService {
      * left blank don't show up as " " or "" rows in the DB. JSON deserialisation
      * keeps explicit nulls null already; this only handles the empty-string case.
      */
+    /**
+     * Security Wave 2 (M/L) — mask an email for logging. Shows the first
+     * character of the local-part plus the domain so operators can still
+     * grep for a rough identifier without disclosing the full PII value
+     * to log-aggregation / SIEM sinks.
+     * <pre>
+     *   jane.doe@example.com  →  j****@example.com
+     *   x@example.com         →  *@example.com
+     *   (null / blank)        →  "&lt;anon&gt;"
+     * </pre>
+     */
+    private static String maskEmail(String email) {
+        if (email == null || email.isBlank()) return "<anon>";
+        int at = email.indexOf('@');
+        if (at <= 0) return "***";
+        String local = email.substring(0, at);
+        String domain = email.substring(at);
+        if (local.length() == 1) return "*" + domain;
+        return local.charAt(0) + "****" + domain;
+    }
+
     private static String emptyToNull(String s) {
         if (s == null) return null;
         String trimmed = s.trim();
@@ -401,7 +423,7 @@ public class AuthService {
         // 2) Unknown email → run dummy match to normalize timing, then 401.
         if (userOpt.isEmpty()) {
             passwordEncoder.matches(req.password(), dummyLoginHash);
-            log.warn("Failed login attempt for email: {}", req.email());
+            log.warn("Failed login attempt for email: {}", maskEmail(req.email()));
             throw new AuthException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
 
@@ -419,7 +441,7 @@ public class AuthService {
                 return finishSuccessfulLogin(user, httpRequest);
             }
             passwordEncoder.matches(req.password(), dummyLoginHash);
-            log.warn("Failed login attempt for email: {} (unactivated)", req.email());
+            log.warn("Failed login attempt for email: {} (unactivated)", maskEmail(req.email()));
             throw new AuthException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
 
@@ -429,7 +451,7 @@ public class AuthService {
         boolean careersOk = passwordEncoder.matches(req.password(), hash);
         if (!careersOk && !tryMailCredentialBridge(user, req.password())) {
             recordFailedLogin(user);
-            log.warn("Failed login attempt for email: {}", req.email());
+            log.warn("Failed login attempt for email: {}", maskEmail(req.email()));
             throw new AuthException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
 
@@ -446,11 +468,11 @@ public class AuthService {
         // frontend can't tell "real account, deactivated" from "unknown
         // email". Applies to mail-bridge logins too.
         if (Boolean.FALSE.equals(user.getActive())) {
-            log.warn("Login blocked for deactivated user: {}", user.getEmail());
+            log.warn("Login blocked for deactivated user: {}", maskEmail(user.getEmail()));
             throw new AuthException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
         resetFailedLoginCounter(user);
-        log.info("User logged in: {}", user.getEmail());
+        log.info("User logged in: {}", maskEmail(user.getEmail()));
         return issueSessionResponse(user, httpRequest);
     }
 
@@ -470,7 +492,7 @@ public class AuthService {
                 user.setLockedUntil(lockedUntil);
                 user.setFailedLoginCount(0);
                 userRepository.save(user);
-                log.warn("[LoginLockout] user {} locked until {}", user.getEmail(), lockedUntil);
+                log.warn("[LoginLockout] user {} locked until {}", maskEmail(user.getEmail()), lockedUntil);
             } else {
                 user.setFailedLoginCount(next);
                 userRepository.save(user);
@@ -527,7 +549,7 @@ public class AuthService {
                 userRepository.save(user);
             } catch (ObjectOptimisticLockingFailureException e) {
                 // Success path — don't fail the login over a counter save.
-                log.debug("[LoginLockout] reset lost race for {}, ignoring", user.getEmail());
+                log.debug("[LoginLockout] reset lost race for {}, ignoring", maskEmail(user.getEmail()));
             }
         }
     }
@@ -631,15 +653,20 @@ public class AuthService {
         passwordResetTokenRepository.save(prt);
 
         if (surfaceResetToken) {
-            log.info("DEV ONLY — password reset code for {}: {}",
-                    req.email(), code);
+            // Security Wave 2 — even dev-only logs mask both the recipient
+            // and the code so a shipping app.notification.surface-reset-token
+            // (e.g. via a leaked env var) does not disclose a live reset
+            // code to log aggregators.
+            log.info("DEV ONLY — password reset code issued for {} (code {}****)",
+                    maskEmail(req.email()),
+                    code == null || code.length() < 2 ? "**" : code.substring(0, 2));
         }
 
         try {
             notificationStub.sendPasswordReset(user.getEmail(), code, expiresAt);
         } catch (EmailDeliveryException e) {
             log.error("Password-reset email failed for {}: {}",
-                    user.getEmail(), e.getMessage());
+                    maskEmail(user.getEmail()), e.getMessage());
         }
     }
 
@@ -673,7 +700,7 @@ public class AuthService {
         prt.setUsed(true);
         passwordResetTokenRepository.save(prt);
 
-        log.info("Password reset completed for user: {}", user.getEmail());
+        log.info("Password reset completed for user: {}", maskEmail(user.getEmail()));
     }
 
     public MeResponse me(User user) {

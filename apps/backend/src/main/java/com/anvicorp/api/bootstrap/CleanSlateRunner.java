@@ -120,6 +120,16 @@ public class CleanSlateRunner implements ApplicationRunner {
         int failed = 0;
 
         for (String table : WIPE_ORDER) {
+            // Security Wave 2 — defence-in-depth on the identifier
+            // concatenation. WIPE_ORDER is a hardcoded whitelist so no
+            // user value can reach this point; the regex assertion is
+            // belt-and-suspenders against a future refactor that
+            // accidentally seeds the list from external input.
+            if (!table.matches("[a-z][a-z0-9_]{0,62}")) {
+                log.warn("{} REFUSED to wipe illegal table name: {}", LOG_TAG, table);
+                failed++;
+                continue;
+            }
             try {
                 long n = jdbcTemplate.update("DELETE FROM " + table);
                 deleted.put(table, n);

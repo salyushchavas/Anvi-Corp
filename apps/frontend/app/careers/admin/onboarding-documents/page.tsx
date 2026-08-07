@@ -244,11 +244,11 @@ function PageContent() {
 
       {/* Grouped table */}
       {loading && !data ? (
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
           <SkeletonRows />
         </div>
       ) : grouped.length === 0 ? (
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState hasAny={items.length > 0}
             onAddTemplate={() => setAddKind('TEMPLATE')}
             onAddDocument={() => setAddKind('NORMAL')}
@@ -297,7 +297,7 @@ function CategoryTable({ category, rows, onReplace, onRemove }: {
   onRemove: (r: TemplateRow) => void;
 }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2">
         <span className={
           'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold '

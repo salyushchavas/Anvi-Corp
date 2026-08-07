@@ -86,9 +86,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        String header = request.getHeader("Authorization");
-        if (header != null && header.startsWith("Bearer ")) {
-            String token = header.substring(7);
+        // Security Wave 2 — accept the token from the httpOnly
+        // {@code anvi_access} cookie first (the standard browser path),
+        // and fall back to the {@code Authorization: Bearer …} header for
+        // any server-to-server caller that still supplies it. Header-only
+        // callers must also carry their own CSRF stance — the CSRF filter
+        // skips them explicitly when no session cookie is present.
+        String token = AuthCookies.readAccessCookie(request);
+        if (token == null) {
+            String header = request.getHeader("Authorization");
+            if (header != null && header.startsWith("Bearer ")) {
+                token = header.substring(7);
+            }
+        }
+        if (token != null) {
             try {
                 Claims claims = jwtUtil.parseToken(token);
                 UUID userId = jwtUtil.extractUserId(claims);

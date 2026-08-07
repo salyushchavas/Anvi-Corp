@@ -3,13 +3,7 @@ import axios, {
   type AxiosRequestConfig,
   type InternalAxiosRequestConfig,
 } from 'axios';
-import {
-  clearAuth,
-  getRefreshToken,
-  getToken,
-  setRefreshToken,
-  setToken,
-} from './auth-storage';
+import { clearAuth } from './auth-storage';
 
 const baseURL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 
@@ -17,17 +11,47 @@ const baseURL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 // the value the running client actually resolved at build time.
 export const apiBaseURL = baseURL;
 
-// No hard default Content-Type — axios sets "application/json" automatically
-// for plain object bodies, and we explicitly drop the header for FormData in
-// the interceptor below so the browser supplies the multipart boundary.
+/**
+ * Security Wave 2 (H) — the session moved from a Bearer token in
+ * localStorage to an httpOnly cookie ({@code anvi_access}) the backend
+ * sets on login/register/refresh/activate. {@code withCredentials: true}
+ * tells the browser to attach cookies to every cross-origin request, and
+ * a matching CORS config on the backend already whitelists this origin
+ * with {@code Access-Control-Allow-Credentials: true}.
+ *
+ * <p>The request interceptor now injects the CSRF double-submit header
+ * ({@code X-CSRF-Token}) on every state-changing call — the value comes
+ * from the non-httpOnly {@code XSRF-TOKEN} cookie the backend seeds on
+ * the first GET and rotates on login. See CsrfDoubleSubmitFilter.</p>
+ */
 export const api = axios.create({
   baseURL,
+  withCredentials: true,
 });
 
+const CSRF_COOKIE = 'XSRF-TOKEN';
+const CSRF_HEADER = 'X-CSRF-Token';
+const UNSAFE_METHODS = new Set(['post', 'put', 'patch', 'delete']);
+
+function readCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = name + '=';
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      return decodeURIComponent(part.substring(prefix.length));
+    }
+  }
+  return null;
+}
+
 api.interceptors.request.use((config) => {
-  const token = getToken();
-  if (token) {
-    config.headers.set('Authorization', `Bearer ${token}`);
+  const method = (config.method ?? 'get').toLowerCase();
+  if (UNSAFE_METHODS.has(method)) {
+    const token = readCookie(CSRF_COOKIE);
+    if (token) {
+      config.headers.set(CSRF_HEADER, token);
+    }
   }
   // For FormData uploads (resume upload, etc.): drop any forced Content-Type
   // so the browser can set "multipart/form-data; boundary=..." automatically.
@@ -52,33 +76,31 @@ const LOGIN_URL = '/careers/login';
 // error.
 const NEVER_RETRY = ['/auth/login', '/auth/register', '/auth/refresh'];
 
-// Shape returned by /auth/refresh — minimal duplicate of AuthResponse to avoid
-// pulling the full types module into this low-level client.
-interface RefreshResponse {
-  token: string;
-  refreshToken: string;
-}
-
 // Concurrent-401 handling: while the first 401 is busy refreshing, every other
 // 401 should wait for that single attempt rather than each firing its own.
-let refreshPromise: Promise<string | null> | null = null;
+let refreshPromise: Promise<boolean> | null = null;
 
-async function tryRefreshAccessToken(): Promise<string | null> {
-  const refresh = getRefreshToken();
-  if (!refresh) return null;
+async function tryRefreshAccessToken(): Promise<boolean> {
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
     try {
-      const res = await axios.post<RefreshResponse>(
+      // Security Wave 2 — refresh token lives in the {@code anvi_refresh}
+      // httpOnly cookie; no body needed. Server reads the cookie, rotates
+      // the session, and Set-Cookies the new access + refresh + CSRF
+      // values on the response.
+      await axios.post(
         `${baseURL}/auth/refresh`,
-        { refreshToken: refresh },
-        { headers: { 'Content-Type': 'application/json' } }
+        {},
+        {
+          withCredentials: true,
+          headers: {
+            [CSRF_HEADER]: readCookie(CSRF_COOKIE) ?? '',
+          },
+        },
       );
-      setToken(res.data.token);
-      setRefreshToken(res.data.refreshToken);
-      return res.data.token;
+      return true;
     } catch {
-      return null;
+      return false;
     } finally {
       refreshPromise = null;
     }
@@ -125,22 +147,20 @@ api.interceptors.response.use(
       // Enrichment is best-effort — never break the original error path.
     }
 
-    // Try a refresh-and-retry once per request. The presence of a refresh
-    // token decides whether we attempt — without one we go straight to the
-    // login redirect below.
+    // Try a refresh-and-retry once per request. The refresh cookie is
+    // sent automatically by the browser; if it's missing we go straight
+    // to the login redirect below.
     if (
       status === 401 &&
       cfg &&
       !cfg._retried &&
       isRetryableRequest(cfg.url) &&
-      typeof window !== 'undefined' &&
-      getRefreshToken()
+      typeof window !== 'undefined'
     ) {
       cfg._retried = true;
-      const fresh = await tryRefreshAccessToken();
-      if (fresh) {
-        cfg.headers = cfg.headers ?? {};
-        (cfg.headers as Record<string, string>).Authorization = `Bearer ${fresh}`;
+      const ok = await tryRefreshAccessToken();
+      if (ok) {
+        // Cookie already refreshed by the server; just replay.
         return api.request(cfg as AxiosRequestConfig);
       }
     }
