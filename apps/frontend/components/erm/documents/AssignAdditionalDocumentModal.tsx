@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { X, ExternalLink, RotateCcw } from 'lucide-react';
+import { X, ExternalLink, RotateCcw, Search } from 'lucide-react';
 import api from '@/lib/careers/api';
 import {
   SKYZEN_DOCUMENT_BY_KEY,
@@ -49,6 +49,11 @@ export default function AssignAdditionalDocumentModal({
   const [err, setErr] = useState<string | null>(null);
   const [rows, setRows] = useState<PickableTemplate[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  // Case-insensitive substring filter across title + description. Select-
+  // all scopes to exactly the filtered visible rows so ERM can narrow to
+  // e.g. "passport" and hit Select all without silently grabbing every
+  // hidden row.
+  const [filter, setFilter] = useState('');
 
   const load = useCallback(async () => {
     setLoadErr(null);
@@ -75,15 +80,27 @@ export default function AssignAdditionalDocumentModal({
     return m;
   }, [existingTasks]);
 
+  // Apply the substring filter BEFORE grouping so both the categories
+  // list and the select-all helpers see only what the user sees.
+  const filtered = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return rows ?? [];
+    return (rows ?? []).filter((r) => {
+      const t = r.title?.toLowerCase() ?? '';
+      const d = r.description?.toLowerCase() ?? '';
+      return t.includes(needle) || d.includes(needle);
+    });
+  }, [rows, filter]);
+
   const grouped = useMemo(() => {
     const out = new Map<string, PickableTemplate[]>();
-    for (const r of rows ?? []) {
+    for (const r of filtered) {
       const list = out.get(r.category) ?? [];
       list.push(r);
       out.set(r.category, list);
     }
     return out;
-  }, [rows]);
+  }, [filtered]);
 
   const categories = useMemo(() => Array.from(grouped.keys()).sort(), [grouped]);
 
@@ -91,6 +108,25 @@ export default function AssignAdditionalDocumentModal({
     setSelected((cur) => {
       const next = new Set(cur);
       if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  }
+
+  // Select-all / deselect-all scoped to filtered rows.
+  const visibleKeys = useMemo(() => filtered.map((r) => r.key), [filtered]);
+  const allVisibleSelected =
+    visibleKeys.length > 0 && visibleKeys.every((k) => selected.has(k));
+  function selectAllVisible() {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      for (const k of visibleKeys) next.add(k);
+      return next;
+    });
+  }
+  function deselectAllVisible() {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      for (const k of visibleKeys) next.delete(k);
       return next;
     });
   }
@@ -168,6 +204,63 @@ export default function AssignAdditionalDocumentModal({
           )}
           {rows === null && !loadErr && (
             <div className="h-32 animate-pulse rounded-md bg-slate-100" />
+          )}
+
+          {rows !== null && rows.length > 0 && (
+            <div className="mb-3 space-y-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Filter by title or description"
+                  className="w-full rounded-md border border-slate-200 pl-7 pr-3 py-1.5 text-sm"
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs">
+                <span className="text-slate-600">
+                  {filter.trim() ? (
+                    <>
+                      <strong className="text-slate-900">{filtered.length}</strong> of{' '}
+                      <strong className="text-slate-900">{rows.length}</strong> shown
+                      {' · '}
+                      <strong className="text-slate-900">{selected.size}</strong> selected
+                    </>
+                  ) : (
+                    <>
+                      <strong className="text-slate-900">{selected.size}</strong> of{' '}
+                      <strong className="text-slate-900">{rows.length}</strong> selected
+                    </>
+                  )}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={selectAllVisible}
+                    disabled={visibleKeys.length === 0 || allVisibleSelected}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                    title={filter.trim() ? 'Selects only the filtered rows' : 'Selects every row'}
+                  >
+                    Select all{filter.trim() ? ' shown' : ''}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deselectAllVisible}
+                    disabled={selected.size === 0}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                  >
+                    Deselect all{filter.trim() ? ' shown' : ''}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {rows !== null && filtered.length === 0 && rows.length > 0 && (
+            <p className="mb-3 rounded-md border border-dashed border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+              No templates match {`"${filter.trim()}"`}. Adjust the filter to see more.
+            </p>
           )}
 
           {rows !== null && categories.map((cat) => {

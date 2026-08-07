@@ -184,6 +184,44 @@ public class DocumentPacketController {
                 .body(bytes);
     }
 
+    /**
+     * Preview the submitted file INLINE. Deliberately does NOT stamp
+     * {@code last_downloaded_at} / {@code download_count} /
+     * {@code downloaded_by_id} — that stays exclusively on the /file
+     * download endpoint above, which is the verify-after-download gate
+     * that {@link DocumentPacketService#reviewTask reviewTask} checks
+     * before allowing ACCEPT. Preview is for eyeballing (glance +
+     * decide whether to fully download); the ERM must still commit to
+     * a real download before they can Verify.
+     *
+     * <p>Response uses {@code Content-Disposition: inline} so browsers
+     * embed the bytes rather than trigger the save dialog. The actual
+     * MIME comes from the stored Document row so pdfs render as pdfs,
+     * images as images, and everything else falls back to a generic
+     * download prompt in the browser.</p>
+     */
+    @GetMapping("/document-review/tasks/{id}/preview")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public ResponseEntity<byte[]> previewUpload(
+            @PathVariable UUID id, @AuthenticationPrincipal User caller) {
+        DocumentTask t = taskRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + id));
+        if (t.getUploadedFileId() == null) {
+            throw new ResourceNotFoundException("No upload for task " + id);
+        }
+        byte[] bytes = documentVault.readDocument(t.getUploadedFileId(), caller);
+        Document meta = documentRepository.findById(t.getUploadedFileId()).orElse(null);
+        String name = meta != null && meta.getFileName() != null
+                ? meta.getFileName() : "upload";
+        String mime = meta != null && meta.getMimeType() != null
+                ? meta.getMimeType() : MediaType.APPLICATION_OCTET_STREAM_VALUE;
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"" + name + "\"")
+                .contentType(MediaType.parseMediaType(mime))
+                .body(bytes);
+    }
+
     @PostMapping("/document-review/tasks/{id}/review")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentDtos.DocumentTaskDetail review(
@@ -191,14 +229,6 @@ public class DocumentPacketController {
             @RequestBody DocumentDtos.ReviewTaskRequest req,
             @AuthenticationPrincipal User caller) {
         return service.reviewTask(id, req, caller);
-    }
-
-    @PostMapping("/document-review/tasks/bulk-review")
-    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
-    public DocumentDtos.BulkReviewResult bulkReview(
-            @RequestBody DocumentDtos.BulkReviewRequest req,
-            @AuthenticationPrincipal User caller) {
-        return service.bulkReview(req, caller);
     }
 
     @GetMapping("/document-review/reason-codes")

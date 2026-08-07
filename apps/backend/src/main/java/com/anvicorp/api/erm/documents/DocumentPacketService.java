@@ -52,7 +52,6 @@ import java.util.*;
 public class DocumentPacketService {
 
     private static final int ERM_COMMENTS_MIN = 20;
-    private static final int BULK_MAX = 25;
     private static final int MAX_TEMPLATES_PER_PACKET = 30;
 
     private final DocumentPacketRepository packetRepository;
@@ -875,34 +874,7 @@ public class DocumentPacketService {
         return toTaskDetail(saved);
     }
 
-    @Transactional
-    public BulkReviewResult bulkReview(BulkReviewRequest req, User caller) {
-        requireErm(caller);
-        if (req == null || req.taskIds() == null || req.taskIds().isEmpty()) {
-            throw new BadRequestException("taskIds (≥1) is required");
-        }
-        if (req.taskIds().size() > BULK_MAX) {
-            throw new BadRequestException(
-                    "Bulk review limited to " + BULK_MAX + " tasks per call");
-        }
-        String decision = req.decision() == null ? "" : req.decision().trim().toUpperCase();
-        if (!"ACCEPT".equals(decision)) {
-            throw new BadRequestException(
-                    "Bulk review only supports ACCEPT; reject / resend require per-task comments");
-        }
-        int accepted = 0;
-        List<BulkSkipReason> skipped = new ArrayList<>();
-        for (UUID id : req.taskIds()) {
-            try {
-                reviewTask(id, new ReviewTaskRequest(
-                        "ACCEPT", null, null, null, null), caller);
-                accepted++;
-            } catch (RuntimeException e) {
-                skipped.add(new BulkSkipReason(id, e.getMessage()));
-            }
-        }
-        return new BulkReviewResult(accepted, skipped.size(), skipped);
-    }
+    // Bulk-review removed — documents are reviewed individually only.
 
     // ── Completion check ─────────────────────────────────────────────────
 

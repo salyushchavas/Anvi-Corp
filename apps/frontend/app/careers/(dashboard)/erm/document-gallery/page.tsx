@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  Download,
   FolderArchive,
   RefreshCw,
   Search,
@@ -229,14 +230,85 @@ function Row({ r }: { r: InternRow }) {
         {r.lastUploadAt ? new Date(r.lastUploadAt).toLocaleString() : '—'}
       </td>
       <td className="px-3 py-2 text-right">
-        <Link
-          href={`/careers/erm/document-gallery/${r.lifecycleId}`}
-          className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-3 py-1 text-[11px] font-semibold text-white hover:bg-brand-800"
-        >
-          Open documents
-        </Link>
+        <div className="inline-flex items-center gap-2">
+          <DownloadAllButton
+            lifecycleId={r.lifecycleId}
+            internName={r.fullName ?? r.employeeId ?? 'Intern'}
+            acceptedCount={r.acceptedTasks}
+          />
+          <Link
+            href={`/careers/erm/document-gallery/${r.lifecycleId}`}
+            className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-3 py-1 text-[11px] font-semibold text-white hover:bg-brand-800"
+          >
+            Open documents
+          </Link>
+        </div>
       </td>
     </tr>
+  );
+}
+
+/**
+ * "Download all" ZIP button. Disabled with a tooltip when the intern
+ * has zero VERIFIED (ACCEPTED) documents — matches the server's clean
+ * 409 refusal so we don't produce an empty ZIP.
+ */
+function DownloadAllButton({
+  lifecycleId, internName, acceptedCount,
+}: {
+  lifecycleId: string;
+  internName: string;
+  acceptedCount: number;
+}) {
+  const [busy, setBusy] = useState(false);
+  const disabled = acceptedCount === 0;
+  async function run() {
+    if (disabled || busy) return;
+    setBusy(true);
+    try {
+      const res = await api.get<Blob>(
+        `/api/v1/erm/document-gallery/interns/${lifecycleId}/download-verified.zip`,
+        { responseType: 'blob' },
+      );
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      // Best-effort filename hint; the browser also honours the
+      // server's Content-Disposition (with RFC 5987 filename*).
+      a.download = `${internName}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      const ax = e as { response?: { data?: unknown }; message?: string };
+      let msg: string | undefined;
+      const raw = ax.response?.data;
+      if (raw instanceof Blob) {
+        try {
+          const text = await raw.text();
+          const parsed = JSON.parse(text) as { error?: string; message?: string };
+          msg = parsed.error ?? parsed.message;
+        } catch { /* not JSON */ }
+      }
+      alert(msg ?? ax.message ?? 'Download failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={run}
+      disabled={disabled || busy}
+      title={disabled
+        ? 'No verified documents yet — nothing to download.'
+        : `Download ${acceptedCount} verified document${acceptedCount === 1 ? '' : 's'} as a ZIP.`}
+      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      <Download className="h-3 w-3" />
+      {busy ? 'Zipping…' : 'Download all'}
+    </button>
   );
 }
 

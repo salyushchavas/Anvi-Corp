@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Download, X } from 'lucide-react';
+import { Download, Eye, X } from 'lucide-react';
 import api from '@/lib/careers/api';
 import type {
   DocumentTaskDetail,
@@ -26,6 +26,12 @@ export default function ReviewTaskModal({ taskId, onClose, onReviewed }: Props) 
   const [ermComments, setErmComments] = useState('');
   const [internalNote, setInternalNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Preview state — blob URL from /preview endpoint (no gate stamp).
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewMime, setPreviewMime] = useState<string | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +55,46 @@ export default function ReviewTaskModal({ taskId, onClose, onReviewed }: Props) 
     })();
     return () => { cancelled = true; };
   }, [taskId]);
+
+  // Revoke any blob URL on unmount / replacement so we don't leak.
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
+  async function openPreview() {
+    if (!detail || previewBusy) return;
+    setPreviewBusy(true);
+    setPreviewErr(null);
+    try {
+      const res = await api.get<Blob>(
+        `/api/v1/erm/document-review/tasks/${detail.taskId}/preview`,
+        { responseType: 'blob' },
+      );
+      const mime = (res.data.type && res.data.type.length > 0)
+        ? res.data.type
+        : 'application/octet-stream';
+      const url = URL.createObjectURL(res.data);
+      setPreviewUrl(url);
+      setPreviewMime(mime);
+      setPreviewOpen(true);
+    } catch (e) {
+      const ax = e as { response?: { data?: unknown }; message?: string };
+      let msg: string | undefined;
+      const raw = ax.response?.data;
+      if (raw instanceof Blob) {
+        try {
+          const text = await raw.text();
+          const parsed = JSON.parse(text) as { error?: string; message?: string };
+          msg = parsed.error ?? parsed.message;
+        } catch { /* not JSON */ }
+      }
+      setPreviewErr(msg ?? ax.message ?? 'Preview failed');
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
 
   async function downloadUpload() {
     if (!detail) return;
@@ -161,17 +207,53 @@ export default function ReviewTaskModal({ taskId, onClose, onReviewed }: Props) 
                         ? new Date(detail.submittedAt).toLocaleString() : '—'}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={downloadUpload}
-                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium"
-                  >
-                    <Download className="h-3.5 w-3.5" /> Download
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={openPreview}
+                      disabled={previewBusy}
+                      title="Open inline — does not satisfy the verify-after-download gate."
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium disabled:opacity-60"
+                    >
+                      <Eye className="h-3.5 w-3.5" /> {previewBusy ? 'Loading…' : 'Preview'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadUpload}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium"
+                    >
+                      <Download className="h-3.5 w-3.5" /> Download
+                    </button>
+                  </div>
                 </div>
                 <p className="mt-2 text-[11px] text-slate-500">
                   Attempt #{detail.version ?? 1}
+                  {' · '}
+                  <span className="text-slate-500">
+                    Preview is a glance — Verify still needs an actual download.
+                  </span>
                 </p>
+                {previewErr && (
+                  <p className="mt-2 rounded border border-red-200 bg-red-50 p-2 text-[11px] text-red-800">
+                    {previewErr}
+                  </p>
+                )}
+                {previewOpen && previewUrl && (
+                  <div className="mt-3 rounded-md border border-slate-200 bg-white p-2">
+                    <div className="mb-2 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Preview · {previewMime ?? 'unknown type'}</span>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewOpen(false)}
+                        className="rounded p-0.5 text-slate-500 hover:bg-slate-100"
+                        aria-label="Close preview"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <PreviewSurface url={previewUrl} mime={previewMime} onDownload={downloadUpload} />
+                  </div>
+                )}
               </section>
 
               {/* Pass 2 verify-after-download gate. ACCEPT stays
@@ -355,6 +437,52 @@ export default function ReviewTaskModal({ taskId, onClose, onReviewed }: Props) 
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Renders the previewed file inline for the MIME types browsers embed
+ * natively (pdf → iframe, image → img). Everything else falls back to a
+ * "download to view" prompt with a live Download button.
+ */
+function PreviewSurface({
+  url, mime, onDownload,
+}: {
+  url: string;
+  mime: string | null;
+  onDownload: () => void;
+}) {
+  const m = (mime ?? '').toLowerCase();
+  if (m.startsWith('application/pdf')) {
+    return (
+      <iframe
+        src={url}
+        title="Document preview"
+        className="h-[60vh] w-full rounded border border-slate-200 bg-white"
+      />
+    );
+  }
+  if (m.startsWith('image/')) {
+    return (
+      /* eslint-disable-next-line @next/next/no-img-element */
+      <img
+        src={url}
+        alt="Document preview"
+        className="mx-auto max-h-[60vh] w-auto rounded border border-slate-200 bg-white"
+      />
+    );
+  }
+  return (
+    <div className="flex flex-col items-center gap-2 rounded border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-xs text-slate-600">
+      <p>This file type can&apos;t be previewed inline.</p>
+      <button
+        type="button"
+        onClick={onDownload}
+        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium hover:bg-slate-100"
+      >
+        <Download className="h-3.5 w-3.5" /> Download to view
+      </button>
     </div>
   );
 }

@@ -1,7 +1,10 @@
 package com.anvicorp.api.erm.documents;
 
+import com.anvicorp.api.entity.User;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,5 +40,22 @@ public class DocumentGalleryController {
     public DocumentGalleryDtos.InternGalleryDetail getInternDetail(
             @PathVariable UUID lifecycleId) {
         return service.getInternDetail(lifecycleId);
+    }
+
+    /**
+     * Stream a ZIP of every VERIFIED (ACCEPTED) document for one intern.
+     * Streams synchronously over the response — no temp files. See
+     * {@link DocumentGalleryService#streamVerifiedZip} for spec-by-spec
+     * behaviour: sanitized filenames, duplicate-name suffixing keyed on
+     * name+extension, RFC 5987 Content-Disposition, MISSING_FILES.txt
+     * on partial failures, clean 409 when zero verified docs exist.
+     */
+    @GetMapping("/interns/{lifecycleId}/download-verified.zip")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public void downloadVerifiedZip(
+            @PathVariable UUID lifecycleId,
+            @AuthenticationPrincipal User caller,
+            HttpServletResponse response) {
+        service.streamVerifiedZip(lifecycleId, caller, response);
     }
 }
