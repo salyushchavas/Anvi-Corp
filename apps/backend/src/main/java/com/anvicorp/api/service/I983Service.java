@@ -28,11 +28,13 @@ import com.anvicorp.api.enums.WorkAuthTrack;
 import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.exception.StemOptRequiredException;
+import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.repository.ApplicationRepository;
 import com.anvicorp.api.repository.AuditLogRepository;
 import com.anvicorp.api.repository.CandidateRepository;
 import com.anvicorp.api.repository.EngagementRepository;
 import com.anvicorp.api.repository.I983PlanRepository;
+import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.OfferRepository;
 import com.anvicorp.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -90,6 +92,7 @@ public class I983Service {
     private final UserRepository userRepository;
     private final AuditLogRepository auditLogRepository;
     private final EngagementRepository engagementRepository;
+    private final InternLifecycleRepository internLifecycleRepository;
     private final com.anvicorp.api.notification.NotificationService notificationService;
     private final ObjectMapper objectMapper;
 
@@ -440,6 +443,10 @@ public class I983Service {
         I983Plan plan = planRepository.findByIdWithGraph(planId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "I-983 plan not found: " + planId));
+        // IDOR guard: restrict to the intern's assigned ERM (or
+        // SUPER_ADMIN). Unowned callers see 404 — cross-ERM probing can't
+        // confirm the plan exists.
+        ensureAssignedErmOr404(plan, actor, planId, "i983.submitToDso");
 
         if (plan.getStatus() != I983Status.COMPLETE) {
             throw new BadRequestException(
@@ -473,6 +480,8 @@ public class I983Service {
         I983Plan plan = planRepository.findByIdWithGraph(planId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "I-983 plan not found: " + planId));
+        // IDOR guard mirror of submitToDso.
+        ensureAssignedErmOr404(plan, actor, planId, "i983.recordDsoResponse");
 
         Set<I983Status> respondableStatuses = EnumSet.of(I983Status.SUBMITTED_TO_DSO, I983Status.DSO_APPROVED, I983Status.DSO_REJECTED, I983Status.AMENDMENT_REQUESTED);
         if (!respondableStatuses.contains(plan.getStatus())) {
@@ -625,6 +634,45 @@ public class I983Service {
     }
 
     // ── Permissions ─────────────────────────────────────────────────────────
+
+    /**
+     * IDOR guard for the DSO write paths (submitToDso / recordDsoResponse).
+     * Restricts to the intern's assigned ERM on the lifecycle row. Returns
+     * a 404 on mismatch — no 403 — so cross-ERM enumeration of pending DSO
+     * plans is blocked.
+     *
+     * <ul>
+     *   <li>SUPER_ADMIN bypasses.</li>
+     *   <li>Null lifecycle / null {@code erm_id} → single-org fallback:
+     *       any ERM caller is treated as the de-facto owner (parallels
+     *       TrainerScopeGuard / EvaluatorScopeGuard null-FK behaviour so
+     *       pre-Phase-3 legacy rows aren't locked out).</li>
+     * </ul>
+     */
+    private void ensureAssignedErmOr404(I983Plan plan, User actor, UUID planId,
+                                         String endpointName) {
+        if (actor == null) {
+            throw new AccessDeniedException("Authentication required");
+        }
+        if (actor.getRoles() != null
+                && actor.getRoles().contains(UserRole.SUPER_ADMIN)) return;
+        Candidate candidate = plan.getCandidate();
+        UUID internUserId = candidate != null && candidate.getUser() != null
+                ? candidate.getUser().getId() : null;
+        InternLifecycle lc = internUserId != null
+                ? internLifecycleRepository.findByUserId(internUserId).orElse(null)
+                : null;
+        if (lc == null || lc.getErmId() == null) {
+            log.debug("[I983Service] null lifecycle/erm_id for plan={} — "
+                    + "allowing {} caller {} as de-facto owner",
+                    planId, endpointName, actor.getId());
+            return;
+        }
+        if (lc.getErmId().equals(actor.getId())) return;
+        log.warn("[IDOR-guard] {} caller={} resource={} lifecycle={} reason=not-assigned-erm",
+                endpointName, actor.getId(), planId, lc.getId());
+        throw new ResourceNotFoundException("I-983 plan not found: " + planId);
+    }
 
     public void requireReadAccess(I983Plan plan, User caller) {
         if (caller == null) {

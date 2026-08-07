@@ -47,10 +47,23 @@ public class JwtUtil {
             @Value("${app.auth.access-token-ttl-minutes:15}") long accessTtlMinutes,
             @Value("${jwt.expiry-hours:0}") long legacyExpiryHours
     ) {
+        // NEVER supply a hardcoded default here — a fallback signing key would let anyone who
+        // reads this source mint valid access tokens. Boot MUST refuse when the secret is bad.
+        // Split "unset/blank" from "set-but-too-short" — operators routinely confuse the two,
+        // and each case wants distinct remediation guidance.
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException(
+                    "JWT_SECRET is not set. Set it to a base64-encoded 32+ byte random value "
+                            + "(openssl rand -base64 48) in the deployment environment "
+                            + "(Railway env vars) before starting the app."
+            );
+        }
         byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
         if (keyBytes.length < 32) {
             throw new IllegalStateException(
-                    "JWT_SECRET must be at least 32 bytes for HS256 (got " + keyBytes.length + ")"
+                    "JWT_SECRET is set but only " + keyBytes.length + " bytes long. "
+                            + "HS256 requires at least 32 bytes. Regenerate with: "
+                            + "openssl rand -base64 48"
             );
         }
         this.signingKey = Keys.hmacShaKeyFor(keyBytes);

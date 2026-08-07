@@ -27,16 +27,19 @@ import com.anvicorp.api.repository.PasswordResetTokenRepository;
 import com.anvicorp.api.repository.UserRepository;
 import com.anvicorp.api.repository.UserSessionRepository;
 import com.anvicorp.api.service.ApplicantIdGenerator;
+import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.EnumSet;
@@ -52,6 +55,14 @@ public class AuthService {
     private static final long RESET_CODE_TTL_SECONDS = 15L * 60L;
     private static final long VERIFICATION_CODE_TTL_HOURS = 24L;
     private static final SecureRandom RNG = new SecureRandom();
+
+    // ── Security Wave 1 — login lockout tuning ─────────────────────────────
+    /** Wrong-password count that trips the per-account lockout. */
+    private static final int LOGIN_LOCKOUT_THRESHOLD = 5;
+    /** Duration of the per-account lockout once triggered. */
+    private static final Duration LOGIN_LOCKOUT_DURATION = Duration.ofMinutes(15);
+    /** Wrong-code count that invalidates the current email-verification code. */
+    private static final int VERIFY_CODE_ATTEMPT_CAP = 5;
 
     /**
      * Current ToS / Privacy version stamp. Bump this whenever the legal text
@@ -92,6 +103,20 @@ public class AuthService {
      */
     @Value("${app.notification.surface-reset-token:false}")
     private boolean surfaceResetToken;
+
+    /**
+     * Fixed-cost BCrypt hash used to equalize login timing when no usable
+     * account is found — the constant-work anti-enumeration path. Mirrors
+     * the pattern in {@link com.anvicorp.api.mail.service.MailAuthService}.
+     * Encoded once at bean init so its cost factor matches stored hashes;
+     * the plaintext is irrelevant (matches() result is discarded).
+     */
+    private String dummyLoginHash;
+
+    @PostConstruct
+    void initDummyLoginHash() {
+        this.dummyLoginHash = passwordEncoder.encode("dummy-normalization-hash-do-not-use");
+    }
 
     @Transactional
     public AuthResponse register(RegisterRequest req, HttpServletRequest httpRequest) {
@@ -181,6 +206,27 @@ public class AuthService {
         String storedCode = user.getEmailVerificationCode();
         Instant expiresAt = user.getEmailVerificationExpiresAt();
         if (storedCode == null || !storedCode.equals(req.code())) {
+            // Per-account brute-force cap on a 6-digit code (1M keyspace
+            // + 24hr TTL was trivially brute-forceable). At the 5th wrong
+            // attempt, invalidate the code entirely and force the user to
+            // request a fresh one — that both stops the attack and makes
+            // the interruption visible on the legitimate user's side.
+            int attempts = user.getVerifyCodeAttempts() == null
+                    ? 0 : user.getVerifyCodeAttempts();
+            int nextAttempts = attempts + 1;
+            if (nextAttempts >= VERIFY_CODE_ATTEMPT_CAP) {
+                user.setEmailVerificationCode(null);
+                user.setEmailVerificationSentAt(null);
+                user.setEmailVerificationExpiresAt(null);
+                user.setVerifyCodeAttempts(0);
+                userRepository.save(user);
+                log.warn("[VerifyEmailCap] user {} exceeded {} wrong-code attempts; "
+                        + "code invalidated", user.getEmail(), VERIFY_CODE_ATTEMPT_CAP);
+                throw new AuthException(HttpStatus.BAD_REQUEST,
+                        "Too many incorrect attempts. Request a new verification code.");
+            }
+            user.setVerifyCodeAttempts(nextAttempts);
+            userRepository.save(user);
             throw new AuthException(HttpStatus.BAD_REQUEST,
                     "Invalid email or verification code");
         }
@@ -193,6 +239,10 @@ public class AuthService {
         user.setEmailVerificationCode(null);
         user.setEmailVerificationSentAt(null);
         user.setEmailVerificationExpiresAt(null);
+        // Reset the attempt counter explicitly — the code-null above
+        // logically resets it, but keeping this line makes the intent
+        // obvious to anyone reading the success path.
+        user.setVerifyCodeAttempts(0);
         writeAccountAudit(user.getId(), "EMAIL_VERIFIED");
 
         // Advance lifecycle REGISTERED → EMAIL_VERIFIED so downstream gates
@@ -256,6 +306,10 @@ public class AuthService {
         user.setEmailVerificationCode(code);
         user.setEmailVerificationSentAt(now);
         user.setEmailVerificationExpiresAt(expiresAt);
+        // Fresh code → fresh 5-attempt budget. Without this an attacker
+        // who used up 4 attempts against the old code would only get 1
+        // shot at the new one, which is a legit-user footgun.
+        user.setVerifyCodeAttempts(0);
         userRepository.save(user);
 
         // Resend: same retryable-error semantics as register. The code change
@@ -298,67 +352,184 @@ public class AuthService {
         auditLogRepository.save(row);
     }
 
+    /**
+     * Login with three security invariants:
+     *
+     * <ol>
+     *   <li><b>Constant work</b> — every failure path runs exactly one
+     *       BCrypt matches() call (real hash if the account has one, a
+     *       fixed {@link #dummyLoginHash} otherwise) so a timing side
+     *       channel can't distinguish unknown-email from wrong-password
+     *       or invited-not-activated from either.</li>
+     *   <li><b>Single generic message</b> — every failure surfaces the
+     *       same "Invalid credentials" 401. The prior distinct
+     *       "Account not activated" branch was an enumeration oracle
+     *       (finding H-4) and has been removed; the activation link email
+     *       remains the correct nudge for that user.</li>
+     *   <li><b>Per-account lockout</b> — 5 consecutive wrong passwords
+     *       trip a 15-minute {@link User#getLockedUntil()} and the
+     *       counter resets. During the lockout window the same generic
+     *       401 is returned (never "locked" — that's another oracle).</li>
+     * </ol>
+     *
+     * <p>The Phase-3 {@link #tryMailCredentialBridge} still fires as a
+     * dormant fallback when a real password_hash exists but doesn't
+     * match — behaviour preserved byte-for-byte for pre-existing users
+     * (mail_account_id is null on every row today, so the bridge
+     * short-circuits).</p>
+     */
+    @Transactional
     public AuthResponse login(LoginRequest req, HttpServletRequest httpRequest) {
         Optional<User> userOpt = userRepository.findByEmail(req.email());
 
-        // Mail bridge Phase 5 (revised) — the Phase-4 PENDING_ACTIVATION
-        // hard-lock has been REMOVED. Dashboard login is now byte-identical
-        // for every user (including those handed over to a company
-        // mailbox); the mailbox is a notification inbox reached via /mail
-        // with mail-side credentials. The Phase-3 tryMailCredentialBridge
-        // below stays in place as a dormant fallback (harmless — fires
-        // only on Careers BCrypt failure for users with a linked mail
-        // account, which still gates on the mail hash).
-
-        // Explicit unactivated-account gate. Admin-invite rows live in
-        // the DB with password_hash IS NULL until the user redeems the
-        // activation link; without this branch BCryptPasswordEncoder
-        // would just return false and we'd surface "Invalid credentials",
-        // which is misleading and hides the real fix (open the email).
-        if (userOpt.isPresent() && userOpt.get().getPasswordHash() == null) {
-            // Mail bridge Phase 3 (DORMANT) — a handed-over user may have
-            // a null Careers password by design and authenticate purely
-            // via their mail-account credential. tryMailCredentialBridge
-            // short-circuits to false when mail_account_id is null (every
-            // user today), so the original "Account not activated"
-            // behaviour is preserved byte-for-byte. On a true return the
-            // bridge falls through to the SAME active-gate +
-            // issueSessionResponse path the normal success uses.
-            if (!tryMailCredentialBridge(userOpt.get(), req.password())) {
-                log.warn("Login blocked for unactivated user: {}", req.email());
-                throw new AuthException(HttpStatus.UNAUTHORIZED,
-                        "Account not activated. Use the activation link emailed to you "
-                                + "by your admin. If it's lost or expired, ask the admin to re-issue it.");
-            }
-        } else if (userOpt.isEmpty()
-                || !passwordEncoder.matches(req.password(), userOpt.get().getPasswordHash())) {
-            // Mail bridge Phase 3 (DORMANT) — the standard Careers BCrypt
-            // check has FAILED. If the user exists AND has a linked mail
-            // account, retry the submitted password against the mail
-            // account's stored hash. tryMailCredentialBridge short-circuits
-            // to false when mail_account_id is null (every user today),
-            // so the original "Invalid credentials" behaviour is
-            // preserved. Unknown email still throws — userOpt.isEmpty()
-            // is checked first so we never call the bridge for a
-            // nonexistent account.
-            if (userOpt.isEmpty()
-                    || !tryMailCredentialBridge(userOpt.get(), req.password())) {
-                log.warn("Failed login attempt for email: {}", req.email());
+        // 1) Lockout check FIRST — before any BCrypt work so a locked
+        //    attacker can't even burn CPU. Same generic 401 as any other
+        //    failure; we never leak "locked" as a distinct state.
+        if (userOpt.isPresent()) {
+            User u = userOpt.get();
+            Instant lockedUntil = u.getLockedUntil();
+            if (lockedUntil != null && lockedUntil.isAfter(Instant.now())) {
+                // Still run the dummy match so the timing profile of a
+                // locked account matches the timing of any other 401.
+                passwordEncoder.matches(req.password(), dummyLoginHash);
+                log.warn("[LoginLockout] blocked attempt for locked user {} (locked until {})",
+                        u.getEmail(), lockedUntil);
                 throw new AuthException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
             }
         }
+
+        // 2) Unknown email → run dummy match to normalize timing, then 401.
+        if (userOpt.isEmpty()) {
+            passwordEncoder.matches(req.password(), dummyLoginHash);
+            log.warn("Failed login attempt for email: {}", req.email());
+            throw new AuthException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
+        }
+
         User user = userOpt.get();
-        // Reject deactivated accounts at the login boundary. We use 401 rather
-        // than 403 so a deactivated account behaves the same as a wrong-password
-        // attempt — clients don't get an oracle that distinguishes "real account"
-        // from "real account, just locked". Applies to bridge logins too: a
-        // deactivated user cannot bridge in.
+        String hash = user.getPasswordHash();
+
+        // 3) Invited-not-activated (password_hash IS NULL). Run dummy match
+        //    so timing matches wrong-password, then generic 401. The prior
+        //    distinct "Account not activated" message was an enumeration
+        //    oracle — activation-link email is the correct surface. Mail
+        //    bridge still gets a shot only when a real mail account link
+        //    exists (mail_account_id != null); dormant today.
+        if (hash == null) {
+            if (tryMailCredentialBridge(user, req.password())) {
+                return finishSuccessfulLogin(user, httpRequest);
+            }
+            passwordEncoder.matches(req.password(), dummyLoginHash);
+            log.warn("Failed login attempt for email: {} (unactivated)", req.email());
+            throw new AuthException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
+        }
+
+        // 4) Real BCrypt check. On mismatch: try the dormant mail-bridge
+        //    fallback; if that also fails, bump the per-account counter and
+        //    trip the lockout at 5 consecutive misses.
+        boolean careersOk = passwordEncoder.matches(req.password(), hash);
+        if (!careersOk && !tryMailCredentialBridge(user, req.password())) {
+            recordFailedLogin(user);
+            log.warn("Failed login attempt for email: {}", req.email());
+            throw new AuthException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
+        }
+
+        return finishSuccessfulLogin(user, httpRequest);
+    }
+
+    /**
+     * Common tail for a successful authentication: reject deactivated
+     * accounts (same generic 401), reset the failure counter, and hand
+     * off to the session issuer.
+     */
+    private AuthResponse finishSuccessfulLogin(User user, HttpServletRequest httpRequest) {
+        // Deactivated accounts see the same 401 as wrong password — the
+        // frontend can't tell "real account, deactivated" from "unknown
+        // email". Applies to mail-bridge logins too.
         if (Boolean.FALSE.equals(user.getActive())) {
             log.warn("Login blocked for deactivated user: {}", user.getEmail());
             throw new AuthException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
+        resetFailedLoginCounter(user);
         log.info("User logged in: {}", user.getEmail());
         return issueSessionResponse(user, httpRequest);
+    }
+
+    /**
+     * Increment the failed-login counter; at {@link #LOGIN_LOCKOUT_THRESHOLD}
+     * set {@link User#getLockedUntil()} and reset the counter so a fresh
+     * 5-strike window starts after the unlock. Absorbs a single optimistic
+     * lock collision — a second replica raced us and wrote first; the
+     * observed counter is close enough for a lockout signal.
+     */
+    private void recordFailedLogin(User user) {
+        int current = user.getFailedLoginCount() == null ? 0 : user.getFailedLoginCount();
+        int next = current + 1;
+        try {
+            if (next >= LOGIN_LOCKOUT_THRESHOLD) {
+                Instant lockedUntil = Instant.now().plus(LOGIN_LOCKOUT_DURATION);
+                user.setLockedUntil(lockedUntil);
+                user.setFailedLoginCount(0);
+                userRepository.save(user);
+                log.warn("[LoginLockout] user {} locked until {}", user.getEmail(), lockedUntil);
+            } else {
+                user.setFailedLoginCount(next);
+                userRepository.save(user);
+            }
+        } catch (ObjectOptimisticLockingFailureException e) {
+            // Two replicas raced. The other replica already wrote a newer
+            // state; retry once with a fresh read so we don't drop this
+            // failure. If it still races, swallow — the counter drifting
+            // by one across replicas is acceptable for a lockout signal
+            // and preferable to a 500 on a wrong password.
+            try {
+                User fresh = userRepository.findById(user.getId()).orElse(null);
+                if (fresh != null) {
+                    int freshCurrent = fresh.getFailedLoginCount() == null
+                            ? 0 : fresh.getFailedLoginCount();
+                    int freshNext = freshCurrent + 1;
+                    if (freshNext >= LOGIN_LOCKOUT_THRESHOLD) {
+                        Instant lockedUntil = Instant.now().plus(LOGIN_LOCKOUT_DURATION);
+                        fresh.setLockedUntil(lockedUntil);
+                        fresh.setFailedLoginCount(0);
+                        userRepository.save(fresh);
+                        log.warn("[LoginLockout] user {} locked until {} (after race retry)",
+                                fresh.getEmail(), lockedUntil);
+                    } else {
+                        fresh.setFailedLoginCount(freshNext);
+                        userRepository.save(fresh);
+                    }
+                }
+            } catch (ObjectOptimisticLockingFailureException ignored) {
+                log.debug("[LoginLockout] failed-count save lost race twice for {}, "
+                        + "swallowing (drift acceptable)", user.getEmail());
+            }
+        }
+    }
+
+    /**
+     * Zero the lockout counter + clear any expired lockout on the happy
+     * path. Runs on every successful login (even ones with a 0 counter)
+     * so a race where the counter drifted up in the previous replica
+     * settles here.
+     */
+    private void resetFailedLoginCounter(User user) {
+        boolean dirty = false;
+        if (user.getFailedLoginCount() != null && user.getFailedLoginCount() != 0) {
+            user.setFailedLoginCount(0);
+            dirty = true;
+        }
+        if (user.getLockedUntil() != null) {
+            user.setLockedUntil(null);
+            dirty = true;
+        }
+        if (dirty) {
+            try {
+                userRepository.save(user);
+            } catch (ObjectOptimisticLockingFailureException e) {
+                // Success path — don't fail the login over a counter save.
+                log.debug("[LoginLockout] reset lost race for {}, ignoring", user.getEmail());
+            }
+        }
     }
 
     /**

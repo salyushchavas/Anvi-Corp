@@ -25,11 +25,14 @@ import com.anvicorp.api.event.TimesheetVerifiedEvent;
 import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ForbiddenException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
+import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.repository.CandidateRepository;
+import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.TimesheetDayRepository;
 import com.anvicorp.api.repository.TimesheetRepository;
 import com.anvicorp.api.repository.WeeklyReportRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,6 +52,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class TimesheetService {
 
     private static final BigDecimal MAX_HOURS = new BigDecimal("168");
@@ -58,6 +62,7 @@ public class TimesheetService {
     private final CandidateRepository candidateRepository;
     private final EngagementService engagementService;
     private final LifecycleAccessPolicy lifecycleAccessPolicy;
+    private final InternLifecycleRepository internLifecycleRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final WeeklyReportRepository weeklyReportRepository;
 
@@ -245,6 +250,12 @@ public class TimesheetService {
         Candidate ownerForCheck = t.getIntern();
         UUID ownerUserId = ownerForCheck != null && ownerForCheck.getUser() != null
                 ? ownerForCheck.getUser().getId() : null;
+        // IDOR guard: only the intern's assigned trainer / reporting
+        // manager / ERM (or any MANAGER — org-wide by design per
+        // ManagerTimesheetApprovalService) may approve. Unowned callers
+        // get 404, not 403, so cross-owner probing can't confirm the row
+        // exists. SUPER_ADMIN bypasses.
+        ensureTimesheetOwnsOr404(t, ownerUserId, caller, id, "timesheet.approve");
         lifecycleAccessPolicy.ensureCanWrite(caller, ownerUserId,
                 LifecycleAccessPolicy.WriteIntent.RESOLVE_EXISTING);
         if (t.getStatus() == TimesheetStatus.APPROVED) {
@@ -279,6 +290,8 @@ public class TimesheetService {
         Candidate ownerForCheck = t.getIntern();
         UUID ownerUserId = ownerForCheck != null && ownerForCheck.getUser() != null
                 ? ownerForCheck.getUser().getId() : null;
+        // IDOR guard mirror of approve().
+        ensureTimesheetOwnsOr404(t, ownerUserId, caller, id, "timesheet.reject");
         lifecycleAccessPolicy.ensureCanWrite(caller, ownerUserId,
                 LifecycleAccessPolicy.WriteIntent.RESOLVE_EXISTING);
         if (t.getStatus() != TimesheetStatus.SUBMITTED
@@ -318,6 +331,75 @@ public class TimesheetService {
             // Listeners are best-effort; the event publisher itself
             // shouldn't crash a state transition.
         }
+    }
+
+    /**
+     * IDOR guard for the reviewer paths (approve / reject). Resolves the
+     * intern's lifecycle and requires the caller to be one of:
+     *
+     * <ul>
+     *   <li>SUPER_ADMIN — always bypasses.</li>
+     *   <li>Any MANAGER — org-wide oversight per the canonical design
+     *       (see {@code ManagerTimesheetApprovalService}).</li>
+     *   <li>The intern's assigned {@code trainer_id}, {@code manager_id},
+     *       or {@code erm_id} on the lifecycle row.</li>
+     * </ul>
+     *
+     * <p>If the lifecycle is missing or has null slots for all three roles
+     * (single-org / pre-Phase-3 legacy), any TRAINER / REPORTING_MANAGER
+     * / ERM caller (the controller's coarse role gate) passes — mirrors
+     * the {@link com.anvicorp.api.trainer.TrainerScopeGuard} +
+     * {@link com.anvicorp.api.evaluator.EvaluatorScopeGuard} null-FK
+     * fallback so we don't lock reviewers out of newly-active interns
+     * whose reporting structure hasn't been fully populated yet.</p>
+     *
+     * <p>On mismatch throws {@link ResourceNotFoundException} — no 403 —
+     * so cross-owner probing can't confirm the row exists.</p>
+     */
+    private void ensureTimesheetOwnsOr404(Timesheet t, UUID internUserId, User caller,
+                                           UUID timesheetId, String endpointName) {
+        if (caller == null) throw new ForbiddenException("Authentication required.");
+        if (isSuperAdmin(caller)) return;
+        // MANAGER role passes org-wide by design.
+        if (hasRole(caller, UserRole.MANAGER)) return;
+
+        InternLifecycle lc = internUserId != null
+                ? internLifecycleRepository.findByUserId(internUserId).orElse(null)
+                : null;
+
+        if (lc == null) {
+            // Pre-lifecycle / applicant intern — no scope to enforce; the
+            // coarse role gate already required TRAINER/REPORTING_MANAGER/ERM.
+            log.debug("[TimesheetService] no lifecycle for internUserId={} — "
+                    + "allowing {} caller {} on timesheet {}",
+                    internUserId, endpointName, caller.getId(), timesheetId);
+            return;
+        }
+
+        UUID callerId = caller.getId();
+        boolean isTrainerSlot = lc.getTrainerId() != null
+                && lc.getTrainerId().equals(callerId);
+        boolean isManagerSlot = lc.getManagerId() != null
+                && lc.getManagerId().equals(callerId);
+        boolean isErmSlot = lc.getErmId() != null
+                && lc.getErmId().equals(callerId);
+        if (isTrainerSlot || isManagerSlot || isErmSlot) return;
+
+        // Null-slot fallback: if every reviewer slot is null, treat any
+        // role-gated caller as the de-facto owner (parallels the
+        // TrainerScopeGuard / EvaluatorScopeGuard null-FK fallback for
+        // single-org setups).
+        if (lc.getTrainerId() == null && lc.getManagerId() == null
+                && lc.getErmId() == null) {
+            log.debug("[TimesheetService] all reviewer slots null on lifecycle={} — "
+                    + "allowing {} caller {} as de-facto owner",
+                    lc.getId(), endpointName, callerId);
+            return;
+        }
+
+        log.warn("[IDOR-guard] {} caller={} resource={} lifecycle={} reason=not-in-reviewer-slots",
+                endpointName, callerId, timesheetId, lc.getId());
+        throw new ResourceNotFoundException("Timesheet not found: " + timesheetId);
     }
 
     /**

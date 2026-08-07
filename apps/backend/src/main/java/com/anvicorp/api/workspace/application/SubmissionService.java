@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.anvicorp.api.entity.AuditLog;
 import com.anvicorp.api.entity.Candidate;
 import com.anvicorp.api.entity.Engagement;
+import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.entity.Project;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.ProjectStatus;
@@ -15,6 +16,7 @@ import com.anvicorp.api.exception.ConflictException;
 import com.anvicorp.api.exception.ForbiddenException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.repository.AuditLogRepository;
+import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.ProjectRepository;
 import com.anvicorp.api.service.ProjectWorkflowService;
 import com.anvicorp.api.workspace.domain.ProjectWorkspaceFile;
@@ -78,6 +80,7 @@ public class SubmissionService {
     private final WorkspaceSubmissionRepository submissionRepository;
     private final WorkspaceSubmittedFileRepository submittedFileRepository;
     private final AuditLogRepository auditLogRepository;
+    private final InternLifecycleRepository internLifecycleRepository;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -189,6 +192,11 @@ public class SubmissionService {
     @Transactional
     public WorkspaceSubmission approveTechnically(UUID submissionId, User evaluator) {
         WorkspaceSubmission submission = loadSubmission(submissionId);
+        // IDOR guard: only the project's assigned trainer (or SUPER_ADMIN)
+        // may approve. Unowned callers get 404 to prevent cross-trainer
+        // enumeration of pending submissions.
+        Project project = loadProject(submission.getProjectId());
+        ensureCanReviewOr404(project, evaluator, submissionId, "submission.approve");
         ensurePendingForReview(submission);
 
         // Delegate the status transition + audit + event to the existing service.
@@ -216,6 +224,9 @@ public class SubmissionService {
     @Transactional
     public WorkspaceSubmission returnForRevisions(UUID submissionId, User evaluator, String reason) {
         WorkspaceSubmission submission = loadSubmission(submissionId);
+        // IDOR guard mirror of approveTechnically.
+        Project project = loadProject(submission.getProjectId());
+        ensureCanReviewOr404(project, evaluator, submissionId, "submission.return");
         ensurePendingForReview(submission);
         String trimmed = reason != null ? reason.trim() : "";
         if (trimmed.length() < MIN_REASON_LENGTH) {
@@ -269,22 +280,74 @@ public class SubmissionService {
         }
     }
 
-    private static void ensureCanRead(Project project, User caller) {
+    private void ensureCanRead(Project project, User caller) {
         if (caller == null) throw new ForbiddenException("Authentication required.");
         if (caller.getRoles() != null
                 && caller.getRoles().contains(UserRole.SUPER_ADMIN)) return;
-        // Role-based — any TECHNICAL_EVALUATOR / REPORTING_MANAGER can read
-        // any submission. Per-engagement FKs are no longer the boundary.
+        // ERM keeps org-wide oversight visibility (matches audit's
+        // broad-read pattern for staff observability).
         if (caller.getRoles() != null
-                && (caller.getRoles().contains(UserRole.TRAINER)
-                    || caller.getRoles().contains(UserRole.REPORTING_MANAGER))) {
-            return;
-        }
+                && caller.getRoles().contains(UserRole.ERM)) return;
+        // Intern-owner may read their own project's submissions.
         Candidate intern = project.getIntern();
         User internUser = intern != null ? intern.getUser() : null;
         if (internUser != null && internUser.getId().equals(caller.getId())) return;
+        // TRAINER / REPORTING_MANAGER reads are scoped to the assigned
+        // trainer on the project's lifecycle (defense against
+        // cross-trainer submission enumeration). Same 404 anti-enum
+        // pattern used by the reviewer write paths.
+        if (caller.getRoles() != null
+                && (caller.getRoles().contains(UserRole.TRAINER)
+                        || caller.getRoles().contains(UserRole.REPORTING_MANAGER))) {
+            InternLifecycle lc = resolveLifecycleForProject(project);
+            // Null lifecycle / null trainer_id → single-org fallback:
+            // treat any role-gated caller as owner. Matches
+            // TrainerScopeGuard's null-FK semantics.
+            if (lc == null || lc.getTrainerId() == null) return;
+            if (lc.getTrainerId().equals(caller.getId())) return;
+            log.warn("[IDOR-guard] submission.read caller={} resource={} lifecycle={} reason=not-assigned-trainer",
+                    caller.getId(), project.getId(), lc.getId());
+            throw new ResourceNotFoundException(
+                    "Submission not found for project " + project.getId());
+        }
         throw new ForbiddenException(
                 "Only this project's intern, evaluator, or SUPER_ADMIN may view this submission.");
+    }
+
+    /**
+     * Reviewer-write gate for approve / return. Scopes to the assigned
+     * trainer on the project's lifecycle. SUPER_ADMIN bypasses.
+     * Null-lifecycle / null-trainer fallback mirrors ensureCanRead so
+     * single-org setups aren't locked out.
+     */
+    private void ensureCanReviewOr404(Project project, User caller, UUID submissionId,
+                                       String endpointName) {
+        if (caller == null) throw new ForbiddenException("Authentication required.");
+        if (caller.getRoles() != null
+                && caller.getRoles().contains(UserRole.SUPER_ADMIN)) return;
+        InternLifecycle lc = resolveLifecycleForProject(project);
+        if (lc == null || lc.getTrainerId() == null) {
+            log.debug("[SubmissionService] null lifecycle/trainer for project={} — "
+                    + "allowing {} caller {} as de-facto owner",
+                    project.getId(), endpointName, caller.getId());
+            return;
+        }
+        if (lc.getTrainerId().equals(caller.getId())) return;
+        log.warn("[IDOR-guard] {} caller={} resource={} lifecycle={} reason=not-assigned-trainer",
+                endpointName, caller.getId(), submissionId, lc.getId());
+        throw new ResourceNotFoundException("Submission not found: " + submissionId);
+    }
+
+    /**
+     * Resolve the project's InternLifecycle via its {@code internLifecycleId}
+     * denormalised column (populated by Trainer Phase 2 assign-project);
+     * returns {@code null} for legacy rows that never had it stamped so the
+     * callers can fall back to their null-slot semantics.
+     */
+    private InternLifecycle resolveLifecycleForProject(Project project) {
+        if (project == null || project.getInternLifecycleId() == null) return null;
+        return internLifecycleRepository.findById(project.getInternLifecycleId())
+                .orElse(null);
     }
 
     private static void ensurePendingForReview(WorkspaceSubmission submission) {

@@ -30,12 +30,14 @@ import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ConflictException;
 import com.anvicorp.api.exception.ForbiddenException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
+import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.repository.AuditLogRepository;
 import com.anvicorp.api.repository.CandidateRepository;
 import com.anvicorp.api.repository.EngagementRepository;
 import com.anvicorp.api.repository.EvaluationRepository;
 import com.anvicorp.api.repository.EvaluationRubricScoreRepository;
 import com.anvicorp.api.repository.EvaluationSelfReviewRepository;
+import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.ProjectRepository;
 import com.anvicorp.api.repository.TimesheetRepository;
 import com.anvicorp.api.repository.WeeklyReportRepository;
@@ -101,6 +103,7 @@ public class EvaluationService {
     private final WeeklyReportRepository weeklyReportRepository;
     private final TimesheetRepository timesheetRepository;
     private final AuditLogRepository auditLogRepository;
+    private final InternLifecycleRepository internLifecycleRepository;
     private final ObjectMapper objectMapper;
     private final com.anvicorp.api.notification.NotificationService notificationService;
 
@@ -141,6 +144,11 @@ public class EvaluationService {
         Evaluation evaluation = evaluationRepository.findByIdWithGraph(evaluationId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Evaluation not found: " + evaluationId));
+        // IDOR guard: resolve the intern's lifecycle from the evaluation and
+        // require the caller be the assigned Evaluator (or SUPER_ADMIN).
+        // Unowned callers see a 404, not a 403 — cross-evaluator probing
+        // can't confirm the row exists.
+        ensureEvaluatorOwnsOr404(evaluation, actor, evaluationId);
         ensureWriter(evaluation, actor);
         if (evaluation.getStatus() == EvaluationStatus.FINALIZED) {
             throw new ConflictException(
@@ -171,6 +179,8 @@ public class EvaluationService {
         Evaluation evaluation = evaluationRepository.findByIdWithGraph(evaluationId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Evaluation not found: " + evaluationId));
+        // IDOR guard mirror of update(): un-assigned evaluators get 404.
+        ensureEvaluatorOwnsOr404(evaluation, actor, evaluationId);
         ensureWriter(evaluation, actor);
         if (evaluation.getStatus() == EvaluationStatus.FINALIZED) {
             return toResponse(evaluation, true); // idempotent
@@ -317,6 +327,55 @@ public class EvaluationService {
     // metadata, not a permission boundary.
     private void ensureSupervisorOwnsEngagement(Engagement engagement, User actor) {
         ensureTechnicalSupervisorRole(actor);
+    }
+
+    /**
+     * IDOR guard for the writer paths (update / finalize). Resolves the
+     * intern's user id from the evaluation's Candidate, loads the
+     * lifecycle, and enforces "caller is the assigned evaluator on the
+     * lifecycle OR is the original evaluator that authored the row".
+     * SUPER_ADMIN bypasses. On mismatch throws
+     * {@link ResourceNotFoundException} (not 403) so cross-evaluator
+     * probing can't confirm the row exists.
+     *
+     * <p>Null lifecycle.evaluator_id is the single-evaluator-org default
+     * — mirrors {@link EvaluatorScopeGuard}'s fallback so we don't lock
+     * out the current org evaluator on rows created under a prior
+     * default account.</p>
+     *
+     * <p>Reads (listForIntern / listMine / listAuthored /
+     * listSelfReviewable) are intentionally left broader per the audit
+     * — the reviewer/HR audit trail benefits from visibility.</p>
+     */
+    private void ensureEvaluatorOwnsOr404(Evaluation evaluation, User actor, UUID evaluationId) {
+        if (actor == null) throw new ForbiddenException("Authentication required.");
+        if (isSuperAdmin(actor)) return;
+        // Original evaluator that authored the row always keeps write
+        // access (matches ensureWriter's same-author allowance).
+        if (evaluation.getEvaluator() != null
+                && evaluation.getEvaluator().getId().equals(actor.getId())) {
+            return;
+        }
+        Candidate intern = evaluation.getIntern();
+        UUID internUserId = intern != null && intern.getUser() != null
+                ? intern.getUser().getId() : null;
+        InternLifecycle lc = internUserId != null
+                ? internLifecycleRepository.findByUserId(internUserId).orElse(null)
+                : null;
+        // Single-evaluator-org fallback: null evaluator_id = any
+        // TRAINER/EVALUATOR is de-facto owner (mirrors EvaluatorScopeGuard).
+        if (lc == null || lc.getEvaluatorId() == null) {
+            log.debug("[EvaluationService] null evaluator_id or lifecycle for evaluation={} — "
+                    + "allowing caller {} as de-facto owner",
+                    evaluationId, actor.getId());
+            return;
+        }
+        if (!actor.getId().equals(lc.getEvaluatorId())) {
+            log.warn("[IDOR-guard] evaluation.write caller={} resource={} lifecycle={} reason=not-assigned-evaluator",
+                    actor.getId(), evaluationId, lc.getId());
+            throw new ResourceNotFoundException(
+                    "Evaluation not found: " + evaluationId);
+        }
     }
 
     private void ensureWriter(Evaluation evaluation, User actor) {
