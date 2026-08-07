@@ -248,6 +248,31 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * SSE / long-poll client disconnect. When the browser closes the
+     * {@code /api/mail/events} EventSource (tab close, network blip,
+     * timeout, page navigation) the async write path throws
+     * {@link org.springframework.web.context.request.async.AsyncRequestNotUsableException}
+     * (Spring 6.1 wrapper for the underlying {@code IOException: Broken pipe}
+     * / Tomcat {@code ClientAbortException}). Without this handler the
+     * catch-all below logs the full stack at ERROR on every disconnect,
+     * flooding Railway logs and burying real failures.
+     *
+     * <p>Emitter cleanup already runs via {@code SseEmitter.onError} in
+     * {@link com.anvicorp.api.mail.service.MailSseService#register} — the
+     * server-side state is fine; this is purely a log-noise fix.</p>
+     */
+    @ExceptionHandler({
+            org.springframework.web.context.request.async.AsyncRequestNotUsableException.class,
+            org.apache.catalina.connector.ClientAbortException.class
+    })
+    public ResponseEntity<Void> handleClientDisconnect(Throwable ex, HttpServletRequest req) {
+        String endpoint = req != null ? req.getRequestURI() : "(unknown)";
+        log.debug("[F4] async client disconnect at {} — {}: {}",
+                endpoint, ex.getClass().getSimpleName(), ex.getMessage());
+        return null;
+    }
+
+    /**
      * F4 — catch-all for anything we didn't explicitly handle. NEVER
      * leaks the exception class, stack, or SQL to the user. Logs at
      * ERROR with full context (endpoint, method, user, the entire

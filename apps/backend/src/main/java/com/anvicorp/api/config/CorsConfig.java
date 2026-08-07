@@ -44,7 +44,12 @@ public class CorsConfig {
         config.setAllowedOrigins(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
-        config.setExposedHeaders(List.of("Authorization", "Content-Disposition"));
+        // X-CSRF-Token is exposed so the Vercel frontend can read the
+        // cookie value from the response header (document.cookie can't
+        // read a cross-origin backend cookie). See AuthCookies
+        // .writeCsrfCookie for why the transport-via-header is needed.
+        config.setExposedHeaders(List.of(
+                "Authorization", "Content-Disposition", "X-CSRF-Token"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

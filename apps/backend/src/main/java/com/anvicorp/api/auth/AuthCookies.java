@@ -86,13 +86,31 @@ public class AuthCookies {
     }
 
     /**
-     * Emits the CSRF double-submit cookie. Non-httpOnly on purpose — the
-     * client (axios interceptor) reads it and echoes the value in the
-     * {@link #CSRF_HEADER} on state-changing calls.
+     * Emits the CSRF double-submit cookie AND mirrors the token in the
+     * {@link #CSRF_HEADER} response header.
+     *
+     * <p>Why the response-header mirror is load-bearing on cross-site:
+     * the browser stores the cookie under the BACKEND's origin (Railway),
+     * not the frontend's origin (Vercel). JS on the Vercel frontend can
+     * never read the cookie via {@code document.cookie} — that's a
+     * browser same-origin policy enforced at the JS API layer,
+     * regardless of {@code SameSite=None}. The response-header carries
+     * the same value on a channel Vercel JS CAN read (via CORS
+     * expose-headers). The frontend caches it in memory and echoes it
+     * as {@link #CSRF_HEADER} on the next mutation.</p>
+     *
+     * <p>The cookie itself is still needed — the backend
+     * {@code CsrfDoubleSubmitFilter} compares the received cookie
+     * (browser attaches it automatically because it belongs to the
+     * backend origin) vs the received header (frontend echoes from
+     * memory). Same-value → 200. Different or missing → 403.</p>
      */
     public void writeCsrfCookie(HttpServletResponse response, String token) {
         response.addHeader(HttpHeaders.SET_COOKIE,
                 cookieHeader(CSRF_COOKIE, token, ACCESS_MAX_AGE_SECONDS, false));
+        if (token != null && !token.isEmpty()) {
+            response.setHeader(CSRF_HEADER, token);
+        }
     }
 
     /** Zero all three session cookies. Called from {@code /auth/logout}. */

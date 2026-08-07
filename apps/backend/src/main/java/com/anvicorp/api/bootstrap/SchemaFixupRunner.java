@@ -1665,6 +1665,20 @@ public class SchemaFixupRunner implements CommandLineRunner {
         // values are no-ops on subsequent boots.
         remapOverallRecommendation();
 
+        // Ensure the migration_log ledger exists BEFORE any ledger-gated
+        // backfill runs. Historically the CREATE lived only inside
+        // ensureErmPhase8Schema() (called at line ~2767) — hundreds of
+        // lines after the B2 + IDMS backfills below. On a fresh boot
+        // their SELECT COUNT(*) FROM migration_log WHERE migration_key=?
+        // queries hit a nonexistent table and logged "bad SQL grammar"
+        // WARN every boot; the ledger row never landed; the backfills
+        // re-attempted every subsequent boot. Idempotent by their own
+        // body queries so no data corruption ever occurred, but noisy.
+        // Hoisted here so every ledger read+write below succeeds first
+        // boot. Phase-8's CREATE stays too (calls the same helper — no-op
+        // after this).
+        ensureMigrationLogTable();
+
         // B2 profile expansion — address columns, submission-ack + edit-
         // notify timestamps, and the new multi-education table + one-shot
         // backfill from the legacy single-degree candidate columns. All
@@ -4046,20 +4060,11 @@ public class SchemaFixupRunner implements CommandLineRunner {
      * OnboardingMigrationRunner posts a success row in migration_log.
      */
     private void ensureErmPhase8Schema() {
-        // 1) migration_log — generic one-shot migration ledger.
-        try {
-            jdbcTemplate.execute(
-                    "CREATE TABLE IF NOT EXISTS migration_log ("
-                            + "  id UUID PRIMARY KEY,"
-                            + "  migration_key VARCHAR(120) NOT NULL UNIQUE,"
-                            + "  executed_at TIMESTAMP NOT NULL DEFAULT NOW(),"
-                            + "  rows_migrated INTEGER NOT NULL DEFAULT 0,"
-                            + "  notes TEXT"
-                            + ")");
-        } catch (Exception e) {
-            log.warn("[SchemaFixupRunner] migration_log create failed (non-fatal): {}",
-                    e.getMessage());
-        }
+        // 1) migration_log — generic one-shot migration ledger. Now
+        //    delegated to the extracted helper so the early-boot hoist
+        //    (applyEssentialFixupsInternal) and this Phase-8 site share
+        //    one CREATE. Idempotent — no-op after the hoist already ran.
+        ensureMigrationLogTable();
 
         // 2) document_templates.
         try {
@@ -6130,6 +6135,42 @@ public class SchemaFixupRunner implements CommandLineRunner {
         } catch (Exception e) {
             log.warn("[SchemaFixup] insert migration_log({}) skipped (non-fatal): {}",
                     migKey, e.getMessage());
+        }
+    }
+
+    /**
+     * Create the {@code migration_log} ledger table if it doesn't exist.
+     * The ledger stores one row per completed one-shot backfill so the
+     * runner knows not to re-attempt it on subsequent boots.
+     *
+     * <p>Called from TWO sites: the early-boot hoist in
+     * {@code applyEssentialFixupsInternal} (before any ledger-gated
+     * backfill runs — B2 educations, IDMS canonical HTML, etc.), and
+     * from {@code ensureErmPhase8Schema()} which historically owned
+     * the CREATE. Both call sites are idempotent (CREATE TABLE IF NOT
+     * EXISTS) so the double-call is a no-op after the first success.</p>
+     *
+     * <p>Before this extraction, the CREATE lived only inside
+     * {@code ensureErmPhase8Schema()} — hundreds of lines after the
+     * B2 + IDMS backfills that queried the table. On a fresh boot the
+     * SELECT COUNT(*) fired against a nonexistent table and logged
+     * "bad SQL grammar" WARN every boot; the ledger row never landed;
+     * the backfill re-attempted every subsequent boot (harmless
+     * because idempotent by its own body, but noisy in logs).</p>
+     */
+    private void ensureMigrationLogTable() {
+        try {
+            jdbcTemplate.execute(
+                    "CREATE TABLE IF NOT EXISTS migration_log ("
+                            + "  id UUID PRIMARY KEY,"
+                            + "  migration_key VARCHAR(120) NOT NULL UNIQUE,"
+                            + "  executed_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+                            + "  rows_migrated INTEGER NOT NULL DEFAULT 0,"
+                            + "  notes TEXT"
+                            + ")");
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] migration_log create failed (non-fatal): {}",
+                    e.getMessage());
         }
     }
 }

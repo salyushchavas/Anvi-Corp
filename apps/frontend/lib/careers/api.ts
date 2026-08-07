@@ -33,6 +33,23 @@ const CSRF_COOKIE = 'XSRF-TOKEN';
 const CSRF_HEADER = 'X-CSRF-Token';
 const UNSAFE_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 
+/**
+ * In-memory CSRF token — the ONLY reliable source in a cross-site
+ * deployment (Vercel frontend + Railway backend on different
+ * registrable domains). The backend also sets XSRF-TOKEN as a cookie,
+ * but document.cookie can't read a cross-origin backend cookie —
+ * that's a browser same-origin policy enforced at the JS API layer,
+ * SameSite=None doesn't override it.
+ *
+ * <p>The backend echoes the token in the X-CSRF-Token RESPONSE header
+ * on every login/refresh/register/activate AND on every authenticated
+ * GET when a cookie is present. We capture that header here on every
+ * response and use it on the next mutation. CORS Expose-Headers
+ * whitelists X-CSRF-Token so response.headers.get('x-csrf-token')
+ * actually returns the value on cross-origin XHR.</p>
+ */
+let csrfToken: string | null = null;
+
 function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
   const prefix = name + '=';
@@ -48,7 +65,10 @@ function readCookie(name: string): string | null {
 api.interceptors.request.use((config) => {
   const method = (config.method ?? 'get').toLowerCase();
   if (UNSAFE_METHODS.has(method)) {
-    const token = readCookie(CSRF_COOKIE);
+    // In-memory value first (cross-site path — populated by the
+    // response interceptor below). Cookie read is a fallback for
+    // same-origin dev where document.cookie CAN read the cookie.
+    const token = csrfToken ?? readCookie(CSRF_COOKIE);
     if (token) {
       config.headers.set(CSRF_HEADER, token);
     }
@@ -60,6 +80,31 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// Capture the CSRF token from every response. The backend puts it in
+// X-CSRF-Token on any response that touched the CSRF cookie (login,
+// refresh, register, activate, and every authenticated GET via the
+// mint / echo branches of CsrfDoubleSubmitFilter). Header names are
+// case-insensitive per spec; axios lower-cases keys on Response.
+api.interceptors.response.use((response) => {
+  const fresh = extractCsrfHeader(response.headers);
+  if (fresh) csrfToken = fresh;
+  return response;
+});
+
+function extractCsrfHeader(headers: unknown): string | null {
+  if (!headers) return null;
+  // Axios v1 uses AxiosHeaders (has .get); older/node may hand a
+  // plain object keyed by lower-case name.
+  const withGet = headers as { get?: (k: string) => string | null | undefined };
+  if (typeof withGet.get === 'function') {
+    const v = withGet.get('x-csrf-token');
+    if (typeof v === 'string' && v.length > 0) return v;
+  }
+  const asObj = headers as Record<string, string | undefined>;
+  const v = asObj['x-csrf-token'] ?? asObj['X-CSRF-Token'];
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
 
 // Paths where a 401 is expected (the user is mid-auth) — don't redirect.
 const AUTH_PATHS = [

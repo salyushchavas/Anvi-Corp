@@ -97,6 +97,22 @@ public class CsrfDoubleSubmitFilter extends OncePerRequestFilter {
                 && AuthCookies.readCsrfCookie(request) == null
                 && !PUBLIC_PATHS.contains(path)) {
             authCookies.writeCsrfCookie(response, AuthCookies.mintCsrfToken());
+            // writeCsrfCookie already set the X-CSRF-Token response
+            // header alongside the Set-Cookie so cross-site JS can
+            // read the value it will need to echo on the next
+            // mutation.
+        } else if (!UNSAFE_METHODS.contains(method)
+                && !PUBLIC_PATHS.contains(path)) {
+            // Cookie was already present — echo it in the response
+            // header on every authenticated GET so the cross-site
+            // frontend keeps a fresh in-memory copy. document.cookie
+            // can't read a cross-origin cookie, so the header is the
+            // ONLY way the Vercel frontend gets the current token
+            // value between login and its next mutation.
+            String existing = AuthCookies.readCsrfCookie(request);
+            if (existing != null) {
+                response.setHeader(AuthCookies.CSRF_HEADER, existing);
+            }
         }
 
         if (!UNSAFE_METHODS.contains(method)) {
