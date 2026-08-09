@@ -1263,13 +1263,22 @@ public class DocumentInstanceService {
                 : "/careers/intern/agreements/" + instance.getId();
     }
 
-    /** Offer-family templates by convention key with {@code OFFER_*}. The
-     *  admin studio owns template creation so the prefix acts as a
-     *  loose family tag — no separate column required. */
+    /** Offer-family templates — any template key that contains
+     *  {@code OFFER_} as a substring. Keys are derived from admin-picked
+     *  titles by {@code EditableTemplateAdminService.deriveKey}
+     *  (uppercase, non-alphanumeric → {@code _}), so titles like
+     *  "H1 Offer Letter" and "Offer Letter Software Developer" produce
+     *  {@code H1_OFFER_LETTER} / {@code OFFER_LETTER_SOFTWARE_DEVELOPER}
+     *  — neither of which would match a strict {@code startsWith('OFFER_')}
+     *  filter, causing the intern's Offer Letter page to render empty.
+     *
+     *  <p>Kept in sync with the JPQL peer at
+     *  {@code DocumentInstanceRepository.findOfferFamilyForIntern}:
+     *  {@code LIKE '%OFFER\_%'} — same substring rule.</p> */
     public static boolean isOfferFamily(DocumentInstance instance) {
         return instance != null
                 && instance.getTemplateKey() != null
-                && instance.getTemplateKey().startsWith("OFFER_");
+                && instance.getTemplateKey().contains("OFFER_");
     }
 
     /**

@@ -46,18 +46,27 @@ public interface DocumentInstanceRepository
     /**
      * Pipeline-restore — offer-family instances for an intern, newest first.
      *
-     * <p>"Offer-family" is defined by the template key starting with
-     * {@code OFFER_} (convention documented on {@link
-     * com.anvicorp.api.admin.editabletemplates.EditableTemplate#getKey()}).
-     * VOIDED rows are excluded because a voided instance never had a real
-     * offer effect. The caller inspects the head of the list to decide
-     * "current" (usually the latest non-{@code SUPERSEDED} row); the
-     * result-set is small (typically 0-2 rows per intern) so no separate
-     * "latest" query is warranted.</p>
+     * <p>"Offer-family" is any template whose key contains {@code OFFER_}
+     * as a substring. Admin-derived template keys uppercase the title and
+     * substitute non-alphanumerics with underscores
+     * ({@code EditableTemplateAdminService.deriveKey}); a title like
+     * "H1 Offer Letter" becomes {@code H1_OFFER_LETTER} and a strict
+     * {@code startsWith('OFFER_')} filter would hide it from the intern.
+     * The substring form catches every legitimate offer variant the
+     * studio produces ({@code OFFER_LETTER}, {@code OFFER_LETTER_V2},
+     * {@code H1_OFFER_LETTER}, {@code OFFER_LETTER_SOFTWARE_DEV}, …)
+     * without matching unrelated keys — no seeded/derived key has
+     * {@code OFFER_} in the middle by coincidence.</p>
+     *
+     * <p>VOIDED rows are excluded because a voided instance never had a
+     * real offer effect. The caller inspects the head of the list to
+     * decide "current" (usually the latest non-{@code SUPERSEDED} row);
+     * the result-set is small (typically 0-2 rows per intern) so no
+     * separate "latest" query is warranted.</p>
      */
     @Query("SELECT di FROM DocumentInstance di "
             + "WHERE di.internUserId = :userId "
-            + "  AND di.templateKey LIKE 'OFFER\\_%' ESCAPE '\\' "
+            + "  AND di.templateKey LIKE '%OFFER\\_%' ESCAPE '\\' "
             + "  AND di.status <> 'VOIDED' "
             + "ORDER BY di.createdAt DESC")
     List<DocumentInstance> findOfferFamilyForIntern(@Param("userId") UUID userId);

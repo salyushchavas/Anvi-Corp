@@ -46,6 +46,16 @@ const nextConfig = {
       "connect-src 'self' " + apiOrigin,
       "media-src 'self' blob: https:",
       "worker-src 'self' blob:",
+      // frame-src covers <iframe src>. The ERM + Manager resume preview
+      // (components/erm/applications/ResumePreview.tsx) renders PDF resumes
+      // as <iframe src={URL.createObjectURL(new Blob(...))}>. Without an
+      // explicit blob: in frame-src, browsers fall back to default-src
+      // 'self' and block the load with "content is blocked. Contact the
+      // site owner." — the bug reported from prod. Bytes are fetched
+      // through the same-origin /api/v1/resumes/{id}/download endpoint
+      // (streamed by ResumeController, not a presigned S3 URL), so no S3
+      // origin needs whitelisting.
+      "frame-src 'self' blob:",
     ].join("; ");
 
     return [
