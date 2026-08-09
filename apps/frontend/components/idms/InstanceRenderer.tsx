@@ -1,12 +1,6 @@
 'use client';
 
-import {
-  forwardRef,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-} from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { formatIsoDateMdy, type FieldSchemaEntry, type InstanceDetail } from '@/lib/careers/idms';
 
 /**
@@ -47,29 +41,17 @@ export interface InstanceRendererProps {
    *  the parent gets the anchor element for popover positioning. */
   onFieldClick?: (fieldId: string) => void;
   /** Fired when the caller clicks THEIR OWN signature slot in the
-   *  preview. The anchor element is provided so the parent can anchor
-   *  a signature popover at the signature line — the "sign at the line
-   *  in the doc" UX. Foreign-owner signature clicks still fall through
-   *  to {@link #onFieldClick} (parent typically no-ops or focuses). */
-  onSignatureClick?: (fieldId: string, anchorEl: HTMLElement) => void;
+   *  preview. Parent uses this to expand the corresponding row's
+   *  InlineSignatureCapture in the FieldForm panel (the capture
+   *  itself lives in the panel, not the preview — signing is
+   *  panel-inline, not floating). Foreign-owner signature clicks still
+   *  fall through to {@link #onFieldClick}. */
+  onSignatureClick?: (fieldId: string) => void;
   /** Signature field currently being drawn on (label switches to "signing…"). */
   activeSignatureFieldId?: string | null;
 }
 
-/** Imperative surface exposed via ref — callers use this to open a
- *  signature slot programmatically (e.g. the FieldForm's "Sign" button,
- *  or Send/Submit's validate-on-click that jumps to the first missing
- *  required signature). */
-export interface InstanceRendererHandle {
-  /** Scroll the first anchor of {@code fieldId} into center view AND
-   *  fire {@code onSignatureClick(fieldId, anchorEl)} so the parent
-   *  opens the popover at the anchor. No-op if the field isn't a
-   *  signature the caller owns. */
-  openSignatureAt(fieldId: string): void;
-}
-
-const InstanceRenderer = forwardRef<InstanceRendererHandle, InstanceRendererProps>(
-  function InstanceRenderer(props, ref) {
+export default function InstanceRenderer(props: InstanceRendererProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { detail, fields, editRole, textValues, signatureBlobs,
     focusedFieldId, onFieldClick, onSignatureClick,
@@ -260,27 +242,6 @@ const InstanceRenderer = forwardRef<InstanceRendererHandle, InstanceRendererProp
     if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [focusedFieldId]);
 
-  // Imperative openSignatureAt — the FieldForm's "Sign" button and the
-  // Send/Submit validate-on-click both go through here to jump the user
-  // straight to signing at the line. Scrolls the anchor to center-view
-  // then fires onSignatureClick (parent opens the popover). Waits one
-  // frame so the scroll has painted before the popover measures the
-  // anchor's rect for positioning.
-  useImperativeHandle(ref, () => ({
-    openSignatureAt(fieldId: string) {
-      const c = containerRef.current;
-      if (!c || !onSignatureClick) return;
-      const first = c.querySelector<HTMLElement>(
-        `span[data-field-id="${cssEscape(fieldId)}"]`,
-      );
-      if (!first) return;
-      first.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      requestAnimationFrame(() => {
-        onSignatureClick(fieldId, first);
-      });
-    },
-  }), [onSignatureClick]);
-
   return (
     <div>
       <div ref={containerRef} className="doc-canvas" />
@@ -352,27 +313,26 @@ const InstanceRenderer = forwardRef<InstanceRendererHandle, InstanceRendererProp
       `}</style>
     </div>
   );
-});
-
-export default InstanceRenderer;
+}
 
 /** Attach the click handler for a signature anchor. Owner-clicks fire
- *  {@code onSignatureClick} (parent opens the in-preview popover);
- *  foreign clicks fall through to {@code onFieldClick} so the parent can
- *  still focus the corresponding row in the FieldForm. Assigning the
- *  handler resets any prior binding so re-paints don't stack listeners. */
+ *  {@code onSignatureClick} (parent expands the corresponding row's
+ *  InlineSignatureCapture in the FieldForm panel); foreign clicks fall
+ *  through to {@code onFieldClick} so the parent can still focus the
+ *  corresponding row. Assigning the handler resets any prior binding
+ *  so re-paints don't stack listeners. */
 function wireSignatureClick(
   span: HTMLElement,
   fieldId: string,
   canSign: boolean,
-  onSignatureClick: ((fieldId: string, anchorEl: HTMLElement) => void) | undefined,
+  onSignatureClick: ((fieldId: string) => void) | undefined,
   onFieldClick: ((fieldId: string) => void) | undefined,
 ): void {
   if (canSign && onSignatureClick) {
     span.style.cursor = 'pointer';
     span.onclick = (e) => {
       e.stopPropagation();
-      onSignatureClick(fieldId, span);
+      onSignatureClick(fieldId);
     };
     return;
   }

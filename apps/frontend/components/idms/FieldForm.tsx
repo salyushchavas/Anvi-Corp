@@ -9,6 +9,7 @@ import {
   useRef,
 } from 'react';
 import { CheckCircle2, CircleDashed, Info, Lock, PenLine } from 'lucide-react';
+import InlineSignatureCapture from '@/components/idms/InlineSignatureCapture';
 import type { FieldSchemaEntry, InstanceDetail } from '@/lib/careers/idms';
 
 /**
@@ -32,6 +33,10 @@ export interface FieldFormProps {
   role: 'ERM' | 'INTERN';
   textValues: Record<string, string>;
   onTextChange: (fieldId: string, value: string) => void;
+  /** User clicked the row's Sign / Change button. Parent sets
+   *  {@code activeSignatureFieldId} to this id, which flips the row into
+   *  its expanded state below and renders {@link InlineSignatureCapture}
+   *  in the panel flow (no portal, no floating overlay). */
   onOpenSignature: (fieldId: string) => void;
   activeSignatureFieldId?: string | null;
   focusedFieldId?: string | null;
@@ -41,6 +46,20 @@ export interface FieldFormProps {
    *  panel doesn't try to render the raw PII-encrypted URL directly. */
   signatureBlobs?: Record<string, string>;
   disabled?: boolean;
+  /** Save handler for the active row's InlineSignatureCapture. Fires the
+   *  same POST /sign the previous portal-mounted capture did; on
+   *  resolve the parent clears {@code activeSignatureFieldId} and the
+   *  inline section unmounts. On reject the inline section shows the
+   *  error inline so the user can retry without redrawing. */
+  onSaveSignature?: (fieldId: string, dataUrl: string, typedName: string) => Promise<void>;
+  /** Cancel handler for the active row's InlineSignatureCapture — same
+   *  semantics as a Save that clears {@code activeSignatureFieldId} but
+   *  without a network call. Also fires when the user clicks the row's
+   *  Cancel button in its header. */
+  onCancelSignature?: () => void;
+  /** Full name to pre-fill the InlineSignatureCapture's Generate-mode
+   *  input + typed-name field. Callers pass the current user's name. */
+  signerName?: string;
 }
 
 const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(
@@ -49,6 +68,7 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(
       detail, fields, role, textValues, onTextChange,
       onOpenSignature, activeSignatureFieldId,
       focusedFieldId, onFocusField, signatureBlobs, disabled,
+      onSaveSignature, onCancelSignature, signerName,
     } = props;
 
     // A ref map keyed by fieldId so the parent can focus programmatically
@@ -109,6 +129,9 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(
                 onFocusField={onFocusField}
                 signatureBlobs={signatureBlobs}
                 disabled={disabled}
+                onSaveSignature={onSaveSignature}
+                onCancelSignature={onCancelSignature}
+                signerName={signerName}
                 registerRef={(el) => { inputRefs.current[f.id] = el; }}
               />
             ))}
@@ -178,13 +201,16 @@ interface FieldRowProps {
   onFocusField?: (id: string | null) => void;
   signatureBlobs?: Record<string, string>;
   disabled?: boolean;
+  onSaveSignature?: (fieldId: string, dataUrl: string, typedName: string) => Promise<void>;
+  onCancelSignature?: () => void;
+  signerName?: string;
   registerRef: (el: HTMLElement | null) => void;
 }
 
 function FieldRow({
   field, detail, textValues, onTextChange, onOpenSignature,
   activeSignatureFieldId, focusedFieldId, onFocusField, signatureBlobs,
-  disabled, registerRef,
+  disabled, onSaveSignature, onCancelSignature, signerName, registerRef,
 }: FieldRowProps) {
   const persisted = detail.values[field.id];
   const filled = isFilled(field, detail, textValues);
@@ -212,11 +238,13 @@ function FieldRow({
     const signed = Boolean(persisted?.signatureUrl);
     const active = activeSignatureFieldId === field.id;
     const missingRequired = field.required && !signed;
-    // Signature rows are STATUS + JUMP-TO, not a draw box — signing
-    // happens inline in the document preview at the signature line via
-    // the SignaturePopover. The panel entry tracks completion (green /
-    // red ring, thumbnail once signed) and offers a "Sign" / "Change"
-    // button that scrolls the anchor into view and opens the popover.
+    // Signature rows are STATUS + INLINE EXPAND. The Sign/Change button
+    // flips the row into an expanded state that reveals
+    // InlineSignatureCapture directly below the header — in the panel
+    // flow, no portal, no overlay, no float. Multi-signature: each row
+    // owns its own expand independently (only the active one renders
+    // the capture body). Clicking Cancel or successful Save collapses
+    // back to the compact header.
     const signatureRowRing = active
       ? 'ring-2 ring-brand-500/40'
       : signed
@@ -269,27 +297,50 @@ function FieldRow({
               type="button"
               ref={(el) => registerRef(el)}
               onFocus={handleFocus}
-              onClick={() => onOpenSignature(field.id)}
+              onClick={() => {
+                // Clicking the header button while expanded collapses;
+                // otherwise opens. Same button, one shape — no separate
+                // "Close" affordance needed in the header.
+                if (active) {
+                  onCancelSignature?.();
+                } else {
+                  onOpenSignature(field.id);
+                }
+              }}
               disabled={disabled}
               className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-semibold transition disabled:opacity-60 ${
-                signed
-                  ? 'border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-50'
-                  : missingRequired
-                    ? 'border-red-300 bg-red-600 text-white hover:bg-red-700'
-                    : 'border-brand-300 bg-brand-700 text-white hover:bg-brand-800'
+                active
+                  ? 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                  : signed
+                    ? 'border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-50'
+                    : missingRequired
+                      ? 'border-red-300 bg-red-600 text-white hover:bg-red-700'
+                      : 'border-brand-300 bg-brand-700 text-white hover:bg-brand-800'
               }`}
             >
               <PenLine className="h-3 w-3" />
-              {signed ? 'Change' : 'Sign'}
+              {active ? 'Cancel' : signed ? 'Change' : 'Sign'}
             </button>
           </div>
-          {/* Location hint — makes the "signing happens in the doc"
-              model discoverable on first encounter. Dropped once signed. */}
           {!signed && !active && (
             <p className="mt-1.5 text-[11px] text-slate-500">
-              Sign at the signature line in the document
+              Click Sign to open the signature pad below
               {missingRequired ? ' — required to send' : ''}.
             </p>
+          )}
+          {active && onSaveSignature && (
+            // Keyed by fieldId so switching from one signature's expand
+            // to another remounts InlineSignatureCapture with a clean
+            // slate — no bleed of staged bytes or typed name between
+            // signatures on a multi-sig doc.
+            <InlineSignatureCapture
+              key={field.id}
+              fieldName={field.name}
+              signerName={signerName}
+              onCancel={() => onCancelSignature?.()}
+              onSave={(dataUrl, typedName) =>
+                onSaveSignature(field.id, dataUrl, typedName)}
+            />
           )}
         </div>
       </li>
