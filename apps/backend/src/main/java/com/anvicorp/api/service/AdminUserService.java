@@ -15,6 +15,8 @@ import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ConflictException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
+import com.anvicorp.api.integration.s3.S3StorageService;
+import com.anvicorp.api.intern.DocumentVaultService;
 import com.anvicorp.api.mail.entity.MailAccount;
 import com.anvicorp.api.mail.entity.MailAccountStatus;
 import com.anvicorp.api.mail.entity.MailDomain;
@@ -32,7 +34,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -105,6 +111,7 @@ public class AdminUserService {
     private final MailDomainRepository mailDomainRepository;
     private final MailAccountRepository mailAccountRepository;
     private final UserSessionRepository userSessionRepository;
+    private final S3StorageService s3StorageService;
 
     @Transactional(readOnly = true)
     public List<AdminUserResponse> list(UserRole roleFilter, String search) {
@@ -930,6 +937,31 @@ public class AdminUserService {
      */
     private Map<String, Object> hardPurge(User target, User caller) {
         UUID userId = target.getId();
+
+        // S3 vault cleanup — collect every storage key OWNED by this user
+        // BEFORE the DB rows are deleted, then hand the batch off to a
+        // post-commit hook so the actual S3 DELETE runs only after the
+        // transaction succeeds. Ordering guarantee:
+        //   1. collect keys (rows still present)
+        //   2. DB DELETE (below, existing sweep)
+        //   3. tx commit → post-commit hook fires S3 batch delete
+        // If any phase throws and the tx rolls back, the post-commit hook
+        // never runs and no S3 object is removed — no orphaning either
+        // way. S3 failure (post-commit) can never roll back the DB delete;
+        // the user is gone regardless and stray objects are logged for
+        // manual cleanup (see registerS3PurgeAfterCommit).
+        //
+        // Scope: rows the user directly owns.
+        //   - documents.storage_key WHERE owner_user_id = userId
+        //   - resumes.file_path (via candidate) WHERE candidate.user_id = userId
+        // Documents owned by OTHER users that merely reference this user
+        // (e.g. interview/evaluation recordings whose ownerUserId is the
+        // ERM/evaluator) are OUT of scope — they belong to the still-live
+        // account and will get cleaned up when THAT user is purged.
+        List<String> s3KeysToDelete = collectS3KeysOwnedByUser(userId);
+        int collectedKeyCount = s3KeysToDelete.size();
+        registerS3PurgeAfterCommit(userId, s3KeysToDelete);
+
         // SQL fragments resolved against the live tables — every DELETE is
         // self-contained against the user_id, so we never depend on a
         // Java-side cache of candidate_id / lifecycle_id (the prior
@@ -1390,16 +1422,147 @@ public class AdminUserService {
                             + "Per-table summary: " + deleted);
         }
 
-        log.warn("[AdminUserService] hard-deleted user {} ({}) — totalRows={}, perTable={}",
-                userId, target.getEmail(), totalRows, deleted);
+        log.warn("[AdminUserService] hard-deleted user {} ({}) — totalRows={}, perTable={}, "
+                        + "s3KeysCollected={}",
+                userId, target.getEmail(), totalRows, deleted, collectedKeyCount);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("_outcome", "hard");
         response.put("_message",
                 "This account never started an internship, so all its "
                         + "data has been permanently removed.");
         response.put("totalRowsDeleted", totalRows);
+        response.put("s3ObjectsCollected", collectedKeyCount);
         response.putAll(new LinkedHashMap<String, Object>(deleted));
         return response;
+    }
+
+    /**
+     * Collect every S3 storage key OWNED by the given user, reading
+     * directly from the DB tables that still hold the row-to-key mapping.
+     * Runs BEFORE the hard-purge DELETEs so the rows still resolve. Two
+     * sources are unioned:
+     *
+     * <ul>
+     *   <li>{@code documents.storage_key WHERE owner_user_id = ?} — the
+     *       primary DocumentVaultService store; covers onboarding docs,
+     *       signed offer PDFs, editable-doc instance PDFs, signature
+     *       images, recordings the user owns, etc.</li>
+     *   <li>{@code resumes.file_path WHERE candidate_id IN (SELECT id
+     *       FROM candidates WHERE user_id = ?)} — legacy Resume table,
+     *       kept separate from the vault.</li>
+     * </ul>
+     *
+     * <p>Legacy filesystem paths ({@code "/..." }, {@code "./..." },
+     * {@code "X:..." }, {@code "\..."}) are filtered out using the same
+     * discriminator ResumeService.delete + DocumentVaultService.loadFile
+     * use — those pre-S3 rows point at the mounted volume and are not
+     * S3 objects. Blank / null keys skipped.</p>
+     *
+     * <p>Prefix-sweep safety: we DON'T sweep by prefix. Each returned key
+     * is an exact key read from a per-user DB row, so there is zero risk
+     * of accidentally matching another user's objects via a shared
+     * prefix. (The vault layout {@code documents/&lt;userUUID&gt;/...} is
+     * already prefix-safe because UUIDs are collision-free, but relying on
+     * the row-level enumeration removes the guarantee's dependency on key
+     * layout altogether.)</p>
+     *
+     * <p>Non-fatal: SELECT failures are logged and treated as "nothing to
+     * delete" — a partial deployment where a table is missing must not
+     * block the hard-delete itself.</p>
+     */
+    private List<String> collectS3KeysOwnedByUser(UUID userId) {
+        List<String> keys = new ArrayList<>();
+        // documents.storage_key — includes soft-deleted rows too. Once the
+        // owner is gone the tombstoned Document row will be swept along
+        // with the S3 object; no point leaving the encrypted bytes behind.
+        try {
+            List<String> docKeys = jdbcTemplate.queryForList(
+                    "SELECT storage_key FROM documents WHERE owner_user_id = ?",
+                    String.class, userId);
+            for (String k : docKeys) {
+                if (k != null && !k.isBlank()
+                        && !DocumentVaultService.looksLikeFilesystemPath(k)) {
+                    keys.add(k);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[AdminUserService] documents.storage_key collect for user {} "
+                    + "skipped (non-fatal): {}", userId, e.getMessage());
+        }
+        // resumes.file_path — legacy dual-store (S3-shaped OR filesystem
+        // path). Filter to S3-shaped only, same as ResumeService.delete.
+        try {
+            List<String> resumeKeys = jdbcTemplate.queryForList(
+                    "SELECT file_path FROM resumes WHERE candidate_id IN "
+                            + "(SELECT id FROM candidates WHERE user_id = ?)",
+                    String.class, userId);
+            for (String k : resumeKeys) {
+                if (k != null && !k.isBlank()
+                        && !DocumentVaultService.looksLikeFilesystemPath(k)) {
+                    keys.add(k);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[AdminUserService] resumes.file_path collect for user {} "
+                    + "skipped (non-fatal): {}", userId, e.getMessage());
+        }
+        return keys;
+    }
+
+    /**
+     * Register a post-commit hook that batch-deletes the collected S3
+     * keys once the surrounding transaction has committed. Post-commit
+     * (not in-transaction) is deliberate: if we deleted from S3 mid-
+     * transaction and a later phase rolled the DB back, the S3 objects
+     * would be gone while the DB rows still referenced them —
+     * unrecoverable orphaning. Post-commit means the sequence is always
+     * DB-first, S3-second; a mid-flight failure aborts the whole thing
+     * and no S3 object is touched.
+     *
+     * <p>Conversely, once the DB commit succeeds, an S3 failure is a
+     * cost/cleanup nuisance, NOT a correctness break — the user is
+     * gone. We WARN with the key + failure so operators can clean up
+     * manually.</p>
+     *
+     * <p>No-op when the key list is empty or the transaction manager
+     * isn't active (defensive; hardPurge is always called from a
+     * @Transactional method so this branch is unreachable in prod).</p>
+     */
+    private void registerS3PurgeAfterCommit(UUID userId, List<String> keys) {
+        if (keys == null || keys.isEmpty()) return;
+        List<String> frozen = Collections.unmodifiableList(new ArrayList<>(keys));
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            log.warn("[AdminUserService] no active tx synchronization — running "
+                    + "S3 purge for user {} inline ({} keys). Rollback risk "
+                    + "accepted because there's no tx to roll back.",
+                    userId, frozen.size());
+            runS3PurgeSafely(userId, frozen);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        runS3PurgeSafely(userId, frozen);
+                    }
+                });
+    }
+
+    private void runS3PurgeSafely(UUID userId, List<String> keys) {
+        try {
+            int deleted = s3StorageService.deleteObjects(keys);
+            log.info("[AdminUserService] S3 purge for user {} — requested={} deleted={}",
+                    userId, keys.size(), deleted);
+        } catch (Exception e) {
+            // S3StorageService.deleteObjects already swallows per-key
+            // errors and logs each failed key at WARN; this catch is
+            // for a completely unexpected top-level throw (auth blowup,
+            // etc.). Never propagate — the DB commit is already done.
+            log.warn("[AdminUserService] S3 batch delete failed for user {} "
+                            + "({} keys); first few: {}",
+                    userId, keys.size(),
+                    keys.subList(0, Math.min(5, keys.size())), e);
+        }
     }
 
     /**
