@@ -69,6 +69,12 @@ export default function InternOfferLetterFillPage() {
 
   const { user } = useAuth();
   const fieldFormRef = useRef<FieldFormHandle | null>(null);
+  // Panel ref for scroll-into-view when the intern clicks a signature
+  // row. Same reason as the ERM fill page: the signature panel renders
+  // BELOW the FieldForm in the right aside and lands off-screen on tall
+  // documents — without a scroll the intern clicks Draw signature and
+  // sees nothing change, so they don't discover the pad.
+  const signaturePanelRef = useRef<HTMLElement | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -180,6 +186,21 @@ export default function InternOfferLetterFillPage() {
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, [saveState]);
 
+  // Scroll the signature panel into view whenever it mounts — see the
+  // ERM fill page for the full rationale. On mobile viewports the panel
+  // is guaranteed to be off-screen without this scroll (aside stacks
+  // below the preview).
+  useEffect(() => {
+    if (!activeSignature) return;
+    const raf = requestAnimationFrame(() => {
+      signaturePanelRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [activeSignature]);
+
   async function saveSignature() {
     if (!detail || !activeSignature) return;
     if (!stagedSignature) {
@@ -210,7 +231,26 @@ export default function InternOfferLetterFillPage() {
   async function submit() {
     if (!detail) return;
     if (!completeness.canTransition) {
-      toast.error(completeness.blockingReason ?? 'Complete required fields first.');
+      // Don't just refuse silently — scroll the first missing required
+      // field into view and (for signatures) open the sign panel so the
+      // draw pad is one glance away. Signatures are prioritised because
+      // they're the visual bottleneck on this page.
+      const first =
+        completeness.requiredMissing.find((f) => f.type === 'signature')
+        ?? completeness.requiredMissing[0];
+      if (first) {
+        if (first.type === 'signature') {
+          setActiveSignature(first.id);
+          toast.error('Please add your signature to continue.');
+        } else {
+          setFocusedField(first.id);
+          fieldFormRef.current?.focusField(first.id);
+          toast.error(completeness.blockingReason
+            ?? `Please fill "${first.name}" first.`);
+        }
+      } else {
+        toast.error(completeness.blockingReason ?? 'Complete required fields first.');
+      }
       return;
     }
     setSubmitting(true);
@@ -280,9 +320,38 @@ export default function InternOfferLetterFillPage() {
     );
   }
 
-  const submitDisabled = submitting
-    || !completeness.canTransition
-    || saveState.kind === 'saving';
+  // Match the ERM fill page: completeness no longer disables Submit —
+  // the click handler below scrolls the first missing required field
+  // (prioritising signatures) into view + toasts a specific reason. A
+  // silently-disabled Submit button was exactly why the intern couldn't
+  // find the signature area on tall documents.
+  const submitDisabled = submitting || saveState.kind === 'saving';
+
+  // Wraps the Submit-button click with the same first-missing-field
+  // triage the ERM page's openSendConfirm uses, then opens the confirm
+  // dialog only when everything checks out.
+  function openSubmitConfirm() {
+    if (!completeness.canTransition) {
+      const first =
+        completeness.requiredMissing.find((f) => f.type === 'signature')
+        ?? completeness.requiredMissing[0];
+      if (first) {
+        if (first.type === 'signature') {
+          setActiveSignature(first.id);
+          toast.error('Please add your signature to continue.');
+        } else {
+          setFocusedField(first.id);
+          fieldFormRef.current?.focusField(first.id);
+          toast.error(completeness.blockingReason
+            ?? `Please fill "${first.name}" first.`);
+        }
+      } else {
+        toast.error(completeness.blockingReason ?? 'Complete required fields first.');
+      }
+      return;
+    }
+    setConfirmOpen(true);
+  }
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -333,10 +402,14 @@ export default function InternOfferLetterFillPage() {
           {canEdit && (
             <button
               type="button"
-              onClick={() => setConfirmOpen(true)}
+              onClick={openSubmitConfirm}
               disabled={submitDisabled}
               title={submitReasonWhenDisabled(submitDisabled, completeness.blockingReason, saveState)}
-              className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
+              className={`inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 ${
+                completeness.canTransition
+                  ? 'bg-brand-700 hover:bg-brand-800'
+                  : 'bg-slate-500 hover:bg-slate-600'
+              }`}
             >
               <Send className="h-4 w-4" />
               Submit
@@ -416,7 +489,10 @@ export default function InternOfferLetterFillPage() {
             </section>
           )}
           {canEdit && activeSignature && (
-            <section className="rounded-lg border border-brand-300 bg-white p-4 shadow-sm">
+            <section
+              ref={signaturePanelRef}
+              className="rounded-lg border-2 border-brand-500 bg-white p-4 shadow-md ring-4 ring-brand-100"
+            >
               <h3 className="text-sm font-semibold text-slate-900">Your signature</h3>
               <p className="mt-1 text-xs text-slate-500">
                 Pick a way to sign — draw, upload an image, generate one from

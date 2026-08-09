@@ -93,6 +93,11 @@ function PageContent() {
 
   const { user } = useAuth();
   const fieldFormRef = useRef<FieldFormHandle | null>(null);
+  // Panel ref for scroll-into-view when the user clicks a signature row.
+  // Without this the signature panel renders BELOW the FieldForm in the
+  // aside and lands off-screen on tall documents — users hit Draw
+  // signature, nothing visible changes, and they don't know to scroll.
+  const signaturePanelRef = useRef<HTMLElement | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -206,6 +211,23 @@ function PageContent() {
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, [saveState]);
 
+  // When the ERM clicks a signature row in FieldForm, the signature
+  // panel mounts as the second child of the right aside — often below
+  // the fold on tall documents. Scroll it into view so the mode tabs
+  // (Draw/Upload/Generate/Clean) are immediately visible and the ERM
+  // doesn't have to hunt for the draw area. Runs on rAF so React has
+  // painted the panel by the time we measure.
+  useEffect(() => {
+    if (!activeSignature) return;
+    const raf = requestAnimationFrame(() => {
+      signaturePanelRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [activeSignature]);
+
   async function submitSignature() {
     if (!detail || !activeSignature) return;
     if (!stagedSignature) {
@@ -238,10 +260,31 @@ function PageContent() {
   // Gatekeeper — validates completeness THEN opens the confirmation
   // card. The actual POST lives in send() and only runs when the ERM
   // clicks Confirm in the dialog.
+  //
+  // When required fields are missing we DON'T just silently disable the
+  // Send button — instead we scroll the first missing field into view,
+  // open the signature panel if it's a signature (so the mode tabs are
+  // one glance away), and toast a specific message. Signatures are
+  // prioritised because they're the most-hunted field type.
   function openSendConfirm() {
     if (!detail) return;
     if (!completeness.canTransition) {
-      toast.error(completeness.blockingReason ?? 'Complete required fields first.');
+      const first =
+        completeness.requiredMissing.find((f) => f.type === 'signature')
+        ?? completeness.requiredMissing[0];
+      if (first) {
+        if (first.type === 'signature') {
+          setActiveSignature(first.id);
+          toast.error('Please add your signature to continue.');
+        } else {
+          setFocusedField(first.id);
+          fieldFormRef.current?.focusField(first.id);
+          toast.error(completeness.blockingReason
+            ?? `Please fill "${first.name}" first.`);
+        }
+      } else {
+        toast.error(completeness.blockingReason ?? 'Complete required fields first.');
+      }
       return;
     }
     setConfirmSendOpen(true);
@@ -337,10 +380,12 @@ function PageContent() {
 
   // Send stays disabled while a save is actively in flight (dirty is
   // fine — flush() will settle it, so we don't block the button on the
-  // debounce window). Completeness comes from the shared selector.
-  const sendDisabled = sending
-    || !completeness.canTransition
-    || saveState.kind === 'saving';
+  // debounce window). Completeness NO LONGER disables the button —
+  // openSendConfirm handles that path by scrolling the first missing
+  // required field into view + toasting a specific message. Silently-
+  // disabled buttons hide the "why can't I send?" answer, and the
+  // signature discoverability bug hinged on exactly that dead-end.
+  const sendDisabled = sending || saveState.kind === 'saving';
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -370,7 +415,11 @@ function PageContent() {
             onClick={openSendConfirm}
             disabled={sendDisabled}
             title={sendReasonWhenDisabled(sendDisabled, completeness.blockingReason, saveState)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
+            className={`inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 ${
+              completeness.canTransition
+                ? 'bg-brand-700 hover:bg-brand-800'
+                : 'bg-slate-500 hover:bg-slate-600'
+            }`}
           >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             Send to intern
@@ -422,7 +471,10 @@ function PageContent() {
           </section>
 
           {activeSignature && (
-            <section className="rounded-lg border border-brand-300 bg-white p-4 shadow-sm">
+            <section
+              ref={signaturePanelRef}
+              className="rounded-lg border-2 border-brand-500 bg-white p-4 shadow-md ring-4 ring-brand-100"
+            >
               <h3 className="text-sm font-semibold text-slate-900">Signature</h3>
               <p className="mt-1 text-xs text-slate-500">
                 Pick a way to sign. Whichever method you use, the same signature
