@@ -334,7 +334,11 @@ export default function InternOfferLetterFillPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4">
+    // Parity with the ERM fill page (max-w-6xl) — the intern needs the
+    // same horizontal preview real estate to read a Job-Duties-heavy
+    // offer letter. Prior max-w-5xl narrowed the document column
+    // ~128 px vs ERM for no principled reason.
+    <div className="mx-auto max-w-6xl space-y-4">
       <Link
         href="/careers/intern/offer-letter"
         className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-700"
