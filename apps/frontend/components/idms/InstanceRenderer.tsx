@@ -299,10 +299,15 @@ function awaitingLabel(
  *
  * <p>Priority order (first match wins):</p>
  * <ol>
- *   <li>First inner element still present from the initial canonical
- *       HTML injection — this IS the docx run the anchor was wrapped
- *       around when the studio saved it, so its computed font is
- *       exactly what the neighbouring text uses.</li>
+ *   <li>First inner element (recursively descending into structural
+ *       blocks) still present from the initial canonical HTML injection
+ *       — this IS the docx run the anchor was wrapped around when the
+ *       studio saved it, so its computed font is exactly what the
+ *       neighbouring text uses. content_block anchors wrap whole
+ *       paragraphs / lists whose direct children are unstyled block
+ *       tags ({@code <p>}, {@code <ul>}, {@code <li>}); the actual
+ *       run {@code <span>} carrying {@code font-family} lives deeper,
+ *       so the descent looks there.</li>
  *   <li>Nearest previous / next element sibling in the same paragraph
  *       (skipping other field anchors, which have themselves been
  *       stripped of their inner runs on this same paint pass).</li>
@@ -323,24 +328,46 @@ function applyInheritedTypography(span: HTMLElement): void {
   span.dataset.dfInherit = '1';
 }
 
-function pickTypographySource(span: HTMLElement): HTMLElement | null {
-  for (const child of Array.from(span.children)) {
-    if (child instanceof HTMLElement
-        && !child.classList.contains('doc-field-inline-label')) {
-      return child;
+/** Walk descendants depth-first; prefer any element whose inline
+ *  {@code style} attribute contains a {@code font-family} declaration
+ *  (that's a docx-preview run). If none found, return the first plain
+ *  element descendant so at least paragraph-level cascading applies.
+ *  Skips other field anchors so we never inherit a hoisted sibling
+ *  style. */
+function firstStyledDescendant(root: HTMLElement): HTMLElement | null {
+  let fallback: HTMLElement | null = null;
+  const walk = (el: HTMLElement): HTMLElement | null => {
+    for (const child of Array.from(el.children)) {
+      if (!(child instanceof HTMLElement)) continue;
+      if (child.hasAttribute('data-field-id')) continue;
+      if (child.classList.contains('doc-field-inline-label')) continue;
+      const inlineStyle = child.getAttribute('style') ?? '';
+      if (/font-family\s*:/i.test(inlineStyle)) return child;
+      if (!fallback) fallback = child;
+      const deeper = walk(child);
+      if (deeper) return deeper;
     }
-  }
+    return null;
+  };
+  return walk(root) ?? fallback;
+}
+
+function pickTypographySource(span: HTMLElement): HTMLElement | null {
+  const inner = firstStyledDescendant(span);
+  if (inner) return inner;
   let sib: Element | null = span.previousElementSibling;
   while (sib) {
     if (sib instanceof HTMLElement && !sib.hasAttribute('data-field-id')) {
-      return sib;
+      const nested = firstStyledDescendant(sib);
+      return nested ?? sib;
     }
     sib = sib.previousElementSibling;
   }
   sib = span.nextElementSibling;
   while (sib) {
     if (sib instanceof HTMLElement && !sib.hasAttribute('data-field-id')) {
-      return sib;
+      const nested = firstStyledDescendant(sib);
+      return nested ?? sib;
     }
     sib = sib.nextElementSibling;
   }
