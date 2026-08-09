@@ -14,10 +14,10 @@ public class CompleteInterviewRequest {
     @NotNull(message = "decision is required")
     private Decision decision;
 
-    /** Applicant-safe message. Service enforces a ≥20-char minimum. */
-    @NotNull(message = "applicantVisibleNotes is required")
-    @Size(min = 20, max = 4000,
-            message = "applicantVisibleNotes must be 20-4000 characters")
+    /** Applicant-safe message. Optional as of the F8 revision — the
+     *  ERM can send a scorecard to the Manager with no applicant-visible
+     *  notes; only the upper bound is enforced. */
+    @Size(max = 4000, message = "applicantVisibleNotes must be at most 4000 characters")
     private String applicantVisibleNotes;
 
     /** ERM-only notes. Never returned to the applicant. */

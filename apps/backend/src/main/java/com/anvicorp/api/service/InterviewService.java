@@ -210,10 +210,9 @@ public class InterviewService {
         if (req == null || req.getDecision() == null) {
             throw new BadRequestException("decision is required (SELECTED | HOLD | REJECTED)");
         }
-        if (req.getApplicantVisibleNotes() == null
-                || req.getApplicantVisibleNotes().trim().length() < 20) {
-            throw new BadRequestException("applicantVisibleNotes must be at least 20 characters");
-        }
+        // applicantVisibleNotes is optional as of the F8 revision — no
+        // mandatory minimum. The DTO still enforces the 4000-char upper
+        // bound so a runaway paste can't OOM the write.
 
         Map<String, Object> before = snapshot(interview);
         interview.setStatus(InterviewStatus.COMPLETED);

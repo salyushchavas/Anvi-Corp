@@ -71,13 +71,10 @@ export default function CompleteInterviewModal({
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [open]);
 
-  const missingFields = useMemo(() => {
-    const missing: string[] = [];
-    if (applicantVisibleNotes.trim().length < 20) {
-      missing.push('Applicant-visible notes (≥ 20 chars)');
-    }
-    return missing;
-  }, [applicantVisibleNotes]);
+  // applicantVisibleNotes is optional now — no field-level blocker.
+  // Kept useMemo shape so future required-field additions have a place
+  // to land without re-wiring canSubmit.
+  const missingFields = useMemo<string[]>(() => [], []);
   const uploadInFlight = upload.kind === 'uploading';
   const canSubmit = missingFields.length === 0 && !submitting && !uploadInFlight;
 
@@ -164,10 +161,8 @@ export default function CompleteInterviewModal({
 
   async function submit() {
     setErr(null);
-    if (applicantVisibleNotes.trim().length < 20) {
-      setErr('Applicant-visible notes must be at least 20 characters.');
-      return;
-    }
+    // applicantVisibleNotes is optional at scorecard-submit time
+    // (F8 revision) — no minimum-length gate here.
     setSubmitting(true);
     try {
       await api.post(`/api/v1/erm/interviews/${interview.id}/complete`, {

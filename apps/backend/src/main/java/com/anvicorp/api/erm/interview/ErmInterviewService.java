@@ -87,7 +87,8 @@ public class ErmInterviewService {
     private static final Set<String> VALID_RECOMMENDATIONS = Set.of(
             "HIRE", "REJECT", "HOLD");
 
-    private static final int APPLICANT_NOTES_MIN = 20;
+    // (applicantVisibleNotes minimum removed in F8 — field is optional
+    //  at scorecard-submit time; the DTO still caps the upper length.)
     private static final int INTERNAL_NOTES_MAX = 5000;
     private static final int REASON_TEXT_MIN = 10;
     private static final int DURATION_MIN = 15;
@@ -580,11 +581,9 @@ public class ErmInterviewService {
     public ErmInterviewDtos.ErmInterviewDetail complete(
             UUID interviewId, ErmInterviewDtos.ErmCompleteRequest req, User caller) {
         if (req == null) throw new BadRequestException("body required");
-        if (req.applicantVisibleNotes() == null
-                || req.applicantVisibleNotes().trim().length() < APPLICANT_NOTES_MIN) {
-            throw new BadRequestException(
-                    "applicantVisibleNotes must be at least " + APPLICANT_NOTES_MIN + " characters");
-        }
+        // applicantVisibleNotes is optional as of the F8 revision — the
+        // ERM can submit a scorecard to the Manager without applicant-
+        // visible notes.
         if (req.internalNotes() != null && req.internalNotes().length() > INTERNAL_NOTES_MAX) {
             throw new BadRequestException(
                     "internalNotes cannot exceed " + INTERNAL_NOTES_MAX + " characters");
