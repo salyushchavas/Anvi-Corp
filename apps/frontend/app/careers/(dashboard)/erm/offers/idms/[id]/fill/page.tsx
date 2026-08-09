@@ -20,6 +20,7 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import InstanceRenderer from '@/components/idms/InstanceRenderer';
 import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
 import SignatureCapture from '@/components/idms/SignatureCapture';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
 import {
   useCoalescedAutoSave,
@@ -74,6 +75,10 @@ function PageContent() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  // Send-confirmation card — opens when the ERM clicks "Send to intern"
+  // and blocks the actual /send POST until the ERM confirms in the
+  // dialog. Cancel closes with no side effects; confirm calls send().
+  const [confirmSendOpen, setConfirmSendOpen] = useState(false);
 
   const [textValues, setTextValues] = useState<Record<string, string>>({});
   const [activeSignature, setActiveSignature] = useState<string | null>(null);
@@ -230,13 +235,21 @@ function PageContent() {
     }
   }
 
-  async function send() {
+  // Gatekeeper — validates completeness THEN opens the confirmation
+  // card. The actual POST lives in send() and only runs when the ERM
+  // clicks Confirm in the dialog.
+  function openSendConfirm() {
     if (!detail) return;
     if (!completeness.canTransition) {
       toast.error(completeness.blockingReason ?? 'Complete required fields first.');
       return;
     }
-    if (!confirm('Send this document to the intern? They’ll be notified to fill and sign.')) return;
+    setConfirmSendOpen(true);
+  }
+
+  async function send() {
+    if (!detail) return;
+    setConfirmSendOpen(false);
     setSending(true);
     try {
       // Flush any pending debounced save with the LATEST values — the
@@ -354,7 +367,7 @@ function PageContent() {
           <SaveIndicator state={saveState} onRetry={retry} />
           <button
             type="button"
-            onClick={send}
+            onClick={openSendConfirm}
             disabled={sendDisabled}
             title={sendReasonWhenDisabled(sendDisabled, completeness.blockingReason, saveState)}
             className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
@@ -455,6 +468,17 @@ function PageContent() {
           )}
         </aside>
       </div>
+
+      <ConfirmDialog
+        open={confirmSendOpen}
+        onClose={() => setConfirmSendOpen(false)}
+        onConfirm={send}
+        title="Send this document to the intern?"
+        description="They'll be notified to fill and sign."
+        confirmLabel="Send"
+        cancelLabel="Cancel"
+        variant="primary"
+      />
     </div>
   );
 }
