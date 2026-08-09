@@ -16,9 +16,8 @@ import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
-import InstanceRenderer, { type InstanceRendererHandle } from '@/components/idms/InstanceRenderer';
+import InstanceRenderer from '@/components/idms/InstanceRenderer';
 import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
-import SignaturePopover from '@/components/idms/SignaturePopover';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
 import {
@@ -80,12 +79,12 @@ function PageContent() {
   const [confirmSendOpen, setConfirmSendOpen] = useState(false);
 
   const [textValues, setTextValues] = useState<Record<string, string>>({});
-  // In-preview signature popover — { fieldId, anchorEl } while open.
-  // Replaces the prior "activeSignature id + stagedSignature + typedName
-  // in the right aside" trio; the popover owns its own staged bytes +
-  // typed name and calls back to submitSignature on Save.
-  const [sigPopover, setSigPopover] =
-    useState<{ fieldId: string; anchorEl: HTMLElement } | null>(null);
+  // Signature currently in expand mode. Which row of the FieldForm has
+  // its InlineSignatureCapture unfurled. Only one active at a time —
+  // clicking Sign on a second row auto-closes the first. Null when
+  // none is expanded. No portal, no floating overlay; the capture UI
+  // is a plain in-flow section under the field row in the panel.
+  const [activeSignature, setActiveSignature] = useState<string | null>(null);
   const [focusedField, setFocusedField] = useState<string | null>(null);
   // Optimistic signature tracking — after /sign returns, the fieldId sits
   // here until the next detail refetch fills detail.values[id].signatureUrl.
@@ -95,11 +94,6 @@ function PageContent() {
 
   const { user } = useAuth();
   const fieldFormRef = useRef<FieldFormHandle | null>(null);
-  const rendererRef = useRef<InstanceRendererHandle | null>(null);
-  // Preview scroller ref — the SignaturePopover attaches a scroll
-  // listener to it so the popover stays pinned to the anchor while the
-  // ERM scrolls the doc inside its container.
-  const previewScrollRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -213,15 +207,18 @@ function PageContent() {
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, [saveState]);
 
-  // POST /sign for the currently open signature slot. Called from the
-  // SignaturePopover with the staged data URL + typed name. Optimistic
-  // update mirrors the prior implementation so completeness doesn't flash
-  // incomplete for ~200 ms between /sign and the detail refetch (F15).
-  // The popover treats a resolved promise as "save succeeded" and
-  // handles its own close via the {@code sigPopover} state going null.
-  async function submitSignature(dataUrl: string, typedName: string): Promise<void> {
-    if (!detail || !sigPopover) return;
-    const fieldId = sigPopover.fieldId;
+  // POST /sign for the row expanded via activeSignature. Called from
+  // the FieldForm row's InlineSignatureCapture with the staged data URL
+  // + typed name. Optimistic update mirrors the prior implementation so
+  // completeness doesn't flash incomplete for ~200 ms between /sign and
+  // the detail refetch (F15). Success clears activeSignature which
+  // collapses the row's inline section; on error the inline section
+  // stays expanded and surfaces the message so the user can retry
+  // without redrawing.
+  async function submitSignature(
+    fieldId: string, dataUrl: string, typedName: string,
+  ): Promise<void> {
+    if (!detail) return;
     const res = await api.post<InstanceDetail>(
       `/api/v1/erm/idms/${detail.id}/sign`,
       { fieldId, signatureImageDataUrl: dataUrl, typedName },
@@ -232,7 +229,7 @@ function PageContent() {
       n.add(fieldId);
       return n;
     });
-    setSigPopover(null);
+    setActiveSignature(null);
   }
 
   // Gatekeeper — validates completeness THEN opens the confirmation
@@ -252,10 +249,11 @@ function PageContent() {
         ?? completeness.requiredMissing[0];
       if (first) {
         if (first.type === 'signature') {
-          // Jump to the in-preview signature line + open the popover at
-          // it. Signing happens at the signature line in the doc, not
-          // in a disconnected control at the bottom of the panel.
-          rendererRef.current?.openSignatureAt(first.id);
+          // Expand the panel row's InlineSignatureCapture + scroll the
+          // row into view. All signing happens inline in the panel
+          // (never floats over the doc).
+          setActiveSignature(first.id);
+          fieldFormRef.current?.focusField(first.id);
           toast.error('Please add your signature to continue.');
         } else {
           setFocusedField(first.id);
@@ -316,8 +314,6 @@ function PageContent() {
   }
 
   // Text/date/content_block anchor clicks — focus the panel input.
-  // Signature clicks come through {@code onSignatureAnchorClick} below
-  // with the actual DOM element so the popover can position over it.
   function onFieldClickInPreview(fieldId: string) {
     const f = fields.find((x) => x.id === fieldId);
     if (!f) return;
@@ -327,9 +323,13 @@ function PageContent() {
     }
   }
 
-  // Owner-signature anchor click — open the popover at the clicked line.
-  function onSignatureAnchorClick(fieldId: string, anchorEl: HTMLElement) {
-    setSigPopover({ fieldId, anchorEl });
+  // Owner-signature anchor click in the preview — expand the
+  // corresponding panel row's InlineSignatureCapture + scroll it into
+  // view. Signing itself happens in the panel; the doc slot is just a
+  // "click here to reach the signer" affordance.
+  function onSignatureAnchorClick(fieldId: string) {
+    setActiveSignature(fieldId);
+    fieldFormRef.current?.focusField(fieldId);
   }
 
   if (loading) {
@@ -421,12 +421,8 @@ function PageContent() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div
-            ref={previewScrollRef}
-            className="max-h-[calc(100vh-220px)] overflow-y-auto p-2"
-          >
+          <div className="max-h-[calc(100vh-220px)] overflow-y-auto p-2">
             <InstanceRenderer
-              ref={rendererRef}
               detail={detail}
               fields={fields}
               editRole="ERM"
@@ -435,7 +431,7 @@ function PageContent() {
               focusedFieldId={focusedField}
               onFieldClick={onFieldClickInPreview}
               onSignatureClick={onSignatureAnchorClick}
-              activeSignatureFieldId={sigPopover?.fieldId ?? null}
+              activeSignatureFieldId={activeSignature}
             />
           </div>
         </section>
@@ -449,29 +445,21 @@ function PageContent() {
               role="ERM"
               textValues={textValues}
               onTextChange={onTextChange}
-              onOpenSignature={(fid) => rendererRef.current?.openSignatureAt(fid)}
-              activeSignatureFieldId={sigPopover?.fieldId ?? null}
+              onOpenSignature={(fid) => setActiveSignature(fid)}
+              activeSignatureFieldId={activeSignature}
               focusedFieldId={focusedField}
               onFocusField={setFocusedField}
               signatureBlobs={signatureBlobs}
+              onSaveSignature={submitSignature}
+              onCancelSignature={() => setActiveSignature(null)}
+              signerName={user?.fullName ?? ''}
             />
             <p className="mt-4 text-[11px] text-slate-400">
-              Draft started {humanDate(detail.createdAt)} · sign at the signature line in the document · autosaves as you type
+              Draft started {humanDate(detail.createdAt)} · autosaves as you type
             </p>
           </section>
         </aside>
       </div>
-
-      {sigPopover && (
-        <SignaturePopover
-          anchorEl={sigPopover.anchorEl}
-          initialName={user?.fullName ?? ''}
-          fieldName={fields.find((f) => f.id === sigPopover.fieldId)?.name}
-          onCancel={() => setSigPopover(null)}
-          onSave={submitSignature}
-          scrollContainer={previewScrollRef.current}
-        />
-      )}
 
       <ConfirmDialog
         open={confirmSendOpen}

@@ -16,9 +16,8 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
-import InstanceRenderer, { type InstanceRendererHandle } from '@/components/idms/InstanceRenderer';
+import InstanceRenderer from '@/components/idms/InstanceRenderer';
 import FieldForm, { type FieldFormHandle } from '@/components/idms/FieldForm';
-import SignaturePopover from '@/components/idms/SignaturePopover';
 import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
 import {
   useCoalescedAutoSave,
@@ -58,11 +57,9 @@ export default function InternOfferLetterFillPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [textValues, setTextValues] = useState<Record<string, string>>({});
-  // In-preview signature popover — same shape as the ERM fill page. The
-  // signature capture lives in a popover anchored at the signature slot
-  // in the document, not in a bottom-of-aside section.
-  const [sigPopover, setSigPopover] =
-    useState<{ fieldId: string; anchorEl: HTMLElement } | null>(null);
+  // Signature currently in expand mode. Signing happens inline in the
+  // FieldForm panel — no floating overlay. One expanded at a time.
+  const [activeSignature, setActiveSignature] = useState<string | null>(null);
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -70,11 +67,6 @@ export default function InternOfferLetterFillPage() {
 
   const { user } = useAuth();
   const fieldFormRef = useRef<FieldFormHandle | null>(null);
-  const rendererRef = useRef<InstanceRendererHandle | null>(null);
-  // Preview scroller ref — SignaturePopover subscribes to its scroll so
-  // the popover stays pinned to the anchor as the intern scrolls the
-  // document inside its container.
-  const previewScrollRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -186,12 +178,14 @@ export default function InternOfferLetterFillPage() {
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, [saveState]);
 
-  // POST /sign for the currently open signature slot. Same shape as the
-  // ERM fill page's submitSignature — the popover awaits our promise so
-  // the spinner + close both hinge on network completion.
-  async function saveSignature(dataUrl: string, typedName: string): Promise<void> {
-    if (!detail || !sigPopover) return;
-    const fieldId = sigPopover.fieldId;
+  // POST /sign for the row expanded via activeSignature. Called from
+  // the FieldForm row's InlineSignatureCapture. Success clears
+  // activeSignature which collapses the inline section; error stays
+  // expanded so the intern can retry without redrawing.
+  async function saveSignature(
+    fieldId: string, dataUrl: string, typedName: string,
+  ): Promise<void> {
+    if (!detail) return;
     const res = await api.post<InstanceDetail>(
       `/api/v1/intern/agreements/${detail.id}/sign`,
       { fieldId, signatureImageDataUrl: dataUrl, typedName },
@@ -202,22 +196,22 @@ export default function InternOfferLetterFillPage() {
       n.add(fieldId);
       return n;
     });
-    setSigPopover(null);
+    setActiveSignature(null);
   }
 
   async function submit() {
     if (!detail) return;
     if (!completeness.canTransition) {
-      // Don't just refuse silently — jump to the first missing required
-      // field. For signatures, opening the in-preview popover at the
-      // signature line beats a text toast: the pad is right at the
-      // slot the intern was staring at anyway.
+      // Don't just refuse silently — expand the first missing required
+      // signature's inline capture in the panel + scroll its row into
+      // view. Text-field misses focus + scroll the input.
       const first =
         completeness.requiredMissing.find((f) => f.type === 'signature')
         ?? completeness.requiredMissing[0];
       if (first) {
         if (first.type === 'signature') {
-          rendererRef.current?.openSignatureAt(first.id);
+          setActiveSignature(first.id);
+          fieldFormRef.current?.focusField(first.id);
           toast.error('Please add your signature to continue.');
         } else {
           setFocusedField(first.id);
@@ -272,9 +266,7 @@ export default function InternOfferLetterFillPage() {
     }
   }
 
-  // Text/date/content_block anchor click — focus the panel input. The
-  // in-preview signature-slot click routes through onSignatureAnchorClick
-  // (with the DOM element for popover positioning).
+  // Text/date/content_block anchor click — focus the panel input.
   function onFieldClickInPreview(fieldId: string) {
     const f = fields.find((x) => x.id === fieldId);
     if (!f) return;
@@ -285,9 +277,13 @@ export default function InternOfferLetterFillPage() {
     }
   }
 
-  function onSignatureAnchorClick(fieldId: string, anchorEl: HTMLElement) {
+  // Owner-signature anchor click in the preview — expand the
+  // corresponding panel row's InlineSignatureCapture + scroll it into
+  // view. Signing happens inline in the panel (no floating overlay).
+  function onSignatureAnchorClick(fieldId: string) {
     if (!canEdit) return;
-    setSigPopover({ fieldId, anchorEl });
+    setActiveSignature(fieldId);
+    fieldFormRef.current?.focusField(fieldId);
   }
 
   if (loading) {
@@ -309,10 +305,10 @@ export default function InternOfferLetterFillPage() {
   const submitDisabled = submitting || saveState.kind === 'saving';
 
   // Wraps the Submit-button click with the same first-missing-field
-  // triage the ERM page's openSendConfirm uses. Signature triage goes
-  // through the in-preview jump-to (openSignatureAt scrolls the doc AND
-  // opens the popover at the signature line), then opens the confirm
-  // dialog only when everything checks out.
+  // triage the ERM page's openSendConfirm uses. Signature triage expands
+  // the row's inline capture in the panel + scrolls the row into view;
+  // text-field triage focuses the input. Confirm dialog opens only when
+  // everything checks out.
   function openSubmitConfirm() {
     if (!completeness.canTransition) {
       const first =
@@ -320,7 +316,8 @@ export default function InternOfferLetterFillPage() {
         ?? completeness.requiredMissing[0];
       if (first) {
         if (first.type === 'signature') {
-          rendererRef.current?.openSignatureAt(first.id);
+          setActiveSignature(first.id);
+          fieldFormRef.current?.focusField(first.id);
           toast.error('Please add your signature to continue.');
         } else {
           setFocusedField(first.id);
@@ -439,12 +436,8 @@ export default function InternOfferLetterFillPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div
-            ref={previewScrollRef}
-            className="max-h-[calc(100vh-260px)] overflow-y-auto p-2"
-          >
+          <div className="max-h-[calc(100vh-260px)] overflow-y-auto p-2">
             <InstanceRenderer
-              ref={rendererRef}
               detail={detail}
               fields={fields}
               editRole={canEdit ? 'INTERN' : null}
@@ -453,7 +446,7 @@ export default function InternOfferLetterFillPage() {
               focusedFieldId={focusedField}
               onFieldClick={canEdit ? onFieldClickInPreview : undefined}
               onSignatureClick={canEdit ? onSignatureAnchorClick : undefined}
-              activeSignatureFieldId={sigPopover?.fieldId ?? null}
+              activeSignatureFieldId={activeSignature}
             />
           </div>
         </section>
@@ -468,30 +461,22 @@ export default function InternOfferLetterFillPage() {
                 role="INTERN"
                 textValues={textValues}
                 onTextChange={onTextChange}
-                onOpenSignature={(fid) => rendererRef.current?.openSignatureAt(fid)}
-                activeSignatureFieldId={sigPopover?.fieldId ?? null}
+                onOpenSignature={(fid) => setActiveSignature(fid)}
+                activeSignatureFieldId={activeSignature}
                 focusedFieldId={focusedField}
                 onFocusField={setFocusedField}
                 signatureBlobs={signatureBlobs}
+                onSaveSignature={saveSignature}
+                onCancelSignature={() => setActiveSignature(null)}
+                signerName={user?.fullName ?? ''}
               />
               <p className="mt-4 text-[11px] text-slate-400">
-                Sign at the signature line in the document · autosaves as you type.
+                Autosaves as you type.
               </p>
             </section>
           )}
         </aside>
       </div>
-
-      {sigPopover && (
-        <SignaturePopover
-          anchorEl={sigPopover.anchorEl}
-          initialName={user?.fullName ?? ''}
-          fieldName={fields.find((f) => f.id === sigPopover.fieldId)?.name}
-          onCancel={() => setSigPopover(null)}
-          onSave={saveSignature}
-          scrollContainer={previewScrollRef.current}
-        />
-      )}
 
       {confirmOpen && (
         <ConfirmSubmitDialog
