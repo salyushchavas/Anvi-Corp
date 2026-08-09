@@ -73,6 +73,13 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
       const schema = schemaById.get(id);
       const persisted = detail.values[id];
 
+      // Typography inheritance — copy the surrounding docx-preview
+      // run's font-family + font-size onto the anchor BEFORE we wipe
+      // its inner content, so the filled value renders in the same
+      // face + size as the neighbouring template text. Cached in
+      // dataset so keystroke re-paints don't hunt again.
+      applyInheritedTypography(span);
+
       // Signature-anchor DOM reuse — when the effective src hasn't
       // changed AND an <img> for it already exists, we DON'T touch the
       // img element (previously we did innerHTML='' + createElement +
@@ -281,6 +288,63 @@ function awaitingLabel(
   if (editRole === 'INTERN' && assignee === 'ERM') return 'awaiting your ERM';
   if (editRole === 'ERM' && assignee === 'INTERN') return 'awaiting the intern';
   return schema?.name ?? 'unfilled';
+}
+
+/**
+ * Copy the effective font-family + font-size (plus weight / style /
+ * letter-spacing / line-height so bold and italic runs stay bold and
+ * italic when filled) from the anchor's surrounding docx-preview run
+ * onto the anchor itself. Idempotent per anchor via {@code data-df-inherit}
+ * — first paint captures, subsequent paints skip.
+ *
+ * <p>Priority order (first match wins):</p>
+ * <ol>
+ *   <li>First inner element still present from the initial canonical
+ *       HTML injection — this IS the docx run the anchor was wrapped
+ *       around when the studio saved it, so its computed font is
+ *       exactly what the neighbouring text uses.</li>
+ *   <li>Nearest previous / next element sibling in the same paragraph
+ *       (skipping other field anchors, which have themselves been
+ *       stripped of their inner runs on this same paint pass).</li>
+ *   <li>Parent element — the paragraph itself — as a last resort.</li>
+ * </ol>
+ */
+function applyInheritedTypography(span: HTMLElement): void {
+  if (span.dataset.dfInherit === '1') return;
+  const source = pickTypographySource(span);
+  if (!source) return;
+  const cs = window.getComputedStyle(source);
+  if (cs.fontFamily) span.style.fontFamily = cs.fontFamily;
+  if (cs.fontSize) span.style.fontSize = cs.fontSize;
+  if (cs.fontWeight) span.style.fontWeight = cs.fontWeight;
+  if (cs.fontStyle) span.style.fontStyle = cs.fontStyle;
+  if (cs.letterSpacing) span.style.letterSpacing = cs.letterSpacing;
+  if (cs.lineHeight) span.style.lineHeight = cs.lineHeight;
+  span.dataset.dfInherit = '1';
+}
+
+function pickTypographySource(span: HTMLElement): HTMLElement | null {
+  for (const child of Array.from(span.children)) {
+    if (child instanceof HTMLElement
+        && !child.classList.contains('doc-field-inline-label')) {
+      return child;
+    }
+  }
+  let sib: Element | null = span.previousElementSibling;
+  while (sib) {
+    if (sib instanceof HTMLElement && !sib.hasAttribute('data-field-id')) {
+      return sib;
+    }
+    sib = sib.previousElementSibling;
+  }
+  sib = span.nextElementSibling;
+  while (sib) {
+    if (sib instanceof HTMLElement && !sib.hasAttribute('data-field-id')) {
+      return sib;
+    }
+    sib = sib.nextElementSibling;
+  }
+  return span.parentElement;
 }
 
 /** Minimal CSS.escape polyfill for older browsers — field ids are UUIDs so

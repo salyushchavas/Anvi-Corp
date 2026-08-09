@@ -78,7 +78,14 @@ public class DocumentInstancePdfRenderer {
                               Map<String, String> textByFieldId,
                               Map<String, String> signatureDataUrlByFieldId,
                               String title) {
-        String filledBody = interpolate(canonicalHtml, textByFieldId, signatureDataUrlByFieldId);
+        // Hoist neighbouring docx-preview run's font-family / font-size
+        // onto each anchor BEFORE interpolation so the filled value
+        // inherits the same typography as the surrounding template
+        // text. See IdmsFieldFontInheritance for the walk order.
+        String canonicalWithInheritedFonts =
+                IdmsFieldFontInheritance.applyToCanonicalHtml(canonicalHtml);
+        String filledBody = interpolate(
+                canonicalWithInheritedFonts, textByFieldId, signatureDataUrlByFieldId);
         String fullDoc = wrapInHtmlDoc(title, filledBody);
 
         Future<byte[]> f = executor.submit(() -> {
