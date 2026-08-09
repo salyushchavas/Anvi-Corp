@@ -32,6 +32,13 @@ export interface QueueRow {
    *  as dedicated columns; all other tabs ignore them. */
   revokedAt: string | null;
   revokeReasonHuman: string | null;
+  /** AWAITING_OFFER-only. 'PENDING' when the intern hasn't clicked
+   *  "Receive my offer letter" on their dashboard yet; 'READY' once
+   *  they have. Null on every non-awaiting row. Mirrors the backend
+   *  SelectionAckPolicy.needsAck gate so the row's chip never
+   *  disagrees with the 409 that /api/v1/erm/idms throws for
+   *  offer-family templates on a not-yet-ack'd application. */
+  selectionAckStatus: 'PENDING' | 'READY' | null;
 }
 
 export interface PickableTemplate {
@@ -148,6 +155,12 @@ export function stageToneClass(stage: string): string {
     case 'Revoked':             return 'bg-red-100 text-red-800';
     case 'Replaced':            return 'bg-slate-100 text-slate-600';
     case 'Awaiting offer':      return 'bg-amber-50 text-amber-900';
+    // Split awaiting-offer chip after the SelectionAckPolicy gate landed:
+    // "Acknowledgement pending" means the intern hasn't clicked "Receive
+    // my offer letter" yet, so Send Document is server-blocked. "Ready
+    // for offer" means the ack has stamped and the ERM can proceed.
+    case 'Acknowledgement pending': return 'bg-slate-100 text-slate-700';
+    case 'Ready for offer':     return 'bg-emerald-100 text-emerald-900';
     default:                    return 'bg-slate-100 text-slate-700';
   }
 }

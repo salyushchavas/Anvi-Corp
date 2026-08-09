@@ -252,7 +252,13 @@ public final class ErmOfferDtos {
             String overallRecommendation,
             Integer technicalScore,
             Integer communicationScore,
-            String applicantVisibleNotes
+            String applicantVisibleNotes,
+            /** When the intern clicked "Receive my offer letter" on their
+             *  dashboard. Null while the ack is still pending — the ERM
+             *  cockpit uses this to split awaiting-offer rows into
+             *  "Ready for offer" vs "Acknowledgement pending" without
+             *  a second round-trip. */
+            Instant selectionAcknowledgedAt
     ) {}
 
     public record AwaitingOfferListPage(

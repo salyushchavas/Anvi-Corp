@@ -101,6 +101,10 @@ public class DocumentInstanceService {
     private final EmployeeIdGenerator employeeIdGenerator;
     private final ReportingStructureAutoLinker reportingStructureAutoLinker;
     private final com.anvicorp.api.intern.InternLifecycleService internLifecycleService;
+    // Selection-ack gate — mirrors the legacy ErmOfferService gate so the
+    // IDMS-path offer-family send can't bypass the intern's acknowledgment
+    // click on their dashboard. Same policy component both surfaces read.
+    private final com.anvicorp.api.erm.offer.SelectionAckPolicy selectionAckPolicy;
 
     // ── Create + supersede + list ────────────────────────────────────
 
@@ -132,6 +136,27 @@ public class DocumentInstanceService {
         if (template.getCanonicalHtml() == null || template.getFieldSchemaJson() == null) {
             throw new BadRequestException(
                     "Template hasn't been saved with fields yet. Complete authoring in the studio first.");
+        }
+        // Selection-ack gate — offer-family templates cannot be created for an
+        // application whose intern hasn't clicked "Receive my offer letter" on
+        // their dashboard. Mirrors the legacy ErmOfferService.createAndSend
+        // gate so the IDMS path can't bypass it. Applied before
+        // resolveOrCreateLifecycle so we don't mint an employee id / lifecycle
+        // for an unacknowledged candidate. Non-offer templates (NDA, etc.)
+        // are unaffected. Only the applicationId path is checked: an existing
+        // lifecycleId means the candidate is already past the ack step.
+        if (req.applicationId() != null
+                && template.getKey() != null
+                && template.getKey().startsWith("OFFER_")) {
+            Application app = applicationRepo.findById(req.applicationId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Application not found: " + req.applicationId()));
+            if (selectionAckPolicy.needsAck(app)) {
+                throw new ConflictException(
+                        "Acknowledgement pending — the intern must click "
+                                + "'Receive my offer letter' on their dashboard "
+                                + "before you can send an offer.");
+            }
         }
         // Resolve the lifecycle. Preferred: an explicit id (existing behavior
         // — byte-identical to the pre-fix path). Fallback: applicationId, in

@@ -23,6 +23,11 @@ interface AwaitingOfferRow {
   technicalScore: number | null;
   communicationScore: number | null;
   applicantVisibleNotes: string | null;
+  /** Stamped when the intern clicks "Receive my offer letter" on their
+   *  dashboard. Null while the ack is pending — Send Offer is
+   *  server-gated by SelectionAckPolicy.needsAck, so the button on
+   *  this row is disabled to keep UI + backend aligned. */
+  selectionAcknowledgedAt: string | null;
 }
 
 interface AwaitingOfferPage {
@@ -115,6 +120,7 @@ export default function ErmDecisionCenterPage() {
                   <th className="px-3 py-2">Interview</th>
                   <th className="px-3 py-2">Scores</th>
                   <th className="px-3 py-2">Recommendation</th>
+                  <th className="px-3 py-2">Acknowledgement</th>
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
@@ -158,6 +164,7 @@ export default function ErmDecisionCenterPage() {
 }
 
 function Row({ row, onSend }: { row: AwaitingOfferRow; onSend: () => void }) {
+  const ackDone = row.selectionAcknowledgedAt != null;
   return (
     <tr>
       <td className="px-3 py-2">
@@ -199,15 +206,38 @@ function Row({ row, onSend }: { row: AwaitingOfferRow; onSend: () => void }) {
           <span className="text-slate-400">—</span>
         )}
       </td>
+      <td className="px-3 py-2 text-xs">
+        {ackDone ? (
+          <span
+            className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800"
+            title={`Acknowledged ${new Date(row.selectionAcknowledgedAt as string).toLocaleString()}`}
+          >
+            Ready for offer
+          </span>
+        ) : (
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">
+            Acknowledgement pending
+          </span>
+        )}
+      </td>
       <td className="px-3 py-2 text-right">
-        <button
-          type="button"
-          onClick={onSend}
-          className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-800"
-        >
-          <Send className="h-3 w-3" />
-          Send Offer
-        </button>
+        {ackDone ? (
+          <button
+            type="button"
+            onClick={onSend}
+            className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-800"
+          >
+            <Send className="h-3 w-3" />
+            Send Offer
+          </button>
+        ) : (
+          <span
+            title="The intern hasn't acknowledged yet on their dashboard. You'll be able to send once they do."
+            className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500 cursor-not-allowed"
+          >
+            Waiting on intern
+          </span>
+        )}
       </td>
     </tr>
   );

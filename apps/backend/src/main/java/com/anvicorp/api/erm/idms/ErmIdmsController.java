@@ -80,7 +80,8 @@ public class ErmIdmsController {
                     canRevoke,
                     /*canSupersede*/ i.getStatus() == DocumentInstanceStatus.FINALIZED,
                     i.getRevokedAt(),
-                    humanRevokeReason(i.getRevokeReasonCode())));
+                    humanRevokeReason(i.getRevokeReasonCode()),
+                    /*selectionAckStatus*/ null));
         }
 
         // (b) Awaiting-offer bridge: interns who cleared the interview but
@@ -89,6 +90,14 @@ public class ErmIdmsController {
         ErmOfferDtos.AwaitingOfferListPage awaiting =
                 ermOfferService.listAwaitingOffer(search, 0, 100);
         for (ErmOfferDtos.AwaitingOfferRow a : awaiting.items()) {
+            // Ack-status derivation — mirrors SelectionAckPolicy.needsAck:
+            // this queue query only returns rows whose latest completed
+            // interview was SELECTED, so the sole remaining variable is
+            // whether the applicant has stamped selection_acknowledged_at
+            // via the intern dashboard's "Receive my offer letter" click.
+            // The chip label + Send-button gating on the frontend read
+            // this field so the ERM sees who's ready to offer at a glance.
+            boolean ackDone = a.selectionAcknowledgedAt() != null;
             rows.add(new DocumentInstanceDtos.QueueRow(
                     /*instanceId*/ null,
                     a.applicationId(),
@@ -98,13 +107,14 @@ public class ErmIdmsController {
                     a.applicantEmail(),
                     /*templateTitle*/ null,
                     /*templateKey*/ null,
-                    "Awaiting offer",
+                    ackDone ? "Ready for offer" : "Acknowledgement pending",
                     "AWAITING_OFFER",
                     a.interviewCompletedAt(),
                     /*canRevoke*/ false,
                     /*canSupersede*/ false,
                     /*revokedAt*/ null,
-                    /*revokeReasonHuman*/ null));
+                    /*revokeReasonHuman*/ null,
+                    ackDone ? "READY" : "PENDING"));
         }
 
         // Sort by last activity DESC.

@@ -788,7 +788,8 @@ public class ErmOfferService {
                 + "jp.title AS job_title, jp.job_type, "
                 + "iv.updated_at AS completed_at, iv.overall_recommendation, "
                 + "iv.technical_score, iv.communication_score, "
-                + "iv.applicant_visible_notes "
+                + "iv.applicant_visible_notes, "
+                + "a.selection_acknowledged_at "
                 + base + where
                 + " ORDER BY iv.updated_at DESC NULLS LAST, a.id DESC "
                 + " LIMIT " + pageable.getPageSize()
@@ -811,7 +812,10 @@ public class ErmOfferService {
                             rs.getString("overall_recommendation"),
                             (Integer) rs.getObject("technical_score"),
                             (Integer) rs.getObject("communication_score"),
-                            rs.getString("applicant_visible_notes")));
+                            rs.getString("applicant_visible_notes"),
+                            rs.getTimestamp("selection_acknowledged_at") != null
+                                    ? rs.getTimestamp("selection_acknowledged_at").toInstant()
+                                    : null));
         } catch (Exception e) {
             log.warn("[ErmOffers] awaiting query failed: {}", e.getMessage());
         }

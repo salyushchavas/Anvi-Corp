@@ -135,6 +135,14 @@ function PageContent() {
       router.push(path);
     } else {
       // Awaiting-offer row → template picker to start a new instance.
+      // But if the intern hasn't acknowledged yet, the server-side gate
+      // will 409 any offer-family send. Toast instead of opening the
+      // picker so the ERM doesn't get halfway through a fill and hit
+      // a wall.
+      if (row.selectionAckStatus === 'PENDING') {
+        toast('Acknowledgement pending — the intern needs to click "Receive my offer letter" on their dashboard before you can send an offer.', { icon: '⏳' });
+        return;
+      }
       setPickerOpen(row);
     }
   }
@@ -283,14 +291,27 @@ function PageContent() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     {r.statusRaw === 'AWAITING_OFFER' ? (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setPickerOpen(r); }}
-                        className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-800"
-                      >
-                        <Send className="h-3.5 w-3.5" />
-                        Send document
-                      </button>
+                      r.selectionAckStatus === 'PENDING' ? (
+                        // Server-blocked until intern clicks "Receive my offer
+                        // letter" on their dashboard — surface the block on
+                        // the row itself instead of letting the ERM click
+                        // through the picker and 409 mid-fill.
+                        <span
+                          title="The intern hasn't acknowledged yet on their dashboard. You'll be able to send once they do."
+                          className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-500 cursor-not-allowed"
+                        >
+                          Waiting on intern
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setPickerOpen(r); }}
+                          className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-800"
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          Send document
+                        </button>
+                      )
                     ) : (
                       <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
                     )}

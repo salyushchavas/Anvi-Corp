@@ -45,7 +45,18 @@ public final class DocumentInstanceDtos {
              *  Offers section reads these to show the plain-English reason
              *  and the revoke timestamp without a second round-trip. */
             Instant revokedAt,
-            String revokeReasonHuman
+            String revokeReasonHuman,
+            /** AWAITING_OFFER rows only — {@code "PENDING"} when the intern
+             *  hasn't clicked "Receive my offer letter" on their dashboard,
+             *  {@code "READY"} once they have. Null for every non-awaiting
+             *  row so the cockpit's other tabs are unaffected. Drives the
+             *  "Acknowledgement pending" chip + the disabled Send-document
+             *  button copy on the queue. Server-authoritative: matches
+             *  {@link com.anvicorp.api.erm.offer.SelectionAckPolicy#needsAck}
+             *  so the row's chip never disagrees with the 409 that
+             *  {@link com.anvicorp.api.erm.idms.DocumentInstanceService#create}
+             *  throws for offer-family templates. */
+            String selectionAckStatus
     ) {}
 
     public record QueueResponse(
