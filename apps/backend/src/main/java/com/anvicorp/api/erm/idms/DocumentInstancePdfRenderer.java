@@ -142,7 +142,14 @@ public class DocumentInstancePdfRenderer {
                 if (txt == null || txt.isEmpty()) {
                     replacement = originalInner; // leave the placeholder text
                 } else {
-                    replacement = escapeHtml(txt);
+                    // content_block values are multi-line (Job Duties bullets,
+                    // paragraphs). openhtmltopdf collapses \n like any browser
+                    // does when white-space is default, so a multi-line value
+                    // would render as one wall of text. Convert every newline
+                    // to a <br /> so line breaks survive; text/date values
+                    // never contain \n so this is a no-op for them and we
+                    // avoid a per-field-type branch in the interpolator.
+                    replacement = escapeHtml(txt).replace("\n", "<br />");
                 }
             }
             sb.append("<span")

@@ -25,13 +25,27 @@ import java.util.regex.Pattern;
  * beside it.</p>
  *
  * <p>This pass walks each anchor, finds the first non-anchor neighbour
- * with an inline font style (inner child → previous sibling → next
+ * with an inline font style (inner descendant → previous sibling → next
  * sibling → parent) and copies its {@code font-family}, {@code font-size},
  * {@code font-weight}, {@code font-style}, {@code letter-spacing},
  * {@code line-height} onto the anchor's own {@code style} attribute.
  * The interpolator then replaces the anchor's inner content with the
  * filled value; the outer style now steers the rendered font so the
  * value is visually indistinguishable from the run beside it.</p>
+ *
+ * <p><b>Content-block anchors.</b> A {@code content_block} field wraps a
+ * whole paragraph, list, or set of block elements. The immediate
+ * children of the anchor are then structural blocks
+ * ({@code <p>}, {@code <ul>}, {@code <li>}) that docx-preview typically
+ * emits WITHOUT inline font styles — the actual {@code font-family}
+ * lives on the run {@code <span>}s nested INSIDE those blocks. The
+ * original one-level {@code anchor.children()} walk missed them and
+ * the anchor fell back to the body {@code Times New Roman 11pt}
+ * default, which is exactly the "Job Duties renders in a different
+ * font" bug. The walk is therefore a depth-first descent: we recurse
+ * into each descendant until we find the first element carrying an
+ * inline {@code font-family}. Sibling walk-outs also descend into
+ * their subtrees for the same reason.</p>
  *
  * <p>Applied to canonical HTML BEFORE
  * {@link DocumentInstancePdfRenderer#interpolate(String, java.util.Map,
@@ -84,15 +98,15 @@ final class IdmsFieldFontInheritance {
     }
 
     private static String resolveFont(Element anchor) {
-        for (Element child : anchor.children()) {
-            String s = extractFontDeclarations(child.attr("style"));
-            if (!s.isEmpty()) return s;
-        }
+        String descendant = descendantFont(anchor);
+        if (!descendant.isEmpty()) return descendant;
         Element sib = anchor.previousElementSibling();
         while (sib != null) {
             if (!sib.hasAttr("data-field-id")) {
                 String s = extractFontDeclarations(sib.attr("style"));
                 if (!s.isEmpty()) return s;
+                String d = descendantFont(sib);
+                if (!d.isEmpty()) return d;
             }
             sib = sib.previousElementSibling();
         }
@@ -101,11 +115,32 @@ final class IdmsFieldFontInheritance {
             if (!sib.hasAttr("data-field-id")) {
                 String s = extractFontDeclarations(sib.attr("style"));
                 if (!s.isEmpty()) return s;
+                String d = descendantFont(sib);
+                if (!d.isEmpty()) return d;
             }
             sib = sib.nextElementSibling();
         }
         Element parent = anchor.parent();
         if (parent != null) return extractFontDeclarations(parent.attr("style"));
+        return "";
+    }
+
+    /** Depth-first descent for the first descendant carrying inline font
+     *  declarations. content_block anchors wrap block elements
+     *  ({@code <p>}, {@code <ul>}, {@code <li>}) that docx-preview leaves
+     *  unstyled; the run {@code <span>}s inside them carry the actual
+     *  {@code font-family}. A one-level {@code children()} check misses
+     *  those, which was the "Job Duties renders in a different font" bug.
+     *  Skips anchor spans so we never inherit from a sibling field's
+     *  already-hoisted style. */
+    private static String descendantFont(Element el) {
+        for (Element child : el.children()) {
+            if (child.hasAttr("data-field-id")) continue;
+            String s = extractFontDeclarations(child.attr("style"));
+            if (!s.isEmpty()) return s;
+            String deeper = descendantFont(child);
+            if (!deeper.isEmpty()) return deeper;
+        }
         return "";
     }
 
