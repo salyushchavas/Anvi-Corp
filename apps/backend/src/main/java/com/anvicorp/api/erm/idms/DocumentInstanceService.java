@@ -1011,8 +1011,14 @@ public class DocumentInstanceService {
      *  - lifecycle NOT yet ACTIVE ({@code startedAt IS NULL}), AND
      *  - (joiningDate + tentativeStartDate both null, OR today &lt;= earliest set).
      * After start: 409 with clean copy.
+     *
+     * <p>Package-private so {@link ErmIdmsController#queue} can drive the
+     * cockpit list's {@code canRevoke} chip off the exact same gate as
+     * the detail page's {@code canErmRevoke} action — one source of truth,
+     * no chance of the list saying "revocable" while the detail says
+     * "start date has passed" (or vice versa).</p>
      */
-    private RevocationGate canRevoke(InternLifecycle lc) {
+    RevocationGate canRevoke(InternLifecycle lc) {
         if (lc.getStartedAt() != null) {
             return new RevocationGate(false,
                     "This person has already started — revocation isn't available.");

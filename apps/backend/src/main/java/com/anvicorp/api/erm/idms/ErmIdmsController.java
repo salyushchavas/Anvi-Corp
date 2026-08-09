@@ -56,9 +56,15 @@ public class ErmIdmsController {
         for (DocumentInstance i : instanceService.listForCockpit()) {
             User intern = userRepo.findById(i.getInternUserId()).orElse(null);
             var lc = lifecycleRepo.findById(i.getInternLifecycleId()).orElse(null);
-            boolean canRevoke = i.getStatus() != null
-                    && DocumentInstanceStatus.REVOCABLE.contains(i.getStatus())
-                    && lc != null && lc.getStartedAt() == null;
+            // Reconcile — the list's revocable chip runs through the same
+            // gate the detail page's canErmRevoke uses (see
+            // DocumentInstanceService.canRevoke). Prevents the cockpit from
+            // showing Revoke on rows the detail would 409 (start date
+            // passed) and vice versa.
+            boolean stateOk = i.getStatus() != null
+                    && DocumentInstanceStatus.REVOCABLE.contains(i.getStatus());
+            boolean gateOk = lc != null && instanceService.canRevoke(lc).allowed();
+            boolean canRevoke = stateOk && gateOk;
             rows.add(new DocumentInstanceDtos.QueueRow(
                     i.getId(),
                     /*applicationId*/ null,
@@ -72,7 +78,9 @@ public class ErmIdmsController {
                     i.getStatus() != null ? i.getStatus().name() : null,
                     i.getUpdatedAt(),
                     canRevoke,
-                    /*canSupersede*/ i.getStatus() == DocumentInstanceStatus.FINALIZED));
+                    /*canSupersede*/ i.getStatus() == DocumentInstanceStatus.FINALIZED,
+                    i.getRevokedAt(),
+                    humanRevokeReason(i.getRevokeReasonCode())));
         }
 
         // (b) Awaiting-offer bridge: interns who cleared the interview but
@@ -94,7 +102,9 @@ public class ErmIdmsController {
                     "AWAITING_OFFER",
                     a.interviewCompletedAt(),
                     /*canRevoke*/ false,
-                    /*canSupersede*/ false));
+                    /*canSupersede*/ false,
+                    /*revokedAt*/ null,
+                    /*revokeReasonHuman*/ null));
         }
 
         // Sort by last activity DESC.
@@ -133,6 +143,36 @@ public class ErmIdmsController {
             case VOIDED -> "Voided";
         };
     }
+
+    /** Plain-English label for a REVOKE_* reason code — mirrors the
+     *  frontend {@code REVOKE_REASONS} list in
+     *  {@code apps/frontend/lib/careers/idms.ts} so the Revoked Offers
+     *  section shows the same wording the ERM picked from the dropdown.
+     *  Backend {@code ReasonCode} doesn't have a REVOKE category
+     *  (revoke codes are IDMS-scoped and validated as free-form strings
+     *  by {@link DocumentInstanceService#revoke}); this map is the
+     *  single-file backend peer of that frontend list. Unknown codes
+     *  fall back to a de-underscored lowercase version rather than
+     *  leaking the raw enum. */
+    private static String humanRevokeReason(String code) {
+        if (code == null || code.isBlank()) return null;
+        String c = code.trim().toUpperCase();
+        String label = REVOKE_REASON_LABELS.get(c);
+        if (label != null) return label;
+        // Fallback: strip prefix + de-underscore so an unmapped code
+        // still reads as English ("REVOKE_LEGAL_HOLD" → "legal hold")
+        // instead of shouting the raw enum at the ERM.
+        String stripped = c.startsWith("REVOKE_") ? c.substring("REVOKE_".length()) : c;
+        return stripped.replace('_', ' ').toLowerCase();
+    }
+
+    private static final java.util.Map<String, String> REVOKE_REASON_LABELS =
+            java.util.Map.of(
+                    "REVOKE_ROLE_CHANGE",        "Role or terms changed",
+                    "REVOKE_CANDIDATE_WITHDREW", "Candidate withdrew",
+                    "REVOKE_ISSUED_IN_ERROR",    "Issued in error",
+                    "REVOKE_COMPLIANCE",         "Compliance concern",
+                    "REVOKE_OTHER",              "Other");
 
     // ── Template picker (LIVE templates from the studio) ─────────────
 

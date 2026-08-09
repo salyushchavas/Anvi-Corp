@@ -18,6 +18,7 @@ import com.anvicorp.api.repository.OfferRepository;
 import com.anvicorp.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -43,6 +44,23 @@ public class OfferLifecycleListener {
     private final UserNotificationDispatcher dispatcher;
     private final com.anvicorp.api.config.BrandConfig brand;
 
+    /**
+     * Frontend origin used to build the absolute IDMS signing link the
+     * reminder email carries. Same {@code app.frontend.base-url} config
+     * peer used by {@code OfferIdmsSigningService.sendOfferLetterEmail}
+     * — kept in sync so the reminder link is byte-identical to the link
+     * the initial OFFER_LETTER email delivered.
+     *
+     * <p>Without this, the seeded OFFER_REMINDER template body carries a
+     * {@code {{signingLink}}} placeholder that
+     * {@code CommunicationTemplateService.render} rejects with
+     * {@code IllegalArgumentException("missing variable 'signingLink'")},
+     * causing the reminder to silently fall back to hard-coded copy with
+     * NO link at all — a broken external-email scenario.</p>
+     */
+    @Value("${app.frontend.base-url:https://anvicorp.com}")
+    private String frontendBaseUrl;
+
     // ── Reminder ──────────────────────────────────────────────────────────
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -53,16 +71,19 @@ public class OfferLifecycleListener {
             if (o == null) return;
             User applicant = applicantUser(o);
             if (applicant == null) return;
+            String signingLink = absoluteSigningLink(o.getId());
             Map<String, Object> vars = new LinkedHashMap<>();
             vars.put("firstName", firstName(applicant));
             vars.put("roleTitle", nz(o.getRoleTitle()));
             vars.put("expiryDate", o.getExpiresAt() != null ? o.getExpiresAt().toString() : "soon");
             vars.put("ermName", ermName(e.getActorUserId()));
+            vars.put("signingLink", signingLink);
             renderAndSend("OFFER_REMINDER", vars, applicant,
                     "Reminder: your Anvi Corp offer is awaiting signature",
                     "Hello " + vars.get("firstName") + ",\n\nThis is a reminder that your "
                             + "offer for " + vars.get("roleTitle") + " is awaiting your "
-                            + "signature.\n\n" + brand.signoffErm(),
+                            + "signature.\n\nOpen your offer: " + signingLink
+                            + "\n\n" + brand.signoffErm(),
                     "OFFER_REMINDER",
                     "/careers/intern/offer");
         } catch (Exception ex) {
@@ -241,5 +262,14 @@ public class OfferLifecycleListener {
     private static String cap(String s, int max) {
         if (s == null) return null;
         return s.length() <= max ? s : s.substring(0, max);
+    }
+
+    /** Build the absolute IDMS signing URL for an offer. Byte-identical
+     *  to {@code OfferIdmsSigningService.sendOfferLetterEmail}'s
+     *  construction so the reminder link points at the same page the
+     *  initial OFFER_LETTER email did. */
+    private String absoluteSigningLink(java.util.UUID offerId) {
+        String base = frontendBaseUrl == null ? "" : frontendBaseUrl.replaceAll("/+$", "");
+        return base + "/careers/intern/offer/sign/" + offerId;
     }
 }

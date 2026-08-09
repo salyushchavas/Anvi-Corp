@@ -200,6 +200,53 @@ function PageContent() {
         <div className="h-64 animate-pulse rounded-lg bg-slate-100" />
       ) : filtered.length === 0 ? (
         <EmptyState hasAny={rows.length > 0} />
+      ) : tab === 'REVOKED' ? (
+        // Dedicated Revoked Offers section — read-only, retention-forever,
+        // shows intern name/email + when it was revoked + the plain-English
+        // reason. Row click still opens the detail page for the full audit
+        // trail; there's no revoke/replace action here (already revoked).
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium">Intern</th>
+                <th className="px-4 py-3 text-left font-medium">Email</th>
+                <th className="px-4 py-3 text-left font-medium">Document</th>
+                <th className="px-4 py-3 text-left font-medium">Revoked</th>
+                <th className="px-4 py-3 text-left font-medium">Reason</th>
+                <th className="px-4 py-3 text-right font-medium"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {filtered.map((r, i) => (
+                <tr
+                  key={r.instanceId ?? `revoked-${i}`}
+                  onClick={() => openRow(r)}
+                  className="cursor-pointer hover:bg-slate-50"
+                >
+                  <td className="px-4 py-3 font-medium text-slate-900">
+                    {r.internName ?? '—'}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-600">
+                    {r.internEmail ?? '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    {r.templateTitle ?? <span className="italic text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-500">
+                    {humanDate(r.revokedAt ?? r.lastActivityAt)}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-700">
+                    {r.revokeReasonHuman ?? <span className="italic text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
           <table className="w-full text-sm">

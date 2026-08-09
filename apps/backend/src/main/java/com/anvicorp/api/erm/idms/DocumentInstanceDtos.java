@@ -39,7 +39,13 @@ public final class DocumentInstanceDtos {
             String statusRaw,        // machine enum name (for filters)
             Instant lastActivityAt,
             boolean canRevoke,
-            boolean canSupersede
+            boolean canSupersede,
+            /** REVOKED-tab columns. Null on every non-revoked row so the
+             *  cockpit's other tabs render exactly as before; the Revoked
+             *  Offers section reads these to show the plain-English reason
+             *  and the revoke timestamp without a second round-trip. */
+            Instant revokedAt,
+            String revokeReasonHuman
     ) {}
 
     public record QueueResponse(

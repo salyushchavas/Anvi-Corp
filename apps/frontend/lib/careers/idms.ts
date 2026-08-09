@@ -27,6 +27,11 @@ export interface QueueRow {
   lastActivityAt: string | null;
   canRevoke: boolean;
   canSupersede: boolean;
+  /** REVOKED-tab-only. Populated on rows whose statusRaw==='REVOKED';
+   *  null everywhere else. The Revoked Offers section renders these
+   *  as dedicated columns; all other tabs ignore them. */
+  revokedAt: string | null;
+  revokeReasonHuman: string | null;
 }
 
 export interface PickableTemplate {
