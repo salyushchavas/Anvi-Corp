@@ -70,7 +70,17 @@ public class CsrfDoubleSubmitFilter extends OncePerRequestFilter {
             "/auth/reset-password",
             "/auth/verify-email",
             "/auth/resend-verification",
-            "/auth/activate"
+            "/auth/activate",
+            // Mail chain has its own JWT (Bearer header, separate from the
+            // careers session cookie) and doesn't use cookie-session auth
+            // at all — the CSRF threat model this filter defends against
+            // is irrelevant there. Skipping the whole /api/mail prefix
+            // avoids 403 CSRF_FAILED responses on mail login / refresh /
+            // compose / send / delete / etc. (Spring Boot auto-registers
+            // this @Component as a servlet filter, so it runs on every
+            // request including the mail chain — the exempt list is the
+            // scoping mechanism.)
+            "/api/mail"
     );
 
     /** Public GET paths that never need auth OR CSRF — the health probe + static jobs listing. */
@@ -86,7 +96,14 @@ public class CsrfDoubleSubmitFilter extends OncePerRequestFilter {
                                      HttpServletResponse response,
                                      FilterChain chain) throws ServletException, IOException {
         String method = request.getMethod();
-        String path = request.getServletPath();
+        // getRequestURI() gives the full path in both real embedded Tomcat
+        // AND MockMvc test containers. getServletPath() returns "" under
+        // MockMvc when no servlet mapping is declared, which caused the
+        // exempt-prefix + public-path checks to silently no-op → mail
+        // auth-lifecycle tests hit 403 CSRF_FAILED instead of the endpoint's
+        // real 401/503 assertion. The app has no context path so requestURI
+        // and servletPath are identical on the runtime side.
+        String path = request.getRequestURI();
 
         // Seed the CSRF cookie on any GET / safe request from a client
         // that doesn't yet carry one. Doing it here (rather than only at

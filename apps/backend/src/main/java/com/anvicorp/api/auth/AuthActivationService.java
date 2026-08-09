@@ -112,7 +112,7 @@ public class AuthActivationService {
         token.setUsedAt(Instant.now());
         tokenRepository.save(token);
         try {
-            tokenRepository.markAllUnusedByUserAsInvalidated(user.getId());
+            tokenRepository.markAllUnusedByUserAsInvalidated(user.getId(), Instant.now());
         } catch (Exception e) {
             log.warn("[Activation] failed to invalidate sibling tokens for {} (non-fatal): {}",
                     user.getId(), e.getMessage());
