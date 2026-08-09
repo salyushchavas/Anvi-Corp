@@ -210,6 +210,14 @@ function DrawTab({ disabled, onChange }: {
   const [empty, setEmpty] = useState(true);
   return (
     <div>
+      {/* Explicit label above the pad — without this the empty white box
+          reads as "unknown widget" and users don't realise they can draw
+          into it. Kept small so it doesn't crowd the pad but visible enough
+          to answer "what am I supposed to do here?" at a glance. */}
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-slate-600">
+        <PenLine className="h-3 w-3 text-slate-500" />
+        Draw your signature here
+      </div>
       <SignaturePad
         ref={padRef}
         disabled={disabled}
@@ -222,7 +230,12 @@ function DrawTab({ disabled, onChange }: {
           }
         }}
       />
-      {!empty && (
+      {empty ? (
+        <p className="mt-2 text-[11px] text-slate-400">
+          Use your mouse, trackpad, or finger to sign. If drawing is awkward,
+          try the Upload, Generate, or Upload &amp; clean tabs above.
+        </p>
+      ) : (
         <p className="mt-2 text-[11px] text-slate-500">
           Draw again to replace, or switch tabs to try a different method.
         </p>

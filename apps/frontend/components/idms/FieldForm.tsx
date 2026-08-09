@@ -211,9 +211,24 @@ function FieldRow({
   if (field.type === 'signature') {
     const signed = Boolean(persisted?.signatureUrl);
     const active = activeSignatureFieldId === field.id;
+    const missingRequired = field.required && !signed;
+    // Bolder container ring when a required signature is missing —
+    // matches the text-field "Required" pattern (red text below) but
+    // adds a red border so an empty signature isn't just a plain
+    // button lost in a list of filled rows. Cleared once signed.
+    const signatureRowRing = active
+      ? 'ring-2 ring-brand-500/40'
+      : signed
+        ? 'ring-1 ring-emerald-200'
+        : missingRequired
+          ? 'ring-1 ring-red-300'
+          : 'ring-1 ring-slate-200';
     return (
       <li>
-        <div className={`rounded-md border border-slate-200 bg-white p-3 ${rowRing}`}>
+        <div
+          data-fill-field-id={field.id}
+          className={`rounded-md border border-slate-200 bg-white p-3 ${signatureRowRing}`}
+        >
           <div className="flex items-center gap-2">
             {labelBadge}
             <span className="text-xs font-medium text-slate-800">
@@ -231,14 +246,20 @@ function FieldRow({
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100'
                 : active
                   ? 'border-brand-500 bg-brand-50 text-brand-800'
-                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  : missingRequired
+                    ? 'border-red-300 bg-red-50 text-red-800 hover:bg-red-100'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
             }`}
           >
             <span className="flex items-center gap-2">
               <PenLine className="h-3.5 w-3.5" />
               {signed
                 ? 'Signature saved — click to re-sign'
-                : active ? 'Signing…' : 'Draw signature'}
+                : active
+                  ? 'Signing…'
+                  : missingRequired
+                    ? 'Add your signature'
+                    : 'Draw signature'}
             </span>
             {signed && signatureBlobs?.[field.id] && (
               <img
@@ -248,6 +269,15 @@ function FieldRow({
               />
             )}
           </button>
+          {/* Mirror the text-field "Required" affordance — makes the
+              empty required signature visually consistent with an empty
+              required text field so the user's eye catches it while
+              scanning the checklist. */}
+          {missingRequired && !active && (
+            <p className="mt-1.5 text-[11px] text-red-600">
+              Signature required — click to sign
+            </p>
+          )}
         </div>
       </li>
     );
