@@ -345,7 +345,7 @@ export default function ApplicationDetailPage() {
                     if last interview wasn't SELECTED, the POST will 409. */}
                 {a.stage === 'INTERVIEWED' && (
                   <Link
-                    href={`/careers/erm/offers/new?applicationId=${a.id}`}
+                    href={`/careers/erm/offers?tab=awaiting`}
                     className="block w-full rounded-md bg-brand-700 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-brand-800"
                   >
                     Send offer

@@ -408,7 +408,7 @@ export default function InterviewDetailPage() {
                         : `Sent ${activeOffer.sentAt ? new Date(activeOffer.sentAt).toLocaleDateString() : '—'}`}
                     </p>
                     <Link
-                      href={`/careers/erm/offers/${activeOffer.offerId}`}
+                      href={`/careers/erm/offers`}
                       className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-green-800 hover:underline"
                     >
                       Open offer
@@ -425,9 +425,7 @@ export default function InterviewDetailPage() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => router.push(
-                        `/careers/erm/offers/new?applicationId=${data.applicant?.applicationId ?? ''}`,
-                      )}
+                      onClick={() => router.push(`/careers/erm/offers?tab=awaiting`)}
                       disabled={!data.applicant?.applicationId}
                       className="mt-3 inline-flex w-full items-center justify-center gap-1 rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:bg-slate-300"
                     >
