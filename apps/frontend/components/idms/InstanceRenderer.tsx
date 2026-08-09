@@ -1,6 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+} from 'react';
 import { formatIsoDateMdy, type FieldSchemaEntry, type InstanceDetail } from '@/lib/careers/idms';
 
 /**
@@ -35,17 +41,39 @@ export interface InstanceRendererProps {
   signatureBlobs?: Record<string, string>;
   /** Field currently focused in the panel — all its anchors light up. */
   focusedFieldId?: string | null;
-  /** Fired when any anchor is clicked (text or signature). Parent typically
-   *  focuses the corresponding input in the field panel. */
+  /** Fired when a text/date/content_block anchor is clicked. Parent
+   *  typically focuses the corresponding input in the field panel.
+   *  Signature clicks go through {@link #onSignatureClick} instead so
+   *  the parent gets the anchor element for popover positioning. */
   onFieldClick?: (fieldId: string) => void;
+  /** Fired when the caller clicks THEIR OWN signature slot in the
+   *  preview. The anchor element is provided so the parent can anchor
+   *  a signature popover at the signature line — the "sign at the line
+   *  in the doc" UX. Foreign-owner signature clicks still fall through
+   *  to {@link #onFieldClick} (parent typically no-ops or focuses). */
+  onSignatureClick?: (fieldId: string, anchorEl: HTMLElement) => void;
   /** Signature field currently being drawn on (label switches to "signing…"). */
   activeSignatureFieldId?: string | null;
 }
 
-export default function InstanceRenderer(props: InstanceRendererProps) {
+/** Imperative surface exposed via ref — callers use this to open a
+ *  signature slot programmatically (e.g. the FieldForm's "Sign" button,
+ *  or Send/Submit's validate-on-click that jumps to the first missing
+ *  required signature). */
+export interface InstanceRendererHandle {
+  /** Scroll the first anchor of {@code fieldId} into center view AND
+   *  fire {@code onSignatureClick(fieldId, anchorEl)} so the parent
+   *  opens the popover at the anchor. No-op if the field isn't a
+   *  signature the caller owns. */
+  openSignatureAt(fieldId: string): void;
+}
+
+const InstanceRenderer = forwardRef<InstanceRendererHandle, InstanceRendererProps>(
+  function InstanceRenderer(props, ref) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { detail, fields, editRole, textValues, signatureBlobs,
-    focusedFieldId, onFieldClick, activeSignatureFieldId } = props;
+    focusedFieldId, onFieldClick, onSignatureClick,
+    activeSignatureFieldId } = props;
 
   const schemaById = useMemo(() => {
     const m = new Map<string, FieldSchemaEntry>();
@@ -125,14 +153,13 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
 
       // ── Signature anchor ─────────────────────────────────────────
       if (schema?.type === 'signature') {
+        const canSign = editRole !== null && assignee === editRole;
         if (persisted?.signatureUrl) {
           if (reusableSig) {
             // Existing img stays in place — no HTTP re-fetch, no flicker.
             span.classList.add('doc-field--filled');
-            if (onFieldClick) {
-              span.style.cursor = 'pointer';
-              span.onclick = () => onFieldClick(id);
-            }
+            if (canSign) span.classList.add('doc-field--signable');
+            wireSignatureClick(span, id, canSign, onSignatureClick, onFieldClick);
             return;
           }
           if (sigSrc) {
@@ -146,6 +173,7 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
             img.style.cssText = 'max-height:44px;vertical-align:middle;';
             span.appendChild(img);
             span.classList.add('doc-field--filled');
+            if (canSign) span.classList.add('doc-field--signable');
           } else {
             // Blob not hydrated yet — clean neutral placeholder rather
             // than a broken-image icon.
@@ -156,19 +184,23 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
             span.classList.add('doc-field--awaits');
           }
         } else {
-          const canSign = editRole && assignee === editRole;
+          // Empty slot: render as a signature LINE the user can click on
+          // (larger + more line-like than the prior tiny "＋ sign here"
+          // chip). For non-owners this is a passive "awaiting" label.
           const label = document.createElement('span');
-          label.textContent = canSign
-            ? (activeSignatureFieldId === id ? '● signing…' : '＋ sign here')
-            : awaitingLabel(schema, assignee, editRole);
           label.className = 'doc-field-inline-label';
+          if (canSign) {
+            label.textContent = activeSignatureFieldId === id
+              ? '✎ signing…'
+              : '✎ Click to sign';
+          } else {
+            label.textContent = awaitingLabel(schema, assignee, editRole);
+          }
           span.appendChild(label);
           span.classList.add(canSign ? 'doc-field--signable' : 'doc-field--awaits');
+          if (canSign) span.classList.add('doc-field--sigslot');
         }
-        if (onFieldClick) {
-          span.style.cursor = 'pointer';
-          span.onclick = () => onFieldClick(id);
-        }
+        wireSignatureClick(span, id, canSign, onSignatureClick, onFieldClick);
         return;
       }
 
@@ -215,7 +247,7 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
       }
     });
   }, [detail, schemaById, editRole, textValues, signatureBlobs,
-      focusedFieldId, activeSignatureFieldId, onFieldClick]);
+      focusedFieldId, activeSignatureFieldId, onFieldClick, onSignatureClick]);
 
   // Scroll the first anchor for the focused field into view — soft, block:'center'.
   useEffect(() => {
@@ -227,6 +259,27 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
     );
     if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [focusedFieldId]);
+
+  // Imperative openSignatureAt — the FieldForm's "Sign" button and the
+  // Send/Submit validate-on-click both go through here to jump the user
+  // straight to signing at the line. Scrolls the anchor to center-view
+  // then fires onSignatureClick (parent opens the popover). Waits one
+  // frame so the scroll has painted before the popover measures the
+  // anchor's rect for positioning.
+  useImperativeHandle(ref, () => ({
+    openSignatureAt(fieldId: string) {
+      const c = containerRef.current;
+      if (!c || !onSignatureClick) return;
+      const first = c.querySelector<HTMLElement>(
+        `span[data-field-id="${cssEscape(fieldId)}"]`,
+      );
+      if (!first) return;
+      first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      requestAnimationFrame(() => {
+        onSignatureClick(fieldId, first);
+      });
+    },
+  }), [onSignatureClick]);
 
   return (
     <div>
@@ -263,6 +316,29 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
           background: rgba(59, 130, 246, 0.08);
           color: rgba(37, 99, 235, 0.9);
         }
+        /* Empty owner signature slot — reads as a signature LINE that
+           invites a click, not a text placeholder. Solid underline mimics
+           the paper-document convention; hover deepens the tint so it's
+           obvious the slot is interactive. Never present in the PDF
+           (class doesn't cross the renderer boundary). */
+        .doc-field--sigslot {
+          display: inline-block;
+          min-width: 180px;
+          padding: 4px 10px;
+          border: 1px solid rgba(37, 99, 235, 0.4);
+          border-bottom: 2px solid rgba(37, 99, 235, 0.7);
+          background: rgba(59, 130, 246, 0.06);
+          border-radius: 4px;
+          color: rgba(29, 78, 216, 0.95);
+          text-align: center;
+          transition: background-color 120ms ease, box-shadow 120ms ease,
+                      border-color 120ms ease;
+        }
+        .doc-field--sigslot:hover {
+          background: rgba(59, 130, 246, 0.14);
+          border-color: rgba(37, 99, 235, 0.75);
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+        }
         /* Focused: soft ring across every anchor of the focused field. */
         .doc-field--focused {
           box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
@@ -276,6 +352,34 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
       `}</style>
     </div>
   );
+});
+
+export default InstanceRenderer;
+
+/** Attach the click handler for a signature anchor. Owner-clicks fire
+ *  {@code onSignatureClick} (parent opens the in-preview popover);
+ *  foreign clicks fall through to {@code onFieldClick} so the parent can
+ *  still focus the corresponding row in the FieldForm. Assigning the
+ *  handler resets any prior binding so re-paints don't stack listeners. */
+function wireSignatureClick(
+  span: HTMLElement,
+  fieldId: string,
+  canSign: boolean,
+  onSignatureClick: ((fieldId: string, anchorEl: HTMLElement) => void) | undefined,
+  onFieldClick: ((fieldId: string) => void) | undefined,
+): void {
+  if (canSign && onSignatureClick) {
+    span.style.cursor = 'pointer';
+    span.onclick = (e) => {
+      e.stopPropagation();
+      onSignatureClick(fieldId, span);
+    };
+    return;
+  }
+  if (onFieldClick) {
+    span.style.cursor = 'pointer';
+    span.onclick = () => onFieldClick(fieldId);
+  }
 }
 
 /** Pick the "awaiting" placeholder copy for a foreign-owner anchor. */
