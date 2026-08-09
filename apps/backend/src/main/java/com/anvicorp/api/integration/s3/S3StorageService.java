@@ -14,14 +14,19 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Error;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
@@ -32,6 +37,10 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 import java.io.InputStream;
 import java.net.URI;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -232,6 +241,81 @@ public class S3StorageService {
         ensureReady();
         client().deleteObject(DeleteObjectRequest.builder()
                 .bucket(bucket).key(key).build());
+    }
+
+    /**
+     * Best-effort batch delete. Splits into 1000-key chunks (S3 hard cap on
+     * a single DeleteObjects request), de-duplicates the input, and skips
+     * null/blank keys. Any per-key server-side failure is logged at WARN
+     * with the key + error code so operators can clean up manually — the
+     * method never throws for individual failures. Silent no-op when the
+     * input is empty OR the service is not ready (dev without S3 creds).
+     *
+     * <p>If the whole batch endpoint fails (some S3-compatible providers
+     * don't implement DeleteObjects) we fall back to per-key
+     * {@link #deleteObject} so a single unsupported endpoint doesn't
+     * strand every object in the request.</p>
+     *
+     * @return the count of keys S3 acknowledged as deleted (successful
+     *         removals + prior-not-present, since S3 delete is idempotent).
+     */
+    public int deleteObjects(Collection<String> keys) {
+        if (keys == null || keys.isEmpty()) return 0;
+        if (!isReady()) {
+            log.info("[S3] deleteObjects skipped ({} keys) — S3 not ready", keys.size());
+            return 0;
+        }
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        for (String k : keys) {
+            if (k != null && !k.isBlank()) unique.add(k);
+        }
+        if (unique.isEmpty()) return 0;
+
+        int deleted = 0;
+        List<String> batch = new ArrayList<>(1000);
+        for (String k : unique) {
+            batch.add(k);
+            if (batch.size() >= 1000) {
+                deleted += runDeleteBatch(batch);
+                batch.clear();
+            }
+        }
+        if (!batch.isEmpty()) deleted += runDeleteBatch(batch);
+        return deleted;
+    }
+
+    private int runDeleteBatch(List<String> batch) {
+        List<ObjectIdentifier> ids = new ArrayList<>(batch.size());
+        for (String k : batch) ids.add(ObjectIdentifier.builder().key(k).build());
+        try {
+            DeleteObjectsResponse resp = client().deleteObjects(DeleteObjectsRequest.builder()
+                    .bucket(bucket)
+                    .delete(Delete.builder().objects(ids).quiet(false).build())
+                    .build());
+            int okCount = resp.deleted() != null ? resp.deleted().size() : 0;
+            if (resp.errors() != null && !resp.errors().isEmpty()) {
+                for (S3Error err : resp.errors()) {
+                    log.warn("[S3] batch-delete FAILED key={} code={} message={}",
+                            err.key(), err.code(), err.message());
+                }
+            }
+            return okCount;
+        } catch (Exception e) {
+            log.warn("[S3] batch-delete request threw for {} keys (first={}): {} — "
+                    + "falling back to per-key delete",
+                    batch.size(), batch.get(0), e.getMessage());
+            int ok = 0;
+            for (String k : batch) {
+                try {
+                    deleteObject(k);
+                    ok++;
+                } catch (Exception ke) {
+                    log.warn("[S3] per-key fallback delete FAILED key={}: {}",
+                            k, ke.getMessage());
+                }
+            }
+            return ok;
+        }
     }
 
     /**
