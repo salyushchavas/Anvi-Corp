@@ -68,6 +68,22 @@ final class IdmsFieldFontInheritance {
             Pattern.compile("letter-spacing\\s*:\\s*([^;]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern LINE_HEIGHT =
             Pattern.compile("line-height\\s*:\\s*([^;]+)", Pattern.CASE_INSENSITIVE);
+    // Character-formatting properties that also carry from the docx run.
+    // Missing these was the "font style still incomplete" complaint: a
+    // colored run's fill rendered in the body default (#111), an
+    // underlined blank ("Position: [__________]") lost its underline
+    // when filled, small-caps / all-caps runs rendered in raw case.
+    // Kept as {@code text-decoration} rather than the sub-properties
+    // because that's the shape docx-preview and openhtmltopdf both
+    // handle natively.
+    private static final Pattern COLOR =
+            Pattern.compile("(?<![-])color\\s*:\\s*([^;]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TEXT_DECORATION =
+            Pattern.compile("text-decoration(?:-line)?\\s*:\\s*([^;]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TEXT_TRANSFORM =
+            Pattern.compile("text-transform\\s*:\\s*([^;]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern FONT_VARIANT =
+            Pattern.compile("font-variant\\s*:\\s*([^;]+)", Pattern.CASE_INSENSITIVE);
 
     private IdmsFieldFontInheritance() {}
 
@@ -153,6 +169,10 @@ final class IdmsFieldFontInheritance {
         appendMatch(sb, "font-style", FONT_STYLE, style);
         appendMatch(sb, "letter-spacing", LETTER_SPACING, style);
         appendMatch(sb, "line-height", LINE_HEIGHT, style);
+        appendMatch(sb, "color", COLOR, style);
+        appendMatch(sb, "text-decoration", TEXT_DECORATION, style);
+        appendMatch(sb, "text-transform", TEXT_TRANSFORM, style);
+        appendMatch(sb, "font-variant", FONT_VARIANT, style);
         return sb.toString();
     }
 

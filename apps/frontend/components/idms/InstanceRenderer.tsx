@@ -389,6 +389,29 @@ function applyInheritedTypography(span: HTMLElement): void {
   if (cs.fontStyle) span.style.fontStyle = cs.fontStyle;
   if (cs.letterSpacing) span.style.letterSpacing = cs.letterSpacing;
   if (cs.lineHeight) span.style.lineHeight = cs.lineHeight;
+  // Additional properties that make a filled value visually
+  // indistinguishable from the neighbouring template text. Without
+  // these, common docx run styling silently drops off the filled
+  // value: (1) colored headers/labels render in body default; (2) the
+  // classic `Position: [__________]` underline-blank loses its
+  // underline when filled — the value appears floating without the
+  // baseline line the docx conveyed; (3) small-caps + all-caps runs
+  // render in raw case. All four are inheritable per CSS spec, but
+  // the anchor sits between runs at the paragraph level in the docx
+  // structure so plain cascading falls through to defaults (see
+  // pickTypographySource for the sibling-hop rationale).
+  if (cs.color) span.style.color = cs.color;
+  if (cs.textDecorationLine && cs.textDecorationLine !== 'none') {
+    span.style.textDecorationLine = cs.textDecorationLine;
+    if (cs.textDecorationStyle) span.style.textDecorationStyle = cs.textDecorationStyle;
+    if (cs.textDecorationColor) span.style.textDecorationColor = cs.textDecorationColor;
+  }
+  if (cs.textTransform && cs.textTransform !== 'none') {
+    span.style.textTransform = cs.textTransform;
+  }
+  if (cs.fontVariant && cs.fontVariant !== 'normal') {
+    span.style.fontVariant = cs.fontVariant;
+  }
   span.dataset.dfInherit = '1';
 }
 
