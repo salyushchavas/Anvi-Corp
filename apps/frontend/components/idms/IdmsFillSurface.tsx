@@ -508,8 +508,14 @@ export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceCon
       {extraBanners?.(detail, canEdit)}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className={`${previewMaxHeightClass} overflow-y-auto p-2`}>
+        {/* Preview column — border+rounded+shadow chrome only. The
+            DocumentPreviewFrame inside InstanceRenderer supplies the
+            slate canvas + white page-shadow so the doc renders exactly
+            like the admin studio. Overflow lives on the InstanceRenderer
+            wrapper so the shared p-6 canvas stays flush inside the
+            chrome (no double padding, no colour fight). */}
+        <section className="overflow-hidden rounded-lg border border-slate-200 shadow-sm">
+          <div className={`${previewMaxHeightClass} overflow-y-auto`}>
             <InstanceRenderer
               detail={detail}
               fields={fields}

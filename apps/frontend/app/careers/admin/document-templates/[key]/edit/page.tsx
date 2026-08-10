@@ -30,6 +30,7 @@ import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { DocumentPreviewFrame } from '@/components/idms/DocumentPreviewFrame';
 import { applyInheritedTypography } from '@/components/idms/InstanceRenderer';
 import {
   ASSIGNEES,
@@ -617,9 +618,15 @@ function PageContent() {
           </div>
 
           <div className="relative">
-            <div
+            {/* Shared preview frame — DocumentPreviewFrame ships the
+                slate canvas + white page-shadow + base .doc-field styles
+                so admin studio, ERM fill, and intern fill/sign render
+                the document identically. Admin-only field tints
+                (ownership colors, preview lock/input outlines, flash)
+                still live in the local <style jsx global> below. */}
+            <DocumentPreviewFrame
               ref={canvasRef}
-              className="doc-canvas min-h-[400px] max-h-[calc(100vh-260px)] overflow-y-auto bg-slate-50 p-6"
+              className="min-h-[400px] max-h-[calc(100vh-260px)] overflow-y-auto"
             />
             {!rendered && !renderErr && (
               <div className="absolute inset-0 flex items-center justify-center bg-white/70">
@@ -680,14 +687,11 @@ function PageContent() {
       )}
 
       <style jsx global>{`
-        .doc-canvas .docx {
-          background: white;
-          box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
-          margin: 0 auto;
-        }
+        /* Admin-studio-only field overlays. Base .doc-field
+           border-radius/padding + .doc-canvas .docx page-shadow are
+           shipped by DocumentPreviewFrame — keeping them out of here
+           guarantees admin, ERM, and intern see identical framing. */
         .doc-field {
-          border-radius: 3px;
-          padding: 0 2px;
           cursor: pointer;
           transition: outline 120ms ease;
         }

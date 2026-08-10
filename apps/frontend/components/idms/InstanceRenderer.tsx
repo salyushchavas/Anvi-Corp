@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef } from 'react';
+import { DocumentPreviewFrame } from '@/components/idms/DocumentPreviewFrame';
 import { formatIsoDateMdy, type FieldSchemaEntry, type InstanceDetail } from '@/lib/careers/idms';
 
 /**
@@ -256,13 +257,17 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
 
   return (
     <div>
-      <div ref={containerRef} className="doc-canvas" />
+      {/* Shared frame — slate canvas + white page-shadow + base
+          .doc-field styling — kept in DocumentPreviewFrame so admin
+          studio and fill surface render the document identically.
+          Role-specific field-state CSS (filled/awaits/signable/…) stays
+          local to this component below. */}
+      <DocumentPreviewFrame ref={containerRef} />
       <style jsx global>{`
-        .doc-canvas { background: white; padding: 32px 40px; border-radius: 6px; }
-        .doc-canvas .docx { background: white; margin: 0 auto; }
+        /* Preview-only field-state overlays. The base .doc-field
+           border-radius/padding is shipped by DocumentPreviewFrame;
+           these rules layer state-specific tints and outlines on top. */
         .doc-field {
-          border-radius: 3px;
-          padding: 0 2px;
           transition: box-shadow 120ms ease, background-color 120ms ease;
         }
         /* Owner-tinted background on filled — disappears in PDF because the
