@@ -27,6 +27,31 @@ const nextConfig = {
     // read from NEXT_PUBLIC_API_URL at build time so a preview/dev
     // deployment substitutes its own backend origin cleanly.
     const apiOrigin = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    // Direct-to-S3 client uploads/downloads (IDMS studio Re-Upload,
+    // recording upload/playback, document-template source attach, and
+    // any other flow that goes through the presigned-URL pattern)
+    // require the target S3 bucket origin in connect-src. Wave 2's
+    // 'self' + apiOrigin was too tight — the browser blocked the
+    // presigned PUT with "violates connect-src 'self' <apiOrigin>".
+    //
+    // AWS returns virtual-host-style URLs in two shapes depending on
+    // the SDK / region: `<bucket>.s3.amazonaws.com` (us-east-1 legacy)
+    // and `<bucket>.s3.<region>.amazonaws.com` (all-region). We list
+    // both for the specific production bucket rather than a wildcard
+    // so a bucket takeover on a different account can't smuggle bytes
+    // through the app's CSP allowance.
+    //
+    // Overridable via NEXT_PUBLIC_S3_ORIGINS (comma-separated list of
+    // absolute origins) for staging / preview deployments that hit a
+    // different bucket.
+    const s3Origins = (process.env.NEXT_PUBLIC_S3_ORIGINS
+      ?? [
+        "https://anvi-corp-carrers.s3.amazonaws.com",
+        "https://anvi-corp-carrers.s3.us-east-1.amazonaws.com",
+      ].join(","))
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
     // Report-only 'unsafe-inline' on style-src because Tailwind + Next's
     // build inline small CSS chunks; 'unsafe-eval' NOT included (Next
     // production doesn't require it). 'unsafe-inline' on script-src is
@@ -43,18 +68,26 @@ const nextConfig = {
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
-      "connect-src 'self' " + apiOrigin,
+      // connect-src: 'self' (same-origin API), the backend origin, and
+      // the S3 bucket origins (direct presigned PUT/GET from the
+      // browser). Without S3 here, every direct-to-S3 client upload —
+      // IDMS studio Re-Upload, recording upload, document-template
+      // source attach — is blocked at the CSP layer before the request
+      // is even dispatched.
+      ["connect-src 'self'", apiOrigin, ...s3Origins].join(" "),
+      // media-src + img-src already blanket-allow https: so S3-hosted
+      // media / images render fine without a per-bucket entry here.
       "media-src 'self' blob: https:",
       "worker-src 'self' blob:",
       // frame-src covers <iframe src>. The ERM + Manager resume preview
       // (components/erm/applications/ResumePreview.tsx) renders PDF resumes
-      // as <iframe src={URL.createObjectURL(new Blob(...))}>. Without an
-      // explicit blob: in frame-src, browsers fall back to default-src
-      // 'self' and block the load with "content is blocked. Contact the
-      // site owner." — the bug reported from prod. Bytes are fetched
-      // through the same-origin /api/v1/resumes/{id}/download endpoint
-      // (streamed by ResumeController, not a presigned S3 URL), so no S3
-      // origin needs whitelisting.
+      // as <iframe src={URL.createObjectURL(new Blob(...))}>. Bytes are
+      // fetched through the same-origin /api/v1/resumes/{id}/download
+      // endpoint (streamed by ResumeController) and every other current
+      // iframe target is a same-origin blob URL, so no S3 origin needs
+      // whitelisting here — but if a future flow points iframe src at a
+      // presigned S3 URL directly, the s3Origins list above needs to
+      // move onto frame-src too.
       "frame-src 'self' blob:",
     ].join("; ");
 
