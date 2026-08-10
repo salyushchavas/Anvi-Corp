@@ -52,6 +52,18 @@ const nextConfig = {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
+    // Cloudflare Turnstile — the bot-signup CAPTCHA. Needs three CSP
+    // hooks working together: script-src (the api.js SDK loaded via
+    // <Script src="…/turnstile/v0/api.js">), frame-src (the challenge
+    // widget renders in an iframe served from the same origin), and
+    // connect-src (the SDK POSTs telemetry + solve payloads back to
+    // challenges.cloudflare.com during interactive challenges). Without
+    // any one of them the widget silently fails at a different stage
+    // (script blocked → callback never fires; frame blocked → widget
+    // renders empty; connect blocked → challenge solve hangs). Kept as
+    // one constant so all three references land on the same origin
+    // string and can't drift.
+    const turnstileOrigin = "https://challenges.cloudflare.com";
     // Report-only 'unsafe-inline' on style-src because Tailwind + Next's
     // build inline small CSS chunks; 'unsafe-eval' NOT included (Next
     // production doesn't require it). 'unsafe-inline' on script-src is
@@ -64,17 +76,29 @@ const nextConfig = {
       "frame-ancestors 'none'",
       "form-action 'self'",
       "object-src 'none'",
-      "script-src 'self' 'unsafe-inline'",
+      // script-src: 'self' + inline for Next's hydration scripts +
+      // Cloudflare Turnstile (SDK loaded via <Script> in TurnstileWidget).
+      // Turnstile origin listed explicitly so we're not one blanket
+      // https: allow away from letting arbitrary CDNs run scripts.
+      ["script-src 'self' 'unsafe-inline'", turnstileOrigin].join(" "),
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
+      // Google Fonts are self-hosted via next/font/google (Next downloads
+      // + serves from /_next/static/media at build time) so no external
+      // font-src entry is needed. If a future flow re-introduces an
+      // <link rel="stylesheet" href="…fonts.googleapis.com/…"> style
+      // import, add fonts.googleapis.com + fonts.gstatic.com here.
       "font-src 'self' data:",
-      // connect-src: 'self' (same-origin API), the backend origin, and
-      // the S3 bucket origins (direct presigned PUT/GET from the
-      // browser). Without S3 here, every direct-to-S3 client upload —
-      // IDMS studio Re-Upload, recording upload, document-template
-      // source attach — is blocked at the CSP layer before the request
-      // is even dispatched.
-      ["connect-src 'self'", apiOrigin, ...s3Origins].join(" "),
+      // connect-src: 'self' (same-origin API), the backend origin, the
+      // S3 bucket origins (direct presigned PUT/GET from the browser),
+      // and Cloudflare Turnstile (the SDK POSTs solve payloads +
+      // telemetry back to challenges.cloudflare.com during interactive
+      // challenges — without this the widget hangs mid-solve). Without
+      // S3 here, every direct-to-S3 client upload — IDMS studio
+      // Re-Upload, recording upload, document-template source attach —
+      // is blocked at the CSP layer before the request is even
+      // dispatched.
+      ["connect-src 'self'", apiOrigin, ...s3Origins, turnstileOrigin].join(" "),
       // media-src + img-src already blanket-allow https: so S3-hosted
       // media / images render fine without a per-bucket entry here.
       "media-src 'self' blob: https:",
@@ -87,8 +111,11 @@ const nextConfig = {
       // iframe target is a same-origin blob URL, so no S3 origin needs
       // whitelisting here — but if a future flow points iframe src at a
       // presigned S3 URL directly, the s3Origins list above needs to
-      // move onto frame-src too.
-      "frame-src 'self' blob:",
+      // move onto frame-src too. Turnstile is added because the widget
+      // renders its challenge in an iframe hosted on
+      // challenges.cloudflare.com — script-src alone lets the SDK load,
+      // but blocking frame-src means the widget renders empty.
+      ["frame-src 'self' blob:", turnstileOrigin].join(" "),
     ].join("; ");
 
     return [
