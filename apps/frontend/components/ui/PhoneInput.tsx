@@ -184,10 +184,17 @@ export default function PhoneInput({
         value={selectValue}
         onChange={(e) => handleSelect(e.target.value)}
         disabled={disabled}
-        // Fixed-width, non-shrinking. Compact enough to leave the
-        // remaining row width for the phone number input. Content
-        // is "+CCC · XX" (max ~10 chars) so w-32 (~128 px) always fits.
-        className={`${INPUT_CLASS} w-32 flex-shrink-0`}
+        // Fixed width via inline style — INPUT_CLASS carries `w-full`
+        // which, being alphabetically later in Tailwind's generated
+        // stylesheet than `w-32`, wins the cascade at equal
+        // specificity and expands the <select> to 100% of the flex
+        // container, squeezing the phone-number input off screen (the
+        // exact symptom the previous fix pass tried to solve with
+        // `w-32 flex-shrink-0`). Inline `style` always beats any
+        // utility class regardless of CSS order — reliable across
+        // Tailwind config changes.
+        style={{ width: '8rem', flexShrink: 0 }}
+        className={INPUT_CLASS}
       >
         {COUNTRIES.map((c) => (
           <option key={c.code} value={c.code} title={c.name}>
