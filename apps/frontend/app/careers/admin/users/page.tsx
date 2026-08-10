@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { AlertCircle, MoreHorizontal, Plus, Search, ShieldAlert, Trash2 } from 'lucide-react';
+import {
+  AlertCircle,
+  Bot,
+  MoreHorizontal,
+  Plus,
+  Search,
+  ShieldAlert,
+  Trash2,
+} from 'lucide-react';
 import api from '@/lib/careers/api';
 import { useAuth } from '@/lib/careers/auth-context';
 import ProtectedRoute from '@/components/ProtectedRoute';
@@ -151,6 +159,10 @@ function UsersTable() {
   // completed the email code) are hidden by default so the list stays
   // clean. Flip this to review + purge suspected bot signups.
   const [showUnverified, setShowUnverified] = useState(false);
+  // Bulk bot-purge modal — invokes POST /api/v1/admin/users/purge-
+  // suspected-bots (SUPER_ADMIN only, dry-run then confirm).
+  const [showBotPurge, setShowBotPurge] = useState(false);
+  const isSuperAdmin = !!me?.roles?.includes('SUPER_ADMIN');
 
   const load = useCallback(async () => {
     setError(null);
@@ -326,14 +338,27 @@ function UsersTable() {
             Show unverified interns
           </label>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowCreate(true)}
-          className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
-        >
-          <Plus className="h-4 w-4" />
-          New user
-        </button>
+        <div className="flex items-center gap-2">
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={() => setShowBotPurge(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+              title="Scan for accounts matching the bot signature (single-INTERN role, gibberish-name, never applied) and purge them."
+            >
+              <Bot className="h-4 w-4" />
+              Purge suspected bots
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowCreate(true)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+          >
+            <Plus className="h-4 w-4" />
+            New user
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -548,6 +573,18 @@ function UsersTable() {
             const u = confirmingPurgeFor;
             setConfirmingPurgeFor(null);
             await purgeUnverifiedUser(u);
+          }}
+        />
+      )}
+
+      {showBotPurge && (
+        <PurgeSuspectedBotsModal
+          onClose={() => setShowBotPurge(false)}
+          onPurged={(purged) => {
+            setToast(purged > 0
+              ? `Purged ${purged} suspected bot account${purged === 1 ? '' : 's'}.`
+              : 'No accounts purged.');
+            void load();
           }}
         />
       )}
@@ -1218,6 +1255,272 @@ function ConfirmDeleteModal({
           >
             {submitting ? 'Deleting…' : 'Delete permanently'}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Bulk suspected-bot purge — two-phase (dry-run then confirm) against
+ * {@code POST /api/v1/admin/users/purge-suspected-bots}. Routes through
+ * the shared {@code api} client (httpOnly cookie + CSRF token attached
+ * by the axios interceptor); no raw fetch, no manual header wiring.
+ *
+ * <p>Phase 1 — modal mounts, immediately fires the endpoint with
+ * {@code confirm=false} to get the list of matched candidates.
+ * Phase 2 — operator clicks Delete; endpoint called with
+ * {@code confirm=true}; result includes {@code purged} + per-account
+ * {@code failures[]}.</p>
+ */
+function PurgeSuspectedBotsModal({
+  onClose,
+  onPurged,
+}: {
+  onClose: () => void;
+  onPurged: (purged: number) => void;
+}) {
+  interface BotCandidate {
+    id: Uuid;
+    email: string;
+    fullName: string;
+    createdAt: string;
+  }
+  interface PurgeFailure {
+    id: Uuid;
+    email: string;
+    reason: string;
+  }
+  interface PurgeResponse {
+    dryRun: boolean;
+    matched: number;
+    candidates: BotCandidate[];
+    purged: number;
+    failures: PurgeFailure[];
+  }
+  type Phase = 'loading' | 'preview' | 'confirming' | 'result' | 'error';
+
+  const [phase, setPhase] = useState<Phase>('loading');
+  const [dryRun, setDryRun] = useState<PurgeResponse | null>(null);
+  const [result, setResult] = useState<PurgeResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Kick off the dry-run on mount so the modal opens straight into a
+  // scanning state and lands on the preview when the fetch settles.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.post<PurgeResponse>(
+          '/api/v1/admin/users/purge-suspected-bots?confirm=false',
+        );
+        if (cancelled) return;
+        setDryRun(res.data);
+        setPhase('preview');
+      } catch (err: any) {
+        if (cancelled) return;
+        const status = err?.response?.status;
+        const msg = err?.response?.data?.error
+          ?? err?.response?.data?.message
+          ?? err?.message
+          ?? 'Could not scan for suspected bots.';
+        setError(status ? `${msg} (HTTP ${status})` : msg);
+        setPhase('error');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const doConfirm = async () => {
+    setPhase('confirming');
+    setError(null);
+    try {
+      const res = await api.post<PurgeResponse>(
+        '/api/v1/admin/users/purge-suspected-bots?confirm=true',
+      );
+      setResult(res.data);
+      setPhase('result');
+      onPurged(res.data.purged);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const msg = err?.response?.data?.error
+        ?? err?.response?.data?.message
+        ?? err?.message
+        ?? 'Could not purge suspected bots.';
+      setError(status ? `${msg} (HTTP ${status})` : msg);
+      setPhase('error');
+    }
+  };
+
+  const matched = dryRun?.matched ?? 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg bg-white p-6 shadow-xl">
+        <div className="mb-3 flex items-start gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-700">
+            <Bot className="h-5 w-5" strokeWidth={2} />
+          </span>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-900">
+              Purge suspected bot accounts
+            </h3>
+            <p className="mt-1 text-xs text-gray-500">
+              Signature: single-INTERN role, gibberish name, never applied.
+              Staff never match. SUPER_ADMIN only.
+            </p>
+          </div>
+        </div>
+
+        {phase === 'loading' && (
+          <div className="py-10 text-center text-sm text-gray-500">
+            Scanning for suspected bot accounts…
+          </div>
+        )}
+
+        {phase === 'error' && (
+          <div className="my-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+            <p className="font-semibold">Request failed</p>
+            <p className="mt-1 break-words">{error ?? 'Unknown error.'}</p>
+          </div>
+        )}
+
+        {phase === 'preview' && dryRun && (
+          <>
+            {matched === 0 ? (
+              <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+                <p className="font-semibold">Nothing to purge.</p>
+                <p className="mt-1">
+                  No accounts matched the bot signature.
+                </p>
+              </div>
+            ) : (
+              <>
+                <p className="mb-2 text-sm text-gray-700">
+                  Found <strong>{matched}</strong> suspected bot account
+                  {matched === 1 ? '' : 's'}:
+                </p>
+                <div className="min-h-0 flex-1 overflow-auto rounded-md border border-gray-200">
+                  <table className="min-w-full text-xs">
+                    <thead className="sticky top-0 border-b border-gray-200 bg-gray-50 text-left uppercase tracking-wide text-gray-500">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Email</th>
+                        <th className="px-3 py-2 font-medium">Full name</th>
+                        <th className="px-3 py-2 font-medium">Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dryRun.candidates.map((c) => (
+                        <tr key={c.id} className="border-b border-gray-100 last:border-0">
+                          <td className="px-3 py-1.5 text-gray-800">{c.email}</td>
+                          <td className="px-3 py-1.5 text-gray-700">{c.fullName || '—'}</td>
+                          <td className="px-3 py-1.5 text-gray-500">
+                            {c.createdAt ? formatDateOnly(c.createdAt) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-2.5 text-[11px] text-red-900">
+                  This cannot be undone. Each row is deleted via the audited
+                  {' '}<span className="font-mono">deleteUser</span>{' '}
+                  path.
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {phase === 'confirming' && (
+          <div className="py-10 text-center text-sm text-gray-500">
+            Purging {matched} account{matched === 1 ? '' : 's'}…
+          </div>
+        )}
+
+        {phase === 'result' && result && (
+          <>
+            <div className={
+              'rounded-md border p-3 text-sm ' +
+              (result.failures.length === 0
+                ? 'border-green-200 bg-green-50 text-green-900'
+                : 'border-amber-200 bg-amber-50 text-amber-900')
+            }>
+              <p className="font-semibold">
+                Purged {result.purged} · failed {result.failures.length}
+              </p>
+              <p className="mt-1">
+                Matched {result.matched} account{result.matched === 1 ? '' : 's'}.
+              </p>
+            </div>
+            {result.failures.length > 0 && (
+              <div className="mt-3 min-h-0 flex-1 overflow-auto rounded-md border border-gray-200">
+                <table className="min-w-full text-xs">
+                  <thead className="sticky top-0 border-b border-gray-200 bg-gray-50 text-left uppercase tracking-wide text-gray-500">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Email</th>
+                      <th className="px-3 py-2 font-medium">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.failures.map((f) => (
+                      <tr key={f.id} className="border-b border-gray-100 last:border-0">
+                        <td className="px-3 py-1.5 text-gray-800">{f.email}</td>
+                        <td className="px-3 py-1.5 text-red-700">{f.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          {phase === 'preview' && matched > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void doConfirm()}
+                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+              >
+                Delete {matched} account{matched === 1 ? '' : 's'}
+              </button>
+            </>
+          )}
+          {(phase === 'preview' && matched === 0)
+            || phase === 'result'
+            || phase === 'error' ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90"
+            >
+              Close
+            </button>
+          ) : null}
+          {phase === 'loading' && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          )}
         </div>
       </div>
     </div>
