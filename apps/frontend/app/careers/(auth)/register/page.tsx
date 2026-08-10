@@ -9,6 +9,7 @@ import PasswordInput from '@/components/careers/PasswordInput';
 import RegisterDebugPanel, {
   type RegisterDebugInfo,
 } from '@/components/dashboard/RegisterDebugPanel';
+import TurnstileWidget from '@/components/ui/TurnstileWidget';
 import { useAuth } from '@/lib/careers/auth-context';
 import { apiBaseURL } from '@/lib/careers/api';
 
@@ -46,6 +47,18 @@ function RegisterPageInner() {
   const [acceptedTos, setAcceptedTos] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Bot-mitigation state.
+  //  - captchaToken: Cloudflare Turnstile token. Empty when the widget
+  //    hasn't produced one yet OR when NEXT_PUBLIC_TURNSTILE_SITE_KEY
+  //    isn't configured (dev). The backend Turnstile verifier is
+  //    defaulted OFF in the same environment so this passes end-to-end.
+  //  - companyWebsite: honeypot. Real users never see or fill it
+  //    (positioned off-screen, aria-hidden, tabindex=-1); naive bots
+  //    fill every input by name. The server rejects any non-blank
+  //    value in this field before any downstream work.
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [companyWebsite, setCompanyWebsite] = useState('');
+  const turnstileEnabled = Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
 
   const errorRef = useRef<HTMLDivElement | null>(null);
 

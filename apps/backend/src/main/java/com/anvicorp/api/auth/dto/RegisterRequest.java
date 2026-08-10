@@ -34,7 +34,25 @@ public record RegisterRequest(
          *  legal vs. preferred later if needed. Null tolerated for back-
          *  compat with the prior multi-field form. */
         String legalName,
-        Boolean acceptedTos
+        Boolean acceptedTos,
+        /** Bot-mitigation — Cloudflare Turnstile response token from the
+         *  {@code cf-turnstile-response} form field. Verified by
+         *  {@link com.anvicorp.api.auth.TurnstileVerifier}. Required when
+         *  {@code app.captcha.turnstile.enabled=true} (prod); optional
+         *  when disabled (dev / CI). Null / blank triggers rejection
+         *  once enabled — see the verifier's fail-closed semantics. */
+        @Size(max = 4000) String captchaToken,
+        /** Honeypot field — a form input we render off-screen with
+         *  {@code autocomplete=off} and {@code tabindex=-1}. Humans
+         *  don't see it; naive form-filling bots fill it. Any non-null,
+         *  non-blank value is a definitive bot signal and the register
+         *  request is rejected without further processing (no CAPTCHA
+         *  round-trip needed). Kept quiet — we return a normal 400 so
+         *  a bot author can't grep the response for a distinctive
+         *  fingerprint. Field name intentionally plausible
+         *  ("companyWebsite") rather than obviously-decoy so class-
+         *  based blocklists don't skip it. */
+        @Size(max = 200) String companyWebsite
 ) {
     @AssertTrue(message = "You must accept the Privacy Policy and Terms of Service")
     public boolean isTosAccepted() {

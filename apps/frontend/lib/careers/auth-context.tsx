@@ -68,6 +68,13 @@ interface AuthContextValue {
     phoneNumber?: string,
     intake?: RegistrationIntake,
     acceptedTos?: boolean,
+    /** Bot-mitigation. {@code captchaToken} is the Cloudflare Turnstile
+     *  response from {@link TurnstileWidget} — sent as-is; the server
+     *  verifies it before creating any User row. {@code companyWebsite}
+     *  is the honeypot — must always be blank; any non-blank value is
+     *  rejected server-side. Both default to blank when omitted so
+     *  existing call sites don't need to change until they're ready. */
+    botMitigation?: { captchaToken?: string; companyWebsite?: string },
   ) => Promise<User>;
   /**
    * Update the locally-cached user object after a state change (e.g.

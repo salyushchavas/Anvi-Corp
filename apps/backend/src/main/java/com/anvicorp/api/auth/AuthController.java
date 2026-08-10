@@ -15,6 +15,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -31,19 +32,48 @@ import java.util.Map;
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
+@Slf4j
 public class AuthController {
 
     private final AuthService authService;
     private final RegistrationRateLimiter rateLimiter;
     private final AuthCookies authCookies;
+    private final TurnstileVerifier turnstileVerifier;
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest req,
                                                  HttpServletRequest httpRequest,
                                                  HttpServletResponse httpResponse) {
-        // Per-IP rate limit on the public register endpoint — bot mitigation.
-        // Rejected requests never reach the service so no User row is created.
+        // Bot mitigation — four layers ordered cheap-to-expensive:
+        //
+        //  1. Honeypot. Any non-blank value in {@code companyWebsite} is
+        //     a definitive bot signal (real users never see that field —
+        //     it's off-screen with tabindex=-1). Reject early with a
+        //     generic 400 so an attacker can't grep for a distinctive
+        //     fingerprint. Cheapest — no HTTP call, no DB touch.
+        //  2. Rate limit. Per-IP sliding window (5 per 10 min) already
+        //     bounds throughput; a distributed bot rotating IPs will
+        //     still hit the next two.
+        //  3. Turnstile. Cloudflare-issued token verified server-side
+        //     against their siteverify API. Fails closed when the
+        //     master switch is on but the secret is blank / the network
+        //     roundtrip fails — see {@link TurnstileVerifier}.
+        //  4. Service layer email-uniqueness + password/ToS validation.
+        //     The prior 3 keep this from becoming a bot-throughput floor.
+        if (req.companyWebsite() != null && !req.companyWebsite().isBlank()) {
+            log.warn("[BotMitigation] register honeypot tripped from ip={}",
+                    SessionTokenService.extractClientIp(httpRequest));
+            throw new AuthException(HttpStatus.BAD_REQUEST,
+                    "Registration blocked. Please refresh and try again.");
+        }
         rateLimiter.enforceRegister(httpRequest);
+        boolean captchaOk = turnstileVerifier.verify(
+                req.captchaToken(),
+                SessionTokenService.extractClientIp(httpRequest));
+        if (!captchaOk) {
+            throw new AuthException(HttpStatus.BAD_REQUEST,
+                    "Please complete the human-verification challenge and try again.");
+        }
         AuthResponse body = authService.register(req, httpRequest);
         writeSessionCookies(httpResponse, body);
         return ResponseEntity.ok(body);
