@@ -21,7 +21,9 @@ import java.util.Map;
  * (they act on any {@link DocumentInstance} by id).</p>
  *
  * <p>Returns the intern's <b>current</b> offer-family instance detail
- * (newest non-VOIDED {@code templateKey LIKE 'OFFER_%'} row), or
+ * (newest non-VOIDED row whose template key contains {@code offer_}
+ * case-INsensitively — see
+ * {@link DocumentInstanceRepository#findOfferFamilyForIntern}), or
  * {@code {"offer": null}} when no offer exists yet. The response shape
  * mirrors {@link DocumentInstanceDtos.InstanceDetail} so the frontend
  * fill/sign page can render off the same DTO as the agreements detail.</p>

@@ -499,8 +499,16 @@ public class EditableTemplateAdminService {
         return s.isEmpty() ? null : s;
     }
 
+    /** Fallback key derivation when the client omits {@code key}. MUST
+     *  produce lowercase snake-case to satisfy
+     *  {@code CreateTemplateRequest.@Pattern("^[a-z0-9][a-z0-9_-]*$|^$")}
+     *  AND match the frontend's {@code deriveKey} in
+     *  {@code editable-templates.ts}, which is what most templates arrive
+     *  with. Prior implementation produced UPPERCASE — that broke the
+     *  intern's offer-letter visibility on new rows (the offer-family
+     *  filter searched lowercased). */
     private static String deriveKey(String title) {
-        return title.toUpperCase().replaceAll("[^A-Z0-9]+", "_")
+        return title.toLowerCase().replaceAll("[^a-z0-9]+", "_")
                 .replaceAll("^_+|_+$", "");
     }
 

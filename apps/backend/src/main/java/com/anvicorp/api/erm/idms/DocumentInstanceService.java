@@ -145,9 +145,13 @@ public class DocumentInstanceService {
         // for an unacknowledged candidate. Non-offer templates (NDA, etc.)
         // are unaffected. Only the applicationId path is checked: an existing
         // lifecycleId means the candidate is already past the ack step.
+        // Case-insensitive on the template key — legacy rows are UPPERCASE
+        // ("OFFER_LETTER"), new rows are lowercase ("offer_letter") per the
+        // deriveKey normalisation. See isOfferFamily() for the paired rule.
         if (req.applicationId() != null
                 && template.getKey() != null
-                && template.getKey().startsWith("OFFER_")) {
+                && template.getKey().toLowerCase(java.util.Locale.ROOT)
+                        .startsWith("offer_")) {
             Application app = applicationRepo.findById(req.applicationId())
                     .orElseThrow(() -> new ResourceNotFoundException(
                             "Application not found: " + req.applicationId()));
@@ -1289,21 +1293,24 @@ public class DocumentInstanceService {
     }
 
     /** Offer-family templates — any template key that contains
-     *  {@code OFFER_} as a substring. Keys are derived from admin-picked
-     *  titles by {@code EditableTemplateAdminService.deriveKey}
-     *  (uppercase, non-alphanumeric → {@code _}), so titles like
-     *  "H1 Offer Letter" and "Offer Letter Software Developer" produce
-     *  {@code H1_OFFER_LETTER} / {@code OFFER_LETTER_SOFTWARE_DEVELOPER}
-     *  — neither of which would match a strict {@code startsWith('OFFER_')}
-     *  filter, causing the intern's Offer Letter page to render empty.
+     *  {@code offer_} as a substring, case-INsensitively. Keys were
+     *  historically uppercase ({@code OFFER_LETTER},
+     *  {@code H1_OFFER_LETTER}) but the frontend + DTO validator now
+     *  enforce lowercase snake-case ({@code offer_letter},
+     *  {@code h1_offer_letter}); both forms coexist in the DB.
+     *  {@code contains("offer_")} on the lowercased key catches every
+     *  legitimate offer variant regardless of when the template row was
+     *  created.
      *
      *  <p>Kept in sync with the JPQL peer at
      *  {@code DocumentInstanceRepository.findOfferFamilyForIntern}:
-     *  {@code LIKE '%OFFER\_%'} — same substring rule.</p> */
+     *  {@code LOWER(templateKey) LIKE '%offer\_%'} — same substring
+     *  rule under case normalisation.</p> */
     public static boolean isOfferFamily(DocumentInstance instance) {
         return instance != null
                 && instance.getTemplateKey() != null
-                && instance.getTemplateKey().contains("OFFER_");
+                && instance.getTemplateKey().toLowerCase(java.util.Locale.ROOT)
+                        .contains("offer_");
     }
 
     /**

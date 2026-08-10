@@ -46,17 +46,20 @@ public interface DocumentInstanceRepository
     /**
      * Pipeline-restore — offer-family instances for an intern, newest first.
      *
-     * <p>"Offer-family" is any template whose key contains {@code OFFER_}
-     * as a substring. Admin-derived template keys uppercase the title and
-     * substitute non-alphanumerics with underscores
-     * ({@code EditableTemplateAdminService.deriveKey}); a title like
-     * "H1 Offer Letter" becomes {@code H1_OFFER_LETTER} and a strict
-     * {@code startsWith('OFFER_')} filter would hide it from the intern.
-     * The substring form catches every legitimate offer variant the
-     * studio produces ({@code OFFER_LETTER}, {@code OFFER_LETTER_V2},
-     * {@code H1_OFFER_LETTER}, {@code OFFER_LETTER_SOFTWARE_DEV}, …)
-     * without matching unrelated keys — no seeded/derived key has
-     * {@code OFFER_} in the middle by coincidence.</p>
+     * <p>"Offer-family" is any template whose key contains {@code offer_}
+     * as a substring, case-INsensitively. Template keys were historically
+     * uppercase (e.g. {@code OFFER_LETTER}, {@code H1_OFFER_LETTER}) but
+     * the frontend + DTO validator now enforce lowercase snake-case
+     * ({@code offer_letter}, {@code h1_offer_letter}) — see
+     * {@code deriveKey} in {@code editable-templates.ts} +
+     * {@code CreateTemplateRequest.@Pattern}. Existing DB rows keep the
+     * old uppercase form; new rows arrive lowercase. Wrapping the column
+     * in {@code LOWER(...)} normalises both so the intern's dashboard +
+     * Offer Letter page find sent offers regardless of when the template
+     * was created — before this fix, a lowercase key made the uppercase
+     * {@code LIKE '%OFFER\_%'} filter miss every new offer, and the
+     * intern saw "No offer letter yet" for a SENT instance that actually
+     * existed.</p>
      *
      * <p>VOIDED rows are excluded because a voided instance never had a
      * real offer effect. The caller inspects the head of the list to
@@ -66,7 +69,7 @@ public interface DocumentInstanceRepository
      */
     @Query("SELECT di FROM DocumentInstance di "
             + "WHERE di.internUserId = :userId "
-            + "  AND di.templateKey LIKE '%OFFER\\_%' ESCAPE '\\' "
+            + "  AND LOWER(di.templateKey) LIKE '%offer\\_%' ESCAPE '\\' "
             + "  AND di.status <> 'VOIDED' "
             + "ORDER BY di.createdAt DESC")
     List<DocumentInstance> findOfferFamilyForIntern(@Param("userId") UUID userId);
