@@ -185,7 +185,18 @@ public class DocumentInstancePdfRenderer {
                 + "  table { border-collapse: collapse; }"
                 + "  td, th { padding: 4pt 6pt; }"
                 + "  .doc-field { display: inline; }"
-                + "  .doc-field img { max-height: 40px; vertical-align: middle; }"
+                // Signature image sizing — em-based so the signature scales
+                // with the surrounding text's line-height instead of
+                // dominating it. The prior absolute 40px pushed line height
+                // ~3× on 11pt body text and broke the signature row into two
+                // lines when the signature was placed on an underscore blank
+                // ("Signed: __________"). 1.6em keeps the signature clearly
+                // visible while sitting within normal line flow;
+                // vertical-align: baseline puts the image ON the baseline
+                // (matches how handwriting sits on a signature line).
+                + "  .doc-field img { max-height: 1.6em; max-width: 100%;"
+                + "                   vertical-align: baseline;"
+                + "                   display: inline-block; }"
                 + "  header, footer { display: block; color: #555; font-size: 9pt; }"
                 + "</style>"
                 + "</head>"

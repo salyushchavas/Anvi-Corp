@@ -152,7 +152,19 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
             img.setAttribute('data-sig-src', sigSrc);
             img.src = sigSrc;
             img.alt = 'Signature';
-            img.style.cssText = 'max-height:44px;vertical-align:middle;';
+            // Sizing: em-based + baseline-aligned so the signature sits
+            // ON the surrounding text's baseline (like handwriting on a
+            // signature line) without breaking the line. The prior
+            // absolute {@code max-height:44px} was ~3× a typical 11pt
+            // line-height, which pushed the surrounding text apart and
+            // disrupted layout — the most visible symptom was a
+            // signature placed on an underscore blank breaking the
+            // signature row into two lines. 1.6em keeps the signature
+            // fully visible while sitting within line flow; max-width
+            // caps horizontal overflow on unusually wide signatures.
+            img.style.cssText =
+              'max-height:1.6em;max-width:100%;'
+              + 'vertical-align:baseline;display:inline-block;';
             span.appendChild(img);
             span.classList.add('doc-field--filled');
             if (canSign) span.classList.add('doc-field--signable');
@@ -355,13 +367,14 @@ function awaitingLabel(
 }
 
 /**
- * Copy the effective font-family + font-size (plus weight / style /
- * letter-spacing / line-height so bold and italic runs stay bold and
- * italic when filled) from the anchor's surrounding docx-preview run
- * onto the anchor itself. Idempotent per anchor via {@code data-df-inherit}
- * — first paint captures, subsequent paints skip.
+ * Copy the effective typography (font-family, size, weight, style,
+ * letter-spacing, line-height, color, text-decoration, text-transform,
+ * font-variant) from the anchor's surrounding docx-preview run onto the
+ * anchor itself so the filled value renders in the SAME font as the
+ * neighbouring template text. Idempotent per anchor via
+ * {@code data-df-inherit} — first call captures, subsequent calls skip.
  *
- * <p>Priority order (first match wins):</p>
+ * <p>Priority order for the source (first match wins):</p>
  * <ol>
  *   <li>First inner element (recursively descending into structural
  *       blocks) still present from the initial canonical HTML injection
@@ -377,8 +390,18 @@ function awaitingLabel(
  *       stripped of their inner runs on this same paint pass).</li>
  *   <li>Parent element — the paragraph itself — as a last resort.</li>
  * </ol>
+ *
+ * <p><b>Also exported for the admin studio's wrap-selection-as-field
+ * action.</b> After {@code Range.surroundContents(span)}, wrapping an
+ * underscore/blank/whitespace run without an inline copy could visibly
+ * change the font (browsers' cascading through nested spans is subtly
+ * inconsistent for some docx-preview run shapes — the underscore
+ * "signature line" is the canonical reproducer). Copying the
+ * typography onto the anchor at wrap time guarantees the wrap never
+ * alters the visible font of the selection, regardless of what
+ * happens to the surrounding structure afterwards.</p>
  */
-function applyInheritedTypography(span: HTMLElement): void {
+export function applyInheritedTypography(span: HTMLElement): void {
   if (span.dataset.dfInherit === '1') return;
   const source = pickTypographySource(span);
   if (!source) return;

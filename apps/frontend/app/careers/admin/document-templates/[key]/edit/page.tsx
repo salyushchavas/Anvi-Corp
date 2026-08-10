@@ -30,6 +30,7 @@ import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { applyInheritedTypography } from '@/components/idms/InstanceRenderer';
 import {
   ASSIGNEES,
   AUTO_BINDINGS,
@@ -353,6 +354,17 @@ function PageContent() {
       span.appendChild(frag);
       range.insertNode(span);
     }
+    // Preserve the wrapped selection's exact typography on the anchor
+    // itself. Without this, wrapping underscore / whitespace runs
+    // (signature-line "____________" blanks are the canonical
+    // reproducer) could visibly change the font — browsers cascade
+    // subtly-differently through nested spans depending on how
+    // docx-preview emitted the run. Copying font-family / size /
+    // weight / style / letter-spacing / line-height / color /
+    // text-decoration / text-transform / font-variant onto the anchor
+    // guarantees the wrap NEVER alters the visible font. Same helper
+    // the fill preview uses via InstanceRenderer.
+    applyInheritedTypography(span);
     sel.removeAllRanges();
     setSelectionPresent(false);
     setSelectionRect(null);
