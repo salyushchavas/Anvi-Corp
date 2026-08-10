@@ -6,14 +6,30 @@ import { INPUT_CLASS } from '@/components/ui/FormField';
 /**
  * Phone number input with a country-code selector.
  *
- * <p>Pairs a dropdown of common country dial codes with a text input
- * for the subscriber number. The parent sees a single {@code value}
- * of the form {@code "+CC number"} (e.g. {@code "+1 555 123 4567"});
- * on load, splits it back into (code, number) for editing.</p>
+ * <p>Pairs a fixed-width dropdown of common country dial codes with a
+ * text input for the subscriber number. The parent sees a single
+ * {@code value} of the form {@code "+CC number"} (e.g.
+ * {@code "+1 555 123 4567"}); on load, splits it back into
+ * (code, number) for editing.</p>
  *
- * <p>Country list is intentionally curated (~40 top dialing regions)
- * rather than exhaustive so the picker stays scannable. An "Other"
- * entry lets the user type any dial code manually.</p>
+ * <h3>Why the compact option label</h3>
+ * A native {@code <select>} shows the selected option's text as the
+ * button label — there is no way to render a different short label in
+ * the closed state without dropping to a custom-JS dropdown. We keep
+ * the option text SHORT ({@code "+CC · XX"} — dial code + ISO-2
+ * country code) so a US selection reads {@code "+1 · US"} instead of
+ * {@code "🇺🇸 +1 · United States / Canada"} — the latter grew the
+ * dropdown wide enough to squeeze the phone number input off screen
+ * on a normal-width form column. Full country name lives in the
+ * option's {@code title} attribute for on-hover disambiguation.</p>
+ *
+ * <h3>Why no flag emoji</h3>
+ * Regional-indicator emoji (🇺🇸, 🇮🇳, …) render as their literal
+ * letter pairs (e.g. "US", "IN") on Windows because the default
+ * system font has no flag glyphs and browsers don't fall back to
+ * Segoe UI Emoji inside {@code <select>} options. Rather than ship a
+ * cross-platform inconsistency, the picker is text-only. The dial
+ * code + ISO-2 country code is a reliable universal identifier.</p>
  */
 export interface PhoneInputProps {
   value: string;
@@ -26,52 +42,52 @@ export interface PhoneInputProps {
 
 interface Country {
   code: string;   // dial code with leading +
-  name: string;   // human label
-  flag: string;   // emoji flag
+  iso: string;    // ISO-2 country code, e.g. "US" — short label
+  name: string;   // human-readable name — used only for the option's title tooltip
 }
 
 // Curated list, most-common first. "Other" at the end lets the user type
 // an arbitrary dial code without bloating the dropdown to every country.
 const COUNTRIES: Country[] = [
-  { code: '+1',   name: 'United States / Canada', flag: '🇺🇸' },
-  { code: '+91',  name: 'India',                  flag: '🇮🇳' },
-  { code: '+44',  name: 'United Kingdom',         flag: '🇬🇧' },
-  { code: '+61',  name: 'Australia',              flag: '🇦🇺' },
-  { code: '+49',  name: 'Germany',                flag: '🇩🇪' },
-  { code: '+33',  name: 'France',                 flag: '🇫🇷' },
-  { code: '+81',  name: 'Japan',                  flag: '🇯🇵' },
-  { code: '+65',  name: 'Singapore',              flag: '🇸🇬' },
-  { code: '+971', name: 'United Arab Emirates',   flag: '🇦🇪' },
-  { code: '+86',  name: 'China',                  flag: '🇨🇳' },
-  { code: '+82',  name: 'South Korea',            flag: '🇰🇷' },
-  { code: '+34',  name: 'Spain',                  flag: '🇪🇸' },
-  { code: '+39',  name: 'Italy',                  flag: '🇮🇹' },
-  { code: '+55',  name: 'Brazil',                 flag: '🇧🇷' },
-  { code: '+52',  name: 'Mexico',                 flag: '🇲🇽' },
-  { code: '+27',  name: 'South Africa',           flag: '🇿🇦' },
-  { code: '+64',  name: 'New Zealand',            flag: '🇳🇿' },
-  { code: '+31',  name: 'Netherlands',            flag: '🇳🇱' },
-  { code: '+46',  name: 'Sweden',                 flag: '🇸🇪' },
-  { code: '+47',  name: 'Norway',                 flag: '🇳🇴' },
-  { code: '+45',  name: 'Denmark',                flag: '🇩🇰' },
-  { code: '+41',  name: 'Switzerland',            flag: '🇨🇭' },
-  { code: '+43',  name: 'Austria',                flag: '🇦🇹' },
-  { code: '+32',  name: 'Belgium',                flag: '🇧🇪' },
-  { code: '+48',  name: 'Poland',                 flag: '🇵🇱' },
-  { code: '+90',  name: 'Turkey',                 flag: '🇹🇷' },
-  { code: '+966', name: 'Saudi Arabia',           flag: '🇸🇦' },
-  { code: '+60',  name: 'Malaysia',               flag: '🇲🇾' },
-  { code: '+62',  name: 'Indonesia',              flag: '🇮🇩' },
-  { code: '+63',  name: 'Philippines',            flag: '🇵🇭' },
-  { code: '+66',  name: 'Thailand',               flag: '🇹🇭' },
-  { code: '+84',  name: 'Vietnam',                flag: '🇻🇳' },
-  { code: '+92',  name: 'Pakistan',               flag: '🇵🇰' },
-  { code: '+880', name: 'Bangladesh',             flag: '🇧🇩' },
-  { code: '+94',  name: 'Sri Lanka',              flag: '🇱🇰' },
-  { code: '+234', name: 'Nigeria',                flag: '🇳🇬' },
-  { code: '+254', name: 'Kenya',                  flag: '🇰🇪' },
-  { code: '+20',  name: 'Egypt',                  flag: '🇪🇬' },
-  { code: '+7',   name: 'Russia',                 flag: '🇷🇺' },
+  { code: '+1',   iso: 'US/CA', name: 'United States / Canada' },
+  { code: '+91',  iso: 'IN',    name: 'India' },
+  { code: '+44',  iso: 'GB',    name: 'United Kingdom' },
+  { code: '+61',  iso: 'AU',    name: 'Australia' },
+  { code: '+49',  iso: 'DE',    name: 'Germany' },
+  { code: '+33',  iso: 'FR',    name: 'France' },
+  { code: '+81',  iso: 'JP',    name: 'Japan' },
+  { code: '+65',  iso: 'SG',    name: 'Singapore' },
+  { code: '+971', iso: 'AE',    name: 'United Arab Emirates' },
+  { code: '+86',  iso: 'CN',    name: 'China' },
+  { code: '+82',  iso: 'KR',    name: 'South Korea' },
+  { code: '+34',  iso: 'ES',    name: 'Spain' },
+  { code: '+39',  iso: 'IT',    name: 'Italy' },
+  { code: '+55',  iso: 'BR',    name: 'Brazil' },
+  { code: '+52',  iso: 'MX',    name: 'Mexico' },
+  { code: '+27',  iso: 'ZA',    name: 'South Africa' },
+  { code: '+64',  iso: 'NZ',    name: 'New Zealand' },
+  { code: '+31',  iso: 'NL',    name: 'Netherlands' },
+  { code: '+46',  iso: 'SE',    name: 'Sweden' },
+  { code: '+47',  iso: 'NO',    name: 'Norway' },
+  { code: '+45',  iso: 'DK',    name: 'Denmark' },
+  { code: '+41',  iso: 'CH',    name: 'Switzerland' },
+  { code: '+43',  iso: 'AT',    name: 'Austria' },
+  { code: '+32',  iso: 'BE',    name: 'Belgium' },
+  { code: '+48',  iso: 'PL',    name: 'Poland' },
+  { code: '+90',  iso: 'TR',    name: 'Turkey' },
+  { code: '+966', iso: 'SA',    name: 'Saudi Arabia' },
+  { code: '+60',  iso: 'MY',    name: 'Malaysia' },
+  { code: '+62',  iso: 'ID',    name: 'Indonesia' },
+  { code: '+63',  iso: 'PH',    name: 'Philippines' },
+  { code: '+66',  iso: 'TH',    name: 'Thailand' },
+  { code: '+84',  iso: 'VN',    name: 'Vietnam' },
+  { code: '+92',  iso: 'PK',    name: 'Pakistan' },
+  { code: '+880', iso: 'BD',    name: 'Bangladesh' },
+  { code: '+94',  iso: 'LK',    name: 'Sri Lanka' },
+  { code: '+234', iso: 'NG',    name: 'Nigeria' },
+  { code: '+254', iso: 'KE',    name: 'Kenya' },
+  { code: '+20',  iso: 'EG',    name: 'Egypt' },
+  { code: '+7',   iso: 'RU',    name: 'Russia' },
 ];
 
 const DEFAULT_CODE = '+1';
@@ -162,31 +178,23 @@ export default function PhoneInput({
   }
 
   return (
-    // flex-wrap so the two inputs stack (rather than squish) on very
-    // narrow screens; wider than ~360px keeps them inline. min-w-0 on
-    // the flex-1 input avoids flexbox's default min-width preventing
-    // proper shrink when the select is at its fixed width.
-    <div className="flex flex-wrap gap-2 sm:flex-nowrap">
+    <div className="flex gap-2">
       <select
         aria-label="Country code"
         value={selectValue}
         onChange={(e) => handleSelect(e.target.value)}
         disabled={disabled}
-        // Fixed narrow width (~112px). The prior w-auto min-w-[9rem]
-        // let the native <select> grow to fit its longest option
-        // ("🇦🇪 +971 · United Arab Emirates"), which pushed the number
-        // input off the row. Option TEXT below is now compact too
-        // (flag + code); the full country name lives on option[label]
-        // for the assistive-tech list and on option[title] for the
-        // hover tooltip.
-        className={`${INPUT_CLASS} w-[7rem] shrink-0 pr-6`}
+        // Fixed-width, non-shrinking. Compact enough to leave the
+        // remaining row width for the phone number input. Content
+        // is "+CCC · XX" (max ~10 chars) so w-32 (~128 px) always fits.
+        className={`${INPUT_CLASS} w-32 flex-shrink-0`}
       >
         {COUNTRIES.map((c) => (
-          <option key={c.code} value={c.code} label={`${c.flag} ${c.code} · ${c.name}`} title={c.name}>
-            {c.flag} {c.code}
+          <option key={c.code} value={c.code} title={c.name}>
+            {c.code} · {c.iso}
           </option>
         ))}
-        <option value={OTHER_SENTINEL} label="Other…">Other…</option>
+        <option value={OTHER_SENTINEL}>Other…</option>
       </select>
       {selectValue === OTHER_SENTINEL && (
         <input
@@ -197,7 +205,7 @@ export default function PhoneInput({
           placeholder="+CC"
           disabled={disabled}
           inputMode="numeric"
-          className={`${INPUT_CLASS} w-20 shrink-0`}
+          className={`${INPUT_CLASS} w-20 flex-shrink-0`}
         />
       )}
       <input
@@ -208,6 +216,10 @@ export default function PhoneInput({
         placeholder={placeholder}
         autoComplete={autoComplete}
         disabled={disabled}
+        // min-w-0 so this flex child can shrink below its intrinsic
+        // content width if the container is narrow (default flex
+        // behavior is min-content, which can push the row wider than
+        // its parent and cause horizontal scroll).
         className={`${INPUT_CLASS} min-w-0 flex-1`}
       />
     </div>
