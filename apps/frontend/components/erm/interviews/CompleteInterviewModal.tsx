@@ -243,8 +243,8 @@ export default function CompleteInterviewModal({
 
             <div>
               <label className="text-sm font-medium text-slate-800">
-                Applicant-visible notes <span className="text-red-600">*</span>{' '}
-                <span className="text-xs text-slate-500">(min 20 chars)</span>
+                Applicant-visible notes{' '}
+                <span className="text-xs text-slate-500">(optional)</span>
               </label>
               <textarea
                 value={applicantVisibleNotes}
@@ -257,6 +257,7 @@ export default function CompleteInterviewModal({
               </div>
               <p className="mt-1 text-[11px] text-slate-500">
                 Sent to the applicant when the Manager finalizes the hire decision.
+                Leave blank to send with no visible message.
               </p>
             </div>
 

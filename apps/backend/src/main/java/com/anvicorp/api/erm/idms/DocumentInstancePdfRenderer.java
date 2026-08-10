@@ -2,6 +2,11 @@ package com.anvicorp.api.erm.idms;
 
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import lombok.extern.slf4j.Slf4j;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.nodes.Entities;
+import org.jsoup.nodes.TextNode;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
@@ -17,8 +22,6 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * IDMS Phase 2 — turns a filled canonical HTML + field-value map into a
@@ -46,11 +49,6 @@ import java.util.regex.Pattern;
 public class DocumentInstancePdfRenderer {
 
     private static final int RENDER_TIMEOUT_SECONDS = 45;
-
-    /** Matches every anchor span the studio emits: {@code <span … data-field-id="uuid" …>…</span>}. */
-    private static final Pattern FIELD_SPAN =
-            Pattern.compile("<span([^>]*?)data-field-id=\"([^\"]+)\"([^>]*)>(.*?)</span>",
-                    Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
     /** Single-thread executor with a named factory so heap dumps are legible. */
     private final ExecutorService executor = Executors.newSingleThreadExecutor(new ThreadFactory() {
@@ -112,59 +110,71 @@ public class DocumentInstancePdfRenderer {
     }
 
     /**
-     * Package-visible for unit tests. Replaces every anchor span's contents
-     * with the filled value or signature image; unmatched spans render as
-     * their original text (defensive against a schema/HTML drift).
+     * Package-visible for unit tests. Replaces every anchor span's inner
+     * content with the filled value or signature image; unfilled anchors
+     * keep their placeholder text (schema-drift-tolerant).
+     *
+     * <p><b>Why jsoup rather than a regex.</b> The prior
+     * {@code Pattern <span … data-field-id="…" …>(.*?)</span>} used a
+     * non-greedy tail, which truncates at the FIRST inner {@code </span>}.
+     * docx-preview wraps every text run in its own {@code <span
+     * class="docx_r_…">}, so any anchor with a styled run inside — a
+     * {@code content_block} wrapping a paragraph / list, or a text/date
+     * anchor wrapping a placeholder that docx split into multiple runs —
+     * had its match end at the first inner close, not the anchor's. All
+     * content BEYOND that first inner close (subsequent bullet items,
+     * additional runs) leaked past the substitution and rendered in the
+     * PDF ALONGSIDE the filled value. That was the "Job Duties appears
+     * twice" bug and (when the placeholder was multi-run) the "start
+     * date shows two values" bug.</p>
+     *
+     * <p>jsoup selects {@code span[data-field-id]} and rewrites the
+     * element's children — the parser knows where the outer anchor
+     * ends, so nothing leaks regardless of nesting depth.</p>
      */
     String interpolate(String canonicalHtml,
                        Map<String, String> textByFieldId,
                        Map<String, String> signatureDataUrlByFieldId) {
         if (canonicalHtml == null || canonicalHtml.isEmpty()) return "";
-        Matcher m = FIELD_SPAN.matcher(canonicalHtml);
-        StringBuilder sb = new StringBuilder(canonicalHtml.length() + 256);
-        int cursor = 0;
-        while (m.find()) {
-            sb.append(canonicalHtml, cursor, m.start());
-            String beforeAttrs = m.group(1);
-            String fieldId = m.group(2);
-            String afterAttrs = m.group(3);
-            String originalInner = m.group(4);
-
-            String replacement;
+        Document doc = Jsoup.parseBodyFragment(canonicalHtml);
+        doc.outputSettings()
+                .syntax(Document.OutputSettings.Syntax.xml)
+                .escapeMode(Entities.EscapeMode.xhtml)
+                .prettyPrint(false)
+                .charset("UTF-8");
+        for (Element anchor : doc.select("span[data-field-id]")) {
+            String fieldId = anchor.attr("data-field-id");
             String signature = signatureDataUrlByFieldId == null
                     ? null : signatureDataUrlByFieldId.get(fieldId);
             if (signature != null && !signature.isBlank()) {
-                replacement =
-                        "<img style=\"max-height:40px;vertical-align:middle;\" src=\""
-                                + escapeHtml(signature) + "\" />";
-            } else {
-                String txt = textByFieldId == null ? null : textByFieldId.get(fieldId);
-                if (txt == null || txt.isEmpty()) {
-                    replacement = originalInner; // leave the placeholder text
-                } else {
-                    // content_block values are multi-line (Job Duties bullets,
-                    // paragraphs). openhtmltopdf collapses \n like any browser
-                    // does when white-space is default, so a multi-line value
-                    // would render as one wall of text. Convert every newline
-                    // to a <br /> so line breaks survive; text/date values
-                    // never contain \n so this is a no-op for them and we
-                    // avoid a per-field-type branch in the interpolator.
-                    replacement = escapeHtml(txt).replace("\n", "<br />");
-                }
+                anchor.empty();
+                Element img = anchor.appendElement("img");
+                img.attr("style",
+                        "max-height:1.6em;vertical-align:baseline;display:inline-block;");
+                img.attr("src", signature);
+                continue;
             }
-            sb.append("<span")
-              .append(beforeAttrs)
-              .append("data-field-id=\"")
-              .append(escapeHtml(fieldId))
-              .append("\"")
-              .append(afterAttrs)
-              .append(">")
-              .append(replacement)
-              .append("</span>");
-            cursor = m.end();
+            String txt = textByFieldId == null ? null : textByFieldId.get(fieldId);
+            if (txt == null || txt.isEmpty()) {
+                // Unfilled optional anchor — keep the placeholder text
+                // exactly like the prior implementation did.
+                continue;
+            }
+            anchor.empty();
+            // content_block values are multi-line (Job Duties bullets,
+            // paragraphs). openhtmltopdf collapses \n like any browser
+            // does when white-space is default, so a multi-line value
+            // would render as one wall of text. Convert every newline
+            // to a <br /> so line breaks survive; text/date values
+            // never contain \n so this is a no-op for them and we avoid
+            // a per-field-type branch in the interpolator.
+            String[] lines = txt.split("\n", -1);
+            for (int i = 0; i < lines.length; i++) {
+                if (i > 0) anchor.appendElement("br");
+                if (!lines[i].isEmpty()) anchor.appendChild(new TextNode(lines[i]));
+            }
         }
-        sb.append(canonicalHtml, cursor, canonicalHtml.length());
-        return sb.toString();
+        return doc.body().html();
     }
 
     /** Wraps the filled body HTML in a minimal XHTML doc with print CSS
@@ -178,13 +188,59 @@ public class DocumentInstancePdfRenderer {
                 + "<meta charset=\"UTF-8\" />"
                 + "<title>" + escapeHtml(title == null ? "Document" : title) + "</title>"
                 + "<style>"
-                + "  @page { size: A4; margin: 24mm 20mm; }"
-                + "  body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #111; }"
-                + "  p, li { margin: 0 0 8pt; line-height: 1.4; }"
+                // Letter (8.5x11in) matches the Word default docx-preview
+                // exports as, so a template authored on a US Letter page
+                // fits the PDF page byte-for-byte instead of relying on the
+                // browser's viewport-scaled preview to hide overflow.
+                // 20mm ≈ 0.79in margins on all four sides.
+                + "  @page { size: letter; margin: 20mm; }"
+                // WIDTH SAFETY — docx-preview emits an outer
+                // <article class=\"docx\"> and per-page <section> wrappers
+                // that carry an explicit fixed width matching the source
+                // document's page (e.g. width:21cm for A4 originals, or
+                // width:8.5in for Letter). When that fixed width exceeds
+                // the PDF's printable area, openhtmltopdf renders the
+                // wrapper at its declared width and everything past the
+                // right margin is clipped off the page — the "text runs
+                // off the right edge" bug.
+                // Overriding width + max-width on those wrappers forces
+                // them into the printable area; box-sizing keeps padding
+                // from re-inflating them; word-wrap: break-word rescues
+                // long unbreakable tokens (emails, URLs) that would
+                // otherwise still poke past the margin because they're a
+                // single word with no whitespace to break at.
+                + "  html, body { width: 100%; max-width: 100%; margin: 0; padding: 0; }"
+                // Body fallback font — the docx-preview <style> block
+                // (now preserved by CanonicalHtmlSanitizer since a1fa486)
+                // sets the actual per-run font via class rules, and those
+                // win via CSS cascade order because they appear in the
+                // body AFTER this <head> block. This body rule only
+                // applies to text OUTSIDE the .docx wrapper (in practice
+                // none) or as a last-resort fallback when a template's
+                // stylesheet doesn't declare a font at all.
+                //
+                // Uses the modern-Word default cascade (Calibri) rather
+                // than the openhtmltopdf sample default (Times New Roman)
+                // so a template without an explicit stylesheet still
+                // renders in the face a Word author expects. Serif kept
+                // in the fallback chain so older Times-heavy legal docs
+                // don't drop to a system default they'd never see in Word.
+                + "  body { font-family: Calibri, 'Segoe UI', Arial,"
+                + "                       'Times New Roman', serif;"
+                + "         font-size: 11pt; color: #111;"
+                + "         word-wrap: break-word;"
+                + "         overflow-wrap: break-word; }"
+                + "  article, section, div, article.docx, section.docx {"
+                + "    width: auto !important; max-width: 100% !important;"
+                + "    box-sizing: border-box; }"
+                + "  p, li { margin: 0 0 8pt; line-height: 1.4;"
+                + "          word-wrap: break-word; overflow-wrap: break-word; }"
                 + "  h1, h2, h3, h4 { font-weight: bold; margin: 12pt 0 6pt; }"
-                + "  table { border-collapse: collapse; }"
-                + "  td, th { padding: 4pt 6pt; }"
-                + "  .doc-field { display: inline; }"
+                + "  table { border-collapse: collapse; max-width: 100%; }"
+                + "  td, th { padding: 4pt 6pt; word-wrap: break-word;"
+                + "           overflow-wrap: break-word; }"
+                + "  .doc-field { display: inline; word-wrap: break-word;"
+                + "               overflow-wrap: break-word; }"
                 // Signature image sizing — em-based so the signature scales
                 // with the surrounding text's line-height instead of
                 // dominating it. The prior absolute 40px pushed line height

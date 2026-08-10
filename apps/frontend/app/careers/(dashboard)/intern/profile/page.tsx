@@ -19,6 +19,7 @@ import { Plus, Save, Star, StarOff, Trash2 } from 'lucide-react';
 import { api } from '@/lib/careers/api';
 import { Button } from '@/components/ui/Button';
 import FormField, { inputClass } from '@/components/ui/FormField';
+import PhoneInput from '@/components/ui/PhoneInput';
 import FileUpload from '@/components/ui/FileUpload';
 import { US_STATES, US_ZIP_RE } from '@/lib/careers/us-states';
 import {
@@ -259,10 +260,11 @@ function ContactSection({
           />
         </FormField>
         <FormField label="Phone" htmlFor="p_phone">
-          <input
-            id="p_phone" type="tel" value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            className={inputClass()} autoComplete="tel"
+          <PhoneInput
+            id="p_phone"
+            value={phone}
+            onChange={setPhone}
+            autoComplete="tel"
           />
         </FormField>
         <p className="text-xs text-slate-500">Email: {profile.email}</p>

@@ -8,6 +8,7 @@ import { api } from '@/lib/careers/api';
 import { Button } from '@/components/ui/Button';
 import FormField, { inputClass } from '@/components/ui/FormField';
 import FileUpload from '@/components/ui/FileUpload';
+import PhoneInput from '@/components/ui/PhoneInput';
 import StepperHorizontal from '@/components/ui/StepperHorizontal';
 import {
   DEGREE_LEVEL_LABEL,
@@ -299,14 +300,12 @@ export default function CompleteProfilePage() {
               />
             </FormField>
             <FormField label="Phone" htmlFor="phone" required>
-              <input
+              <PhoneInput
                 id="phone"
-                type="tel"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className={inputClass()}
+                onChange={setPhone}
                 autoComplete="tel"
-                placeholder="e.g. +1 555 123 4567"
+                placeholder="e.g. 555 123 4567"
               />
             </FormField>
           </>

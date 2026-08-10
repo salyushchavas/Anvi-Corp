@@ -101,6 +101,103 @@ class DocumentInstancePdfRendererXhtmlIT {
                         + " closes=" + closes + " out=" + out);
     }
 
+    // ── Regressions for the PDF layout / duplication bugs ────────────
+
+    /** BUG 2 — content_block anchors wrap a whole paragraph / list, so
+     *  their inner content is a chain of docx-preview run spans. The
+     *  prior regex-based interpolator matched {@code .*?</span>}
+     *  (non-greedy) which ended at the FIRST inner {@code </span>},
+     *  so every bullet AFTER the first survived as orphan template text
+     *  next to the interpolated value — Job Duties rendered TWICE.
+     *  The jsoup interpolator selects {@code span[data-field-id]} and
+     *  replaces the entire outer element's children, so nothing leaks. */
+    @Test
+    void content_block_with_nested_runs_does_not_leak_original_bullets() {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        String canonicalHtml =
+                "Duties:"
+                        + "<span class=\"doc-field\" data-field-id=\"duties\">"
+                        + "<span class=\"docx_r_1\">Original Duty 1</span>"
+                        + "<span class=\"docx_r_2\">Original Duty 2</span>"
+                        + "<span class=\"docx_r_3\">Original Duty 3</span>"
+                        + "</span>"
+                        + " end.";
+        String out = renderer.interpolate(
+                canonicalHtml,
+                Map.of("duties", "New A\nNew B\nNew C"),
+                Map.of());
+        assertTrue(out.contains("New A"), "filled value missing: " + out);
+        assertTrue(out.contains("New B"), "filled line 2 missing: " + out);
+        assertTrue(out.contains("New C"), "filled line 3 missing: " + out);
+        assertTrue(!out.contains("Original Duty 1"),
+                "leftover bullet 1 leaked (regex-nesting regression): " + out);
+        assertTrue(!out.contains("Original Duty 2"),
+                "leftover bullet 2 leaked (regex-nesting regression): " + out);
+        assertTrue(!out.contains("Original Duty 3"),
+                "leftover bullet 3 leaked (regex-nesting regression): " + out);
+    }
+
+    /** BUG 3 — a date anchor whose original placeholder was split by
+     *  docx-preview into multiple run spans used to leak the trailing
+     *  run past the substitution, so the filled date rendered alongside
+     *  the residual "AUTO date" (or any other trailing token) from the
+     *  template. jsoup interpolator replaces the whole anchor. */
+    @Test
+    void date_anchor_with_multi_run_placeholder_renders_single_value() {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        String canonicalHtml =
+                "tentatively set for "
+                        + "<span class=\"doc-field\" data-field-id=\"startDate\">"
+                        + "<span class=\"docx_r_1\">MM/DD/YYYY</span>"
+                        + "<span class=\"docx_r_2\">08/10/2026</span>"
+                        + "</span>.";
+        String out = renderer.interpolate(
+                canonicalHtml,
+                Map.of("startDate", "04/20/2026"),
+                Map.of());
+        assertTrue(out.contains("04/20/2026"), "filled date missing: " + out);
+        assertTrue(!out.contains("08/10/2026"),
+                "trailing placeholder run leaked (regex-nesting regression): " + out);
+        assertTrue(!out.contains("MM/DD/YYYY"),
+                "leading placeholder run leaked (regex-nesting regression): " + out);
+    }
+
+    /** Multi-anchor same-field-id: both anchors get the same value. Not
+     *  covered by the old test suite; asserts the jsoup rewrite preserves
+     *  the "one field, N places" contract. */
+    @Test
+    void same_field_id_across_multiple_anchors_fills_all() {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        String canonicalHtml =
+                "Hello <span data-field-id=\"n\">?</span>, "
+                        + "welcome <span data-field-id=\"n\">?</span>.";
+        String out = renderer.interpolate(
+                canonicalHtml,
+                Map.of("n", "Alice"),
+                Map.of());
+        assertTrue(countOccurrences(out, "Alice") == 2,
+                "expected 2 anchor fills, got: " + out);
+    }
+
+    /** BUG 1 — the page CSS must constrain content to the printable area
+     *  so a docx-preview wrapper's fixed pixel/inch width can't push text
+     *  past the right margin. This test checks the CSS shell (asserted
+     *  via the test-hook wrap) so a future edit that drops the width
+     *  overrides fails loudly. */
+    @Test
+    void print_css_shell_pins_content_width_and_page_size() {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        String shell = renderer.toXhtmlForTest("Offer", "<p>body</p>");
+        assertTrue(shell.contains("@page { size: letter"),
+                "page size not pinned to letter: " + shell);
+        assertTrue(shell.contains("max-width: 100%"),
+                "content max-width constraint missing: " + shell);
+        assertTrue(shell.contains("word-wrap: break-word"),
+                "long-token break-word missing (email/url overflow guard): " + shell);
+        assertTrue(shell.contains("article, section, div"),
+                "docx-preview wrapper width override missing: " + shell);
+    }
+
     private static long countOccurrences(String haystack, String needle) {
         long count = 0;
         int idx = 0;
