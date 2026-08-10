@@ -88,6 +88,14 @@ function RegisterPageInner() {
       setError('Please accept the Privacy Policy and Terms of Service to continue.');
       return;
     }
+    // Client-side gate — when Turnstile is enabled in this deploy the
+    // widget must have produced a token before we submit. Otherwise the
+    // backend rejects the request with "human-verification challenge"
+    // and the user sees the generic 400 without any actionable hint.
+    if (turnstileEnabled && !captchaToken) {
+      setError('Please complete the human-verification challenge below before continuing.');
+      return;
+    }
 
     setLoading(true);
     const startedAt = performance.now();
@@ -102,6 +110,12 @@ function RegisterPageInner() {
       // intern's name. The profile editor can split them later if needed.
       legalName: trimmedName,
       acceptedTos,
+      // Included in the debug snapshot so a future "why did register 400"
+      // triage sees whether the widget produced a token. The value itself
+      // is masked (length only) — no point leaking the token to the log.
+      captchaToken: captchaToken
+        ? `present (${captchaToken.length} chars)` : '(empty)',
+      companyWebsite: companyWebsite ? '(honeypot filled!)' : '(honeypot empty)',
     };
 
     // eslint-disable-next-line no-console
@@ -123,6 +137,10 @@ function RegisterPageInner() {
         undefined,
         { legalName: trimmedName },
         acceptedTos,
+        // captchaToken → RegisterRequest.captchaToken (verified server-side
+        // by TurnstileVerifier). companyWebsite → RegisterRequest.companyWebsite
+        // (honeypot — any non-blank value = bot signal, request rejected).
+        { captchaToken, companyWebsite },
       );
 
       const durationMs = Math.round(performance.now() - startedAt);
@@ -269,6 +287,44 @@ function RegisterPageInner() {
             </span>
           </label>
 
+          {/* Honeypot — real users never see it (off-screen + tabindex=-1 +
+              aria-hidden + autocomplete=off). Naive form-filling bots
+              fill every input by name; the server rejects any non-blank
+              value in this field before any downstream work. Kept inside
+              the form so the browser autofill / a11y tree behaviours
+              stay consistent. */}
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              left: '-9999px',
+              width: 1,
+              height: 1,
+              overflow: 'hidden',
+            }}
+          >
+            <label htmlFor="companyWebsite">Company website</label>
+            <input
+              id="companyWebsite"
+              name="companyWebsite"
+              type="text"
+              tabIndex={-1}
+              autoComplete="off"
+              value={companyWebsite}
+              onChange={(e) => setCompanyWebsite(e.target.value)}
+            />
+          </div>
+
+          {/* Turnstile challenge — renders when NEXT_PUBLIC_TURNSTILE_SITE_KEY
+              is configured; hidden no-op otherwise. onToken updates
+              captchaToken; the widget's own expired-callback resets to
+              empty so submit re-disables and the user re-solves. */}
+          {turnstileEnabled && (
+            <div className="pt-1">
+              <TurnstileWidget onToken={setCaptchaToken} />
+            </div>
+          )}
+
           {error && (
             <div
               ref={errorRef}
@@ -285,7 +341,7 @@ function RegisterPageInner() {
 
           <button
             type="submit"
-            disabled={loading || !acceptedTos}
+            disabled={loading || !acceptedTos || (turnstileEnabled && !captchaToken)}
             className="w-full rounded-full bg-accent hover:bg-accent-dark px-4 py-2.5 font-semibold text-white shadow-glow-accent transition hover:shadow-glow-accent-lg disabled:opacity-50 disabled:shadow-none"
           >
             {loading ? 'Creating account…' : 'Create account'}

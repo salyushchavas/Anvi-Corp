@@ -179,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     phoneNumber?: string,
     intake?: RegistrationIntake,
     acceptedTos?: boolean,
+    botMitigation?: { captchaToken?: string; companyWebsite?: string },
   ): Promise<User> {
     const res = await api.post<AuthResponse>('/auth/register', {
       email,
@@ -206,6 +207,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       validityStartDate: intake?.validityStartDate,
       // Required by the backend's @AssertTrue gate.
       acceptedTos,
+      // Bot mitigation — field names MUST match RegisterRequest exactly
+      // (captchaToken + companyWebsite). Undefined when caller doesn't pass
+      // them so serialisation drops the keys; the backend Turnstile verifier
+      // fails-closed when captchaToken is missing AND app.captcha.turnstile.enabled=true.
+      captchaToken: botMitigation?.captchaToken,
+      companyWebsite: botMitigation?.companyWebsite,
     });
     // Security Wave 2 — cookies set by the server on this response.
     const u = userFromAuthResponse(res.data, phoneNumber);
