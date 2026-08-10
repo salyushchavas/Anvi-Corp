@@ -74,9 +74,13 @@ export function assigneeTone(a: FieldAssignee): string {
     ?? 'bg-slate-100 text-slate-700 border-slate-300';
 }
 
-/** Convert a mid-word title to a STABLE_KEY_STYLE identifier. */
+/** Convert a title to a lowercase snake-case identifier.
+ *  Must match the backend @Pattern `^[a-z0-9][a-z0-9_-]*$` on
+ *  CreateTemplateRequest.key — history: the previous generator emitted
+ *  UPPERCASE which the Wave 3 validator then rejected as
+ *  "key must be lowercase kebab/snake shape". */
 export function deriveKey(title: string): string {
-  return title.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
 /** Format bytes for the file-size chip. */

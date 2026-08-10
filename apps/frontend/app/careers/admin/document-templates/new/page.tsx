@@ -81,8 +81,31 @@ function PageContent() {
       setStep(1);
       toast.success('Template created — now upload the Word document.');
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } } };
-      setError(ax.response?.data?.error ?? 'Could not create template');
+      // Prefer the per-field message the backend puts on
+      // details.fields.<name> so a bad key surfaces as
+      // "Key: key must be lowercase kebab/snake shape" instead of the
+      // generic "Validation failed: key".
+      const ax = e as {
+        response?: {
+          data?: {
+            error?: string;
+            message?: string;
+            details?: { fields?: Record<string, string> };
+          };
+        };
+      };
+      const fields = ax.response?.data?.details?.fields;
+      const fieldMsg = fields
+        ? Object.entries(fields)
+            .map(([f, m]) => `${f.charAt(0).toUpperCase() + f.slice(1)}: ${m}`)
+            .join(' • ')
+        : null;
+      setError(
+        fieldMsg
+          ?? ax.response?.data?.message
+          ?? ax.response?.data?.error
+          ?? 'Could not create template',
+      );
     } finally {
       setCreating(false);
     }
@@ -196,7 +219,7 @@ function PageContent() {
                   setKeyManuallyEdited(true);
                   setKeyValue(deriveKey(e.target.value));
                 }}
-                placeholder="OFFER_LETTER_2026"
+                placeholder="offer_letter_2026"
                 className={`${inputClass} font-mono`}
                 autoComplete="off"
               />

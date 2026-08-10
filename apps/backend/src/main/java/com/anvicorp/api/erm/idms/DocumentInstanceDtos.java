@@ -192,10 +192,12 @@ public final class DocumentInstanceDtos {
             /** Field values keyed by fieldId. Signature fields are handled
              *  via {@link SignFieldRequest} instead. Wave 3 — the map itself
              *  is required (empty is fine — a no-op autosave), and each
-             *  value string is capped at 5000 chars to prevent an attacker
-             *  from writing megabytes into the canonical HTML through a
-             *  single field. */
-            @NotNull Map<String, @Size(max = 5000) String> values,
+             *  value string is capped at 50_000 chars. Bumped from the
+             *  initial 5000 after audit found long content_block fields
+             *  (legal clauses, multi-paragraph offers) can legitimately
+             *  exceed 5 KB. 50 KB per field is still short of any DoS
+             *  payload while giving genuine content-block bodies room. */
+            @NotNull Map<String, @Size(max = 50_000) String> values,
             /**
              * Optional optimistic-lock token — the client's cached
              * {@code detail.updatedAt} in millis-since-epoch. When
@@ -231,12 +233,12 @@ public final class DocumentInstanceDtos {
     // dropped between debounced auto-save and the send/submit click.
 
     public record SendRequest(
-            Map<String, @Size(max = 5000) String> values,
+            Map<String, @Size(max = 50_000) String> values,
             Long expectedUpdatedAt
     ) {}
 
     public record InternSubmitRequest(
-            Map<String, @Size(max = 5000) String> values,
+            Map<String, @Size(max = 50_000) String> values,
             Long expectedUpdatedAt
     ) {}
 

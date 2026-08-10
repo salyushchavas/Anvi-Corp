@@ -351,6 +351,13 @@ function FieldRow({
   const isDate = field.type === 'date';
   const isBlock = field.type === 'content_block';
   const missing = field.required && !filled;
+  // Mirrors the backend @Size(max = 50_000) on FillFieldsRequest.values —
+  // surface a live counter on content_block textareas that can plausibly
+  // approach the cap so the user gets feedback before a submit 400s.
+  const VALUE_MAX = 50_000;
+  const remaining = VALUE_MAX - value.length;
+  const nearLimit = isBlock && remaining <= 5_000;
+  const overLimit = isBlock && remaining < 0;
 
   return (
     <li>
@@ -363,16 +370,39 @@ function FieldRow({
           {field.name}{field.required && <span className="text-red-500"> *</span>}
         </label>
         {isBlock ? (
-          <textarea
-            id={`fld-${field.id}`}
-            ref={(el) => registerRef(el)}
-            value={value}
-            onChange={(e) => onTextChange(field.id, e.target.value)}
-            onFocus={handleFocus}
-            disabled={disabled}
-            rows={4}
-            className="mt-2 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
-          />
+          <>
+            <textarea
+              id={`fld-${field.id}`}
+              ref={(el) => registerRef(el)}
+              value={value}
+              onChange={(e) => onTextChange(field.id, e.target.value)}
+              onFocus={handleFocus}
+              disabled={disabled}
+              rows={4}
+              maxLength={VALUE_MAX}
+              className={`mt-2 w-full rounded-md border px-2 py-1.5 text-sm focus:outline-none focus:ring-1 disabled:opacity-60 ${
+                overLimit
+                  ? 'border-red-400 focus:border-red-500 focus:ring-red-500'
+                  : nearLimit
+                    ? 'border-amber-400 focus:border-amber-500 focus:ring-amber-500'
+                    : 'border-slate-200 focus:border-brand-500 focus:ring-brand-500'
+              }`}
+            />
+            {(nearLimit || value.length > 1_000) && (
+              <p
+                className={`mt-1 text-[11px] tabular-nums ${
+                  overLimit
+                    ? 'text-red-600'
+                    : nearLimit
+                      ? 'text-amber-600'
+                      : 'text-slate-400'
+                }`}
+              >
+                {value.length.toLocaleString()} / {VALUE_MAX.toLocaleString()} characters
+                {overLimit && ' — over the limit, trim before submitting'}
+              </p>
+            )}
+          </>
         ) : (
           <input
             id={`fld-${field.id}`}
