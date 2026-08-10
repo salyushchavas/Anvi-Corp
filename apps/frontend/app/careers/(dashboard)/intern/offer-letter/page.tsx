@@ -25,8 +25,10 @@ import {
  * Pipeline-restore — the intern's home for their offer letter.
  *
  * <p>Reads {@code /api/v1/intern/offer-letter} for the current offer-
- * family IDMS instance (newest non-VOIDED {@code templateKey LIKE
- * 'OFFER_%'} row). Renders the current lifecycle stage, an inline
+ * family IDMS instance (newest non-VOIDED row whose {@code templateKey}
+ * matches {@code LOWER(templateKey) LIKE '%offer\_%'} — case-insensitive
+ * so both legacy uppercase and new lowercase template keys resolve).
+ * Renders the current lifecycle stage, an inline
  * offer-signing stepper, and a state-appropriate CTA that deep-links
  * to the F1-F19 fill/sign surface at {@code /careers/intern/offer-
  * letter/{id}}. Executed offers surface the PDF download.</p>

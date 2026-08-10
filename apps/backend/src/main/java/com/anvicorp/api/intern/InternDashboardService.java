@@ -634,7 +634,9 @@ public class InternDashboardService {
      * {@code null} if the intern has no live offer to act on.
      *
      * <p>Card decisions by IDMS status of the intern's newest
-     * {@code templateKey LIKE 'OFFER_%'} instance:</p>
+     * offer-family instance (matched case-insensitively by
+     * {@link com.anvicorp.api.erm.idms.DocumentInstanceRepository#findOfferFamilyForIntern}
+     * — {@code LOWER(templateKey) LIKE '%offer\_%'}):</p>
      * <ul>
      *   <li>{@code SENT_TO_INTERN} — "Your offer letter is ready — review
      *       and sign" (deep-link to the fill/sign page).</li>

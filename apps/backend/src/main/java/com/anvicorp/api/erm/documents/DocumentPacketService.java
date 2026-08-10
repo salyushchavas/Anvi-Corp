@@ -231,7 +231,9 @@ public class DocumentPacketService {
                             + "(EMPLOYEE_ID_CREATED, ONBOARDING_ASSIGNED) — current: " + s);
         }
         // Pipeline-restore — offer-family IDMS gate. If the intern has ANY
-        // offer-family instance (templateKey LIKE 'OFFER_%'), the most
+        // offer-family instance (matched case-insensitively by
+        // {@link com.anvicorp.api.erm.idms.DocumentInstanceRepository#findOfferFamilyForIntern}
+        // — {@code LOWER(templateKey) LIKE '%offer\_%'}), the most
         // recent one must be FINALIZED before an onboarding packet can
         // be assigned. This closes the "IDMS-signed intern gets stuck at
         // EMPLOYEE_ID_CREATED with an unexecuted offer" loophole where
