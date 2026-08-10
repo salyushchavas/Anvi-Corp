@@ -3130,6 +3130,38 @@ public class SchemaFixupRunner implements CommandLineRunner {
             log.warn("[SchemaFixupRunner] ensureWorkAuthPerTypeColumns failed (non-fatal): {} — root: {}",
                     e.getMessage(), rootMessage(e));
         }
+        // Once-per-boot: consolidate legacy per-type end/start dates into
+        // the canonical authorized_from / authorized_until range. The
+        // wizard now only writes to authorized_*; existing rows created
+        // before this fix have their end-date in the per-type column
+        // (ead_expiration / cpt_expiration / h1_receipt_end) and possibly
+        // NULL authorized_until — this COALESCE-style backfill lifts them
+        // so compliance filters + alerts keyed on authorized_until fire
+        // for legacy rows too. Idempotent — the WHERE-clause short-circuits
+        // once each row has been consolidated.
+        try {
+            int untilFilled = jdbcTemplate.update(
+                    "UPDATE work_authorization_records "
+                            + "   SET authorized_until = COALESCE("
+                            + "         ead_expiration, cpt_expiration, h1_receipt_end) "
+                            + " WHERE authorized_until IS NULL "
+                            + "   AND (ead_expiration IS NOT NULL "
+                            + "        OR cpt_expiration IS NOT NULL "
+                            + "        OR h1_receipt_end IS NOT NULL)");
+            int fromFilled = jdbcTemplate.update(
+                    "UPDATE work_authorization_records "
+                            + "   SET authorized_from = h1_receipt_start "
+                            + " WHERE authorized_from IS NULL "
+                            + "   AND h1_receipt_start IS NOT NULL");
+            if (untilFilled > 0 || fromFilled > 0) {
+                log.info("[SchemaFixupRunner] work-auth date consolidation backfill: "
+                                + "authorized_until filled on {} row(s), authorized_from filled on {} row(s)",
+                        untilFilled, fromFilled);
+            }
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] work-auth date consolidation backfill failed (non-fatal): {} — root: {}",
+                    e.getMessage(), rootMessage(e));
+        }
     }
 
     private void seedOnboardingTemplatesFromEnum() {

@@ -56,13 +56,24 @@ public final class DirectOnboardingDtos {
             @Pattern(regexp = "^(US_CITIZEN|PERMANENT_RESIDENT|F1_CPT|F1_OPT|F1_STEM_OPT|H1B|H4|OTHER)$",
                     message = "workAuthType must be one of the fixed 8-value enum")
             String workAuthType,
+            /** SINGLE source of truth for the authorization window's start.
+             *  For H-1B this maps to the I-797 receipt start; for other
+             *  types it's the generic start. The wizard's per-type label
+             *  contextualizes it. */
             LocalDate authorizedFrom,
+            /** SINGLE source of truth for the authorization window's end.
+             *  Replaces the old per-type end-date fields
+             *  (cptExpiration / eadExpiration / h1ReceiptEnd) that
+             *  duplicated this value — the wizard contextualizes the
+             *  label per type ("CPT expiration", "EAD expiration",
+             *  "H-1B end date"). {@code DirectOnboardingService.upsertWorkAuth}
+             *  mirrors this into the legacy per-type columns so downstream
+             *  readers (ErmComplianceService alerts / card) stay populated
+             *  without a schema change. */
             LocalDate authorizedUntil,
             /** EAD card number (F-1 OPT, F-1 STEM OPT, H-4, OTHER). AES-GCM
              *  encrypted server-side. */
             @Size(max = 40) String eadCardNumber,
-            /** EAD expiration (F-1 OPT, F-1 STEM OPT, H-4, OTHER). */
-            LocalDate eadExpiration,
             LocalDate i20Expiration,
             /** True ONLY when workAuthType is F1_OPT or F1_STEM_OPT. The
              *  service forces false for every other type to keep the
@@ -72,16 +83,15 @@ public final class DirectOnboardingDtos {
             @Email @Size(max = 254) String dsoEmail,
             @Size(max = 40) String dsoPhone,
             @Size(max = 2000) String workAuthNotes,
-            // Per-type extensions -----------------------------------------------
+            // Per-type identifier extensions — NUMBER/ID fields only. Every
+            // per-type END-DATE that lived here was collapsed into
+            // authorizedUntil above; the wizard displays it under a
+            // per-type label so the ERM still sees "CPT expiration" etc.
             /** SEVIS ID (F-1 CPT). AES-GCM encrypted server-side. */
             @Size(max = 40) String sevisNumber,
-            /** CPT authorization end date (F-1 CPT). */
-            LocalDate cptExpiration,
             /** USCIS receipt number for H-1B (I-797). AES-GCM encrypted
              *  server-side. */
             @Size(max = 40) String h1ReceiptNumber,
-            LocalDate h1ReceiptStart,
-            LocalDate h1ReceiptEnd,
 
             // Step 3 — Reporting structure (all optional; null = auto-link
             // from DEFAULT_TRAINER_EMAIL / DEFAULT_EVALUATOR_EMAIL) --------------

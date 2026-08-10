@@ -98,6 +98,25 @@ export default function DirectOnboardingPage() {
   );
 }
 
+// The authorization window (from → until) is the SINGLE source of truth
+// for expiration across every visa type. Type-specific labels contextualize
+// the "until" field so the ERM sees "EAD expiration" for OPT, "CPT
+// expiration" for CPT, etc. — same field, no duplicate.
+function authUntilLabelFor(t: string): string {
+  switch (t) {
+    case 'F1_CPT': return 'Authorized until (CPT expiration)';
+    case 'F1_OPT':
+    case 'F1_STEM_OPT': return 'Authorized until (EAD expiration)';
+    case 'H1B': return 'Authorized until (H-1B end date)';
+    case 'H4': return 'Authorized until (H-4 EAD expiration)';
+    case 'OTHER': return 'Authorized until (EAD expiration)';
+    default: return 'Authorized until';
+  }
+}
+function authFromLabelFor(t: string): string {
+  return t === 'H1B' ? 'Authorized from (receipt start)' : 'Authorized from';
+}
+
 function DirectOnboardingWizard() {
   const router = useRouter();
   const [stepIdx, setStepIdx] = useState(0);
@@ -119,19 +138,19 @@ function DirectOnboardingWizard() {
   const [authorizedFrom, setAuthorizedFrom] = useState<string>('');
   const [authorizedUntil, setAuthorizedUntil] = useState<string>('');
   const [eadCardNumber, setEadCardNumber] = useState('');
-  const [eadExpiration, setEadExpiration] = useState<string>('');
   const [i20Expiration, setI20Expiration] = useState<string>('');
   const [i983Required, setI983Required] = useState<boolean>(false);
   const [dsoName, setDsoName] = useState('');
   const [dsoEmail, setDsoEmail] = useState('');
   const [dsoPhone, setDsoPhone] = useState('');
   const [workAuthNotes, setWorkAuthNotes] = useState('');
-  // Per-type extensions
+  // Per-type extensions — number/identifier fields ONLY. Every date lives
+  // in the shared authorizedFrom/authorizedUntil range above; per-type
+  // labels contextualize the "until" for the visa type (see
+  // authUntilLabelFor). No standalone end-date input per type — that was
+  // the redundant field this fix removes.
   const [sevisNumber, setSevisNumber] = useState('');
-  const [cptExpiration, setCptExpiration] = useState<string>('');
   const [h1ReceiptNumber, setH1ReceiptNumber] = useState('');
-  const [h1ReceiptStart, setH1ReceiptStart] = useState<string>('');
-  const [h1ReceiptEnd, setH1ReceiptEnd] = useState<string>('');
 
   // Step 3 — Documents (moved before reporting)
   const [catalog, setCatalog] = useState<OnboardingDoc[]>([]);
@@ -243,19 +262,19 @@ function DirectOnboardingWizard() {
       }
       if (workAuthType === 'F1_CPT') {
         if (!sevisNumber.trim()) return 'SEVIS number is required for F-1 CPT.';
-        if (!cptExpiration) return 'CPT expiration date is required for F-1 CPT.';
+        if (!authorizedUntil) return 'CPT expiration (Authorized until) is required for F-1 CPT.';
       }
       if (workAuthType === 'F1_OPT' || workAuthType === 'F1_STEM_OPT'
           || workAuthType === 'H4' || workAuthType === 'OTHER') {
         if (!eadCardNumber.trim()) return 'EAD card number is required.';
-        if (!eadExpiration) return 'EAD expiration date is required.';
+        if (!authorizedUntil) return 'EAD expiration (Authorized until) is required.';
       }
       if (workAuthType === 'H1B') {
         if (!h1ReceiptNumber.trim()) return 'H-1 receipt number is required for H-1B.';
-        if (!h1ReceiptStart) return 'H-1 receipt start date is required for H-1B.';
-        if (!h1ReceiptEnd) return 'H-1 receipt end date is required for H-1B.';
-        if (h1ReceiptEnd && h1ReceiptStart && h1ReceiptEnd < h1ReceiptStart) {
-          return 'H-1 receipt end date cannot be before the start date.';
+        if (!authorizedFrom) return 'Receipt start (Authorized from) is required for H-1B.';
+        if (!authorizedUntil) return 'H-1B end date (Authorized until) is required for H-1B.';
+        if (authorizedUntil && authorizedFrom && authorizedUntil < authorizedFrom) {
+          return 'Authorized until cannot be before Authorized from.';
         }
       }
     }
@@ -281,8 +300,8 @@ function DirectOnboardingWizard() {
     return null;
   }, [
     stepIdx, email, fullName, joiningDate, workAuthType,
-    sevisNumber, cptExpiration, eadCardNumber, eadExpiration,
-    h1ReceiptNumber, h1ReceiptStart, h1ReceiptEnd,
+    authorizedFrom, authorizedUntil,
+    sevisNumber, eadCardNumber, h1ReceiptNumber,
     resumeFile, selectedDocKeys, docFiles, catalog, customDocs,
     assignMailbox, mailboxLocalPart, mailboxPassword,
   ]);
@@ -345,7 +364,6 @@ function DirectOnboardingWizard() {
         authorizedFrom: authorizedFrom || null,
         authorizedUntil: authorizedUntil || null,
         eadCardNumber: eadCardNumber.trim() || null,
-        eadExpiration: eadExpiration || null,
         i20Expiration: i20Expiration || null,
         i983Required: effectiveI983,
         dsoName: dsoName.trim() || null,
@@ -353,10 +371,7 @@ function DirectOnboardingWizard() {
         dsoPhone: dsoPhone.trim() || null,
         workAuthNotes: workAuthNotes.trim() || null,
         sevisNumber: sevisNumber.trim() || null,
-        cptExpiration: cptExpiration || null,
         h1ReceiptNumber: h1ReceiptNumber.trim() || null,
-        h1ReceiptStart: h1ReceiptStart || null,
-        h1ReceiptEnd: h1ReceiptEnd || null,
         trainerUserId: trainerId || null,
         evaluatorUserId: evaluatorId || null,
         managerUserId: managerId || null,
@@ -513,7 +528,6 @@ function DirectOnboardingWizard() {
             authorizedFrom={authorizedFrom} setAuthorizedFrom={setAuthorizedFrom}
             authorizedUntil={authorizedUntil} setAuthorizedUntil={setAuthorizedUntil}
             eadCardNumber={eadCardNumber} setEadCardNumber={setEadCardNumber}
-            eadExpiration={eadExpiration} setEadExpiration={setEadExpiration}
             i20Expiration={i20Expiration} setI20Expiration={setI20Expiration}
             i983Required={i983Required} setI983Required={setI983Required}
             dsoName={dsoName} setDsoName={setDsoName}
@@ -521,10 +535,7 @@ function DirectOnboardingWizard() {
             dsoPhone={dsoPhone} setDsoPhone={setDsoPhone}
             workAuthNotes={workAuthNotes} setWorkAuthNotes={setWorkAuthNotes}
             sevisNumber={sevisNumber} setSevisNumber={setSevisNumber}
-            cptExpiration={cptExpiration} setCptExpiration={setCptExpiration}
             h1ReceiptNumber={h1ReceiptNumber} setH1ReceiptNumber={setH1ReceiptNumber}
-            h1ReceiptStart={h1ReceiptStart} setH1ReceiptStart={setH1ReceiptStart}
-            h1ReceiptEnd={h1ReceiptEnd} setH1ReceiptEnd={setH1ReceiptEnd}
             docFiles={docFiles} setDocFiles={setDocFiles}
           />
         )}
@@ -689,7 +700,6 @@ function WorkAuthStep(props: {
   authorizedFrom: string; setAuthorizedFrom: (v: string) => void;
   authorizedUntil: string; setAuthorizedUntil: (v: string) => void;
   eadCardNumber: string; setEadCardNumber: (v: string) => void;
-  eadExpiration: string; setEadExpiration: (v: string) => void;
   i20Expiration: string; setI20Expiration: (v: string) => void;
   i983Required: boolean; setI983Required: (v: boolean) => void;
   dsoName: string; setDsoName: (v: string) => void;
@@ -697,10 +707,7 @@ function WorkAuthStep(props: {
   dsoPhone: string; setDsoPhone: (v: string) => void;
   workAuthNotes: string; setWorkAuthNotes: (v: string) => void;
   sevisNumber: string; setSevisNumber: (v: string) => void;
-  cptExpiration: string; setCptExpiration: (v: string) => void;
   h1ReceiptNumber: string; setH1ReceiptNumber: (v: string) => void;
-  h1ReceiptStart: string; setH1ReceiptStart: (v: string) => void;
-  h1ReceiptEnd: string; setH1ReceiptEnd: (v: string) => void;
   docFiles: Record<string, File | null>;
   setDocFiles: (v: Record<string, File | null>) => void;
 }) {
@@ -731,14 +738,14 @@ function WorkAuthStep(props: {
             ))}
           </select>
         </Field>
-        <Field label="Authorized from">
+        <Field label={authFromLabelFor(t)}>
           <input
             type="date" value={props.authorizedFrom}
             onChange={(e) => props.setAuthorizedFrom(e.target.value)}
             className={inputClass}
           />
         </Field>
-        <Field label="Authorized until">
+        <Field label={authUntilLabelFor(t)}>
           <input
             type="date" value={props.authorizedUntil}
             onChange={(e) => props.setAuthorizedUntil(e.target.value)}
@@ -770,77 +777,50 @@ function WorkAuthStep(props: {
           </div>
         )}
 
-        {/* F1_CPT — SEVIS + CPT expiration. */}
+        {/* F1_CPT — SEVIS number only. CPT expiration is captured by the
+            authorized-until date above (its label reads "Authorized until
+            (CPT expiration)" when this type is selected). */}
         {t === 'F1_CPT' && (
-          <>
-            <Field label="SEVIS number" required>
-              <input
-                value={props.sevisNumber}
-                onChange={(e) => props.setSevisNumber(e.target.value)}
-                className={inputClass}
-                autoComplete="off"
-                placeholder="N00XXXXXXXX"
-              />
-            </Field>
-            <Field label="CPT expiration" required>
-              <input
-                type="date" value={props.cptExpiration}
-                onChange={(e) => props.setCptExpiration(e.target.value)}
-                className={inputClass}
-              />
-            </Field>
-          </>
+          <Field label="SEVIS number" required>
+            <input
+              value={props.sevisNumber}
+              onChange={(e) => props.setSevisNumber(e.target.value)}
+              className={inputClass}
+              autoComplete="off"
+              placeholder="N00XXXXXXXX"
+            />
+          </Field>
         )}
 
-        {/* EAD fields — F-1 OPT, F-1 STEM OPT, H-4, OTHER. */}
+        {/* EAD card number — F-1 OPT, F-1 STEM OPT, H-4, OTHER. EAD
+            expiration is captured by the authorized-until date above
+            (its label reads "Authorized until (EAD expiration)" when
+            these types are selected). */}
         {showEadFields && (
-          <>
-            <Field label="EAD card number" required>
-              <input
-                value={props.eadCardNumber}
-                onChange={(e) => props.setEadCardNumber(e.target.value)}
-                className={inputClass}
-                autoComplete="off"
-              />
-            </Field>
-            <Field label="EAD expiration" required>
-              <input
-                type="date" value={props.eadExpiration}
-                onChange={(e) => props.setEadExpiration(e.target.value)}
-                className={inputClass}
-              />
-            </Field>
-          </>
+          <Field label="EAD card number" required>
+            <input
+              value={props.eadCardNumber}
+              onChange={(e) => props.setEadCardNumber(e.target.value)}
+              className={inputClass}
+              autoComplete="off"
+            />
+          </Field>
         )}
 
-        {/* H-1B — receipt number + validity window. */}
+        {/* H-1B — receipt number only. Receipt validity window is
+            captured by the authorized-from / authorized-until pair
+            above (labels adapt to "Authorized from (receipt start)"
+            and "Authorized until (H-1B end date)" for this type). */}
         {t === 'H1B' && (
-          <>
-            <Field label="H-1 receipt number" required>
-              <input
-                value={props.h1ReceiptNumber}
-                onChange={(e) => props.setH1ReceiptNumber(e.target.value)}
-                className={inputClass}
-                autoComplete="off"
-                placeholder="EAC-XX-XXX-XXXXX"
-              />
-            </Field>
-            <div />
-            <Field label="Receipt valid from" required>
-              <input
-                type="date" value={props.h1ReceiptStart}
-                onChange={(e) => props.setH1ReceiptStart(e.target.value)}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Receipt valid until" required>
-              <input
-                type="date" value={props.h1ReceiptEnd}
-                onChange={(e) => props.setH1ReceiptEnd(e.target.value)}
-                className={inputClass}
-              />
-            </Field>
-          </>
+          <Field label="H-1 receipt number" required>
+            <input
+              value={props.h1ReceiptNumber}
+              onChange={(e) => props.setH1ReceiptNumber(e.target.value)}
+              className={inputClass}
+              autoComplete="off"
+              placeholder="EAC-XX-XXX-XXXXX"
+            />
+          </Field>
         )}
 
         {/* I-20 + DSO — F-1 track only. */}

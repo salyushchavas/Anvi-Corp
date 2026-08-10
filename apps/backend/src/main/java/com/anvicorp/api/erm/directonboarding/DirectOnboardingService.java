@@ -540,15 +540,20 @@ public class DirectOnboardingService {
     private static void validateWorkAuthByType(
             DirectOnboardingDtos.DirectOnboardingRequest req) {
         String t = req.workAuthType() == null ? "" : req.workAuthType().trim().toUpperCase(Locale.ROOT);
+        // All type-specific "expiration" / "end date" values now flow
+        // through the single authorizedUntil field (per-type label is a
+        // UI concern only). The old per-type end-date DTO fields were
+        // removed to eliminate the duplicate-date bug — every branch
+        // below validates authorizedUntil instead.
         switch (t) {
             case "F1_CPT" -> {
                 if (isBlank(req.sevisNumber())) {
                     throw new BadRequestException(
                             "SEVIS number is required for F-1 CPT.");
                 }
-                if (req.cptExpiration() == null) {
+                if (req.authorizedUntil() == null) {
                     throw new BadRequestException(
-                            "CPT expiration date is required for F-1 CPT.");
+                            "CPT expiration (Authorized until) is required for F-1 CPT.");
                 }
             }
             case "F1_OPT", "F1_STEM_OPT" -> {
@@ -556,9 +561,9 @@ public class DirectOnboardingService {
                     throw new BadRequestException(
                             "EAD card number is required for " + humanType(t) + ".");
                 }
-                if (req.eadExpiration() == null) {
+                if (req.authorizedUntil() == null) {
                     throw new BadRequestException(
-                            "EAD expiration date is required for " + humanType(t) + ".");
+                            "EAD expiration (Authorized until) is required for " + humanType(t) + ".");
                 }
             }
             case "H1B" -> {
@@ -566,13 +571,13 @@ public class DirectOnboardingService {
                     throw new BadRequestException(
                             "H-1 receipt number is required for H-1B.");
                 }
-                if (req.h1ReceiptStart() == null || req.h1ReceiptEnd() == null) {
+                if (req.authorizedFrom() == null || req.authorizedUntil() == null) {
                     throw new BadRequestException(
-                            "H-1 receipt start + end dates are required for H-1B.");
+                            "Authorized from + Authorized until are required for H-1B.");
                 }
-                if (req.h1ReceiptEnd().isBefore(req.h1ReceiptStart())) {
+                if (req.authorizedUntil().isBefore(req.authorizedFrom())) {
                     throw new BadRequestException(
-                            "H-1 receipt end date cannot be before the start date.");
+                            "Authorized until cannot be before Authorized from.");
                 }
             }
             case "H4", "OTHER" -> {
@@ -580,9 +585,9 @@ public class DirectOnboardingService {
                     throw new BadRequestException(
                             "EAD card number is required for " + humanType(t) + ".");
                 }
-                if (req.eadExpiration() == null) {
+                if (req.authorizedUntil() == null) {
                     throw new BadRequestException(
-                            "EAD expiration date is required for " + humanType(t) + ".");
+                            "EAD expiration (Authorized until) is required for " + humanType(t) + ".");
                 }
             }
             case "US_CITIZEN", "PERMANENT_RESIDENT" -> {
@@ -673,15 +678,24 @@ public class DirectOnboardingService {
         if (req.workAuthNotes() != null && !req.workAuthNotes().isBlank()) {
             w.setErmNotes(req.workAuthNotes().trim());
         }
-        // Per-type fields — set the ones for this type, CLEAR the ones
-        // that belong to other types so a re-onboarding under a different
-        // type doesn't leave stale fields behind.
+        // Per-type fields — set the identifier/number fields for this
+        // type, CLEAR the ones that belong to other types so a re-
+        // onboarding under a different type doesn't leave stale data.
+        //
+        // Date reconciliation: the wizard only sends authorizedFrom /
+        // authorizedUntil now (per-type end-date inputs were removed to
+        // eliminate the duplicate-date UI bug). For backward compat we
+        // MIRROR authorizedUntil into the legacy per-type column so
+        // downstream readers (ErmComplianceService.buildComplianceCard +
+        // alert generator, which still call w.getEadExpiration()) keep
+        // producing the same output for wizard-created rows. Consolidating
+        // those readers onto authorizedUntil is a separate cleanup.
         switch (workAuthType) {
             case "F1_CPT" -> {
                 if (req.sevisNumber() != null && !req.sevisNumber().isBlank()) {
                     w.setSevisNumber(req.sevisNumber().trim());
                 }
-                if (req.cptExpiration() != null) w.setCptExpiration(req.cptExpiration());
+                w.setCptExpiration(req.authorizedUntil());
                 w.setEadCardNumber(null);
                 w.setEadExpiration(null);
                 w.setH1ReceiptNumber(null);
@@ -692,7 +706,7 @@ public class DirectOnboardingService {
                 if (req.eadCardNumber() != null && !req.eadCardNumber().isBlank()) {
                     w.setEadCardNumber(req.eadCardNumber().trim());
                 }
-                if (req.eadExpiration() != null) w.setEadExpiration(req.eadExpiration());
+                w.setEadExpiration(req.authorizedUntil());
                 w.setSevisNumber(null);
                 w.setCptExpiration(null);
                 w.setH1ReceiptNumber(null);
@@ -703,8 +717,8 @@ public class DirectOnboardingService {
                 if (req.h1ReceiptNumber() != null && !req.h1ReceiptNumber().isBlank()) {
                     w.setH1ReceiptNumber(req.h1ReceiptNumber().trim());
                 }
-                if (req.h1ReceiptStart() != null) w.setH1ReceiptStart(req.h1ReceiptStart());
-                if (req.h1ReceiptEnd() != null) w.setH1ReceiptEnd(req.h1ReceiptEnd());
+                w.setH1ReceiptStart(req.authorizedFrom());
+                w.setH1ReceiptEnd(req.authorizedUntil());
                 w.setEadCardNumber(null);
                 w.setEadExpiration(null);
                 w.setSevisNumber(null);
