@@ -162,20 +162,31 @@ export default function PhoneInput({
   }
 
   return (
-    <div className="flex gap-2">
+    // flex-wrap so the two inputs stack (rather than squish) on very
+    // narrow screens; wider than ~360px keeps them inline. min-w-0 on
+    // the flex-1 input avoids flexbox's default min-width preventing
+    // proper shrink when the select is at its fixed width.
+    <div className="flex flex-wrap gap-2 sm:flex-nowrap">
       <select
         aria-label="Country code"
         value={selectValue}
         onChange={(e) => handleSelect(e.target.value)}
         disabled={disabled}
-        className={`${INPUT_CLASS} w-auto min-w-[9rem] pr-6`}
+        // Fixed narrow width (~112px). The prior w-auto min-w-[9rem]
+        // let the native <select> grow to fit its longest option
+        // ("🇦🇪 +971 · United Arab Emirates"), which pushed the number
+        // input off the row. Option TEXT below is now compact too
+        // (flag + code); the full country name lives on option[label]
+        // for the assistive-tech list and on option[title] for the
+        // hover tooltip.
+        className={`${INPUT_CLASS} w-[7rem] shrink-0 pr-6`}
       >
         {COUNTRIES.map((c) => (
-          <option key={c.code} value={c.code}>
-            {c.flag} {c.code} · {c.name}
+          <option key={c.code} value={c.code} label={`${c.flag} ${c.code} · ${c.name}`} title={c.name}>
+            {c.flag} {c.code}
           </option>
         ))}
-        <option value={OTHER_SENTINEL}>Other…</option>
+        <option value={OTHER_SENTINEL} label="Other…">Other…</option>
       </select>
       {selectValue === OTHER_SENTINEL && (
         <input
@@ -186,7 +197,7 @@ export default function PhoneInput({
           placeholder="+CC"
           disabled={disabled}
           inputMode="numeric"
-          className={`${INPUT_CLASS} w-20`}
+          className={`${INPUT_CLASS} w-20 shrink-0`}
         />
       )}
       <input
@@ -197,7 +208,7 @@ export default function PhoneInput({
         placeholder={placeholder}
         autoComplete={autoComplete}
         disabled={disabled}
-        className={`${INPUT_CLASS} flex-1`}
+        className={`${INPUT_CLASS} min-w-0 flex-1`}
       />
     </div>
   );

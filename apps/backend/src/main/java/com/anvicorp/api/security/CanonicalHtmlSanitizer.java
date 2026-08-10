@@ -78,9 +78,22 @@ public final class CanonicalHtmlSanitizer {
      * that carries every class-based font declaration.
      */
     private static final Safelist SAFELIST = Safelist.relaxed()
-            // Preserve the field-placeholder anchor + class.
+            // Preserve the field-placeholder anchor + class + typography
+            // markers. {@code data-df-inherit="1"} is set by
+            // {@code applyInheritedTypography} in the studio at wrap time
+            // as an idempotency guard — with the marker present, the shared
+            // paint pass in {@code InstanceRenderer} SKIPS re-running the
+            // typography inheritance at render time (which could otherwise
+            // pick a different source than the studio did and stamp a
+            // different font on the same field span after the sanitize +
+            // render round-trip). Stripping the marker was the residual
+            // "field-only font changes on save" bug: the wrap-time font
+            // stamp was correct, but paint re-hoisted from the render-time
+            // DOM cascade — sometimes the browser default — and overwrote
+            // it. Same treatment for future {@code data-df-*} markers so
+            // the safelist doesn't have to widen for every helper added.
             .addAttributes("span", "data-field-id", "data-field-name",
-                    "data-field-type", "class", "style")
+                    "data-field-type", "data-df-inherit", "class", "style")
             // Allow class + style on EVERY safelisted tag. Docx-preview
             // encodes fonts in two ways depending on version + document
             // structure:

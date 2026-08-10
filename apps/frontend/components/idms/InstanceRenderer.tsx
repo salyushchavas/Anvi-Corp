@@ -405,24 +405,43 @@ export function applyInheritedTypography(span: HTMLElement): void {
   if (span.dataset.dfInherit === '1') return;
   const source = pickTypographySource(span);
   if (!source) return;
+  // BUG-1 guard: only hoist a font-family / font-size onto the anchor
+  // when SOMETHING in the ancestor chain has ACTUALLY declared a font —
+  // via an inline {@code style="font-family:…"} attribute or a
+  // docx-preview run class ({@code docx_r_N}, {@code docx_p_N}, or the
+  // {@code docx} scope wrapper). Without this check {@code
+  // getComputedStyle(source)} returns the browser default (typically
+  // Times New Roman) whenever the surrounding template has no explicit
+  // font styling at that location, and we'd LOCK IN that default on
+  // the field span. The rest of the document renders whatever the body
+  // default cascade produces, but the field span sticks in the stamped
+  // default forever — that's exactly the "field-only font changes on
+  // save" residual: the wrap-time pick was body's browser-default,
+  // stamped as inline style, preserved through the sanitize round-trip,
+  // and visible as an off-font field on reload.
+  //
+  // When no ancestor declares a font we skip font-family / font-size /
+  // font-weight / font-style / letter-spacing / line-height / font-
+  // variant — the field span then inherits from its own container at
+  // render time, matching the surrounding text by cascade instead of
+  // by hoist. We still stamp color / text-decoration / text-transform
+  // when the source has them (they're carried by SPECIFIC docx runs
+  // and don't have a "browser default" trap the way fonts do).
+  const hasExplicitFont = ancestorHasExplicitFont(source);
   const cs = window.getComputedStyle(source);
-  if (cs.fontFamily) span.style.fontFamily = cs.fontFamily;
-  if (cs.fontSize) span.style.fontSize = cs.fontSize;
-  if (cs.fontWeight) span.style.fontWeight = cs.fontWeight;
-  if (cs.fontStyle) span.style.fontStyle = cs.fontStyle;
-  if (cs.letterSpacing) span.style.letterSpacing = cs.letterSpacing;
-  if (cs.lineHeight) span.style.lineHeight = cs.lineHeight;
-  // Additional properties that make a filled value visually
-  // indistinguishable from the neighbouring template text. Without
-  // these, common docx run styling silently drops off the filled
-  // value: (1) colored headers/labels render in body default; (2) the
-  // classic `Position: [__________]` underline-blank loses its
-  // underline when filled — the value appears floating without the
-  // baseline line the docx conveyed; (3) small-caps + all-caps runs
-  // render in raw case. All four are inheritable per CSS spec, but
-  // the anchor sits between runs at the paragraph level in the docx
-  // structure so plain cascading falls through to defaults (see
-  // pickTypographySource for the sibling-hop rationale).
+  if (hasExplicitFont) {
+    if (cs.fontFamily) span.style.fontFamily = cs.fontFamily;
+    if (cs.fontSize) span.style.fontSize = cs.fontSize;
+    if (cs.fontWeight) span.style.fontWeight = cs.fontWeight;
+    if (cs.fontStyle) span.style.fontStyle = cs.fontStyle;
+    if (cs.letterSpacing) span.style.letterSpacing = cs.letterSpacing;
+    if (cs.lineHeight) span.style.lineHeight = cs.lineHeight;
+    if (cs.fontVariant && cs.fontVariant !== 'normal') {
+      span.style.fontVariant = cs.fontVariant;
+    }
+  }
+  // Non-font properties are safe regardless — no ambiguous "default"
+  // that would visibly override the surrounding cascade if stamped.
   if (cs.color) span.style.color = cs.color;
   if (cs.textDecorationLine && cs.textDecorationLine !== 'none') {
     span.style.textDecorationLine = cs.textDecorationLine;
@@ -432,10 +451,29 @@ export function applyInheritedTypography(span: HTMLElement): void {
   if (cs.textTransform && cs.textTransform !== 'none') {
     span.style.textTransform = cs.textTransform;
   }
-  if (cs.fontVariant && cs.fontVariant !== 'normal') {
-    span.style.fontVariant = cs.fontVariant;
-  }
   span.dataset.dfInherit = '1';
+}
+
+/** Returns true iff EITHER {@code el} itself OR any ancestor up to
+ *  {@code <body>} carries an inline {@code font-family:} declaration
+ *  or a class that indicates docx-preview typography scope
+ *  ({@code docx_r_*}, {@code docx_p_*}, or the {@code docx} wrapper
+ *  class the docx-preview library scopes its stylesheet against).
+ *  Used by {@link applyInheritedTypography} to distinguish "an
+ *  ancestor genuinely declares this font" from "getComputedStyle
+ *  returned the browser default because nothing above declared
+ *  anything." */
+function ancestorHasExplicitFont(el: HTMLElement): boolean {
+  const DOCX_CLASS = /(?:^|\s)docx(?:_[a-zA-Z]+_\d+|_[a-zA-Z]+|-[a-zA-Z]+)?(?:\s|$)/;
+  let cur: HTMLElement | null = el;
+  while (cur && cur !== document.body && cur !== document.documentElement) {
+    const inline = cur.getAttribute('style') ?? '';
+    if (/font-family\s*:/i.test(inline)) return true;
+    const cls = cur.getAttribute('class') ?? '';
+    if (cls && DOCX_CLASS.test(cls)) return true;
+    cur = cur.parentElement;
+  }
+  return false;
 }
 
 /** Walk descendants depth-first; prefer any element whose inline
