@@ -3,6 +3,7 @@ package com.anvicorp.api.controller;
 import com.anvicorp.api.dto.admin.AdminUserResponse;
 import com.anvicorp.api.dto.admin.CreateStaffUserResponse;
 import com.anvicorp.api.dto.admin.CreateUserRequest;
+import com.anvicorp.api.dto.admin.SuspectedBotPurgeResponse;
 import com.anvicorp.api.dto.admin.UpdateUserCredentialsRequest;
 import com.anvicorp.api.dto.admin.UpdateUserRoleRequest;
 import com.anvicorp.api.dto.admin.UpdateUserStatusRequest;
@@ -123,5 +124,44 @@ public class AdminUserController {
     public Map<String, Object> deleteUnverified(@PathVariable UUID id,
                                                  @AuthenticationPrincipal User caller) {
         return adminUserService.deleteUnverifiedUser(id, caller);
+    }
+
+    /**
+     * One-off bulk purge of suspected bot INTERN accounts — the
+     * gibberish-name, REGISTERED-status, email-verified-via-alias,
+     * never-applied pool the current bot wave produced.
+     *
+     * <p>Two-phase to keep the operator in the loop:</p>
+     * <ul>
+     *   <li>Default ({@code confirm=false}) — DRY-RUN. Returns the
+     *       matched accounts without deleting; the operator reviews
+     *       the list before pulling the trigger.</li>
+     *   <li>{@code confirm=true} — actually purges each matched account
+     *       via {@link AdminUserService#deleteUser}, which routes
+     *       every REGISTERED-status intern to the audited
+     *       {@code hardPurge} FK sweep + {@code USER_DELETED} audit
+     *       line + S3 vault cleanup. NO manual DELETE cascade lives
+     *       in this endpoint's code path; every row's deletion goes
+     *       through the same public method the per-user DELETE button
+     *       in the admin UI calls.</li>
+     * </ul>
+     *
+     * <p>SUPER_ADMIN only. The bot signature ({@link
+     * AdminUserService#purgeSuspectedBots}) never matches staff
+     * (single-INTERN-role + gibberish-name + never-applied), but the
+     * role gate is the primary guarantee.</p>
+     *
+     * <p>POST rather than GET-for-dry-run + POST-for-confirm to keep
+     * the two phases on one endpoint — cleaner in the frontend
+     * (single fetch call parameterised) and honest at the HTTP-verb
+     * layer (both phases READ from the DB; the confirm phase also
+     * WRITES).</p>
+     */
+    @PostMapping("/purge-suspected-bots")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public SuspectedBotPurgeResponse purgeSuspectedBots(
+            @RequestParam(name = "confirm", defaultValue = "false") boolean confirm,
+            @AuthenticationPrincipal User caller) {
+        return adminUserService.purgeSuspectedBots(confirm, caller);
     }
 }

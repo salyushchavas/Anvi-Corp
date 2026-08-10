@@ -6,6 +6,7 @@ import com.anvicorp.api.config.BrandConfig;
 import com.anvicorp.api.dto.admin.AdminUserResponse;
 import com.anvicorp.api.dto.admin.CreateStaffUserResponse;
 import com.anvicorp.api.dto.admin.CreateUserRequest;
+import com.anvicorp.api.dto.admin.SuspectedBotPurgeResponse;
 import com.anvicorp.api.dto.admin.UpdateUserCredentialsRequest;
 import com.anvicorp.api.dto.admin.UpdateUserRoleRequest;
 import com.anvicorp.api.dto.admin.UpdateUserStatusRequest;
@@ -45,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
@@ -754,6 +756,145 @@ public class AdminUserService {
      * A distinct action makes the intent obvious and audit-logs it
      * separately.</p>
      */
+    // ── Bulk purge of suspected bot signups ──────────────────────────────
+
+    /**
+     * Signature the {@link #purgeSuspectedBots} scan uses to identify a
+     * gibberish-name bot: 5-10 ASCII letters, nothing else — no space,
+     * no digit, no punctuation. Compiled once and shared between the
+     * SQL prefilter step and the Java-side confirmation so the two
+     * agree by construction. Length bounds match the bot-account audit
+     * that produced this task (samples: {@code "Vtpkdyff"},
+     * {@code "Wntzjw"}).
+     */
+    static final Pattern BOT_NAME_SHAPE =
+            Pattern.compile("^[A-Za-z]{5,10}$");
+
+    /**
+     * One-off admin action — purge suspected bot INTERN accounts using the
+     * SAME audited FK-sweeping path {@link #hardPurge} that the standard
+     * per-user DELETE runs.
+     *
+     * <p>Two-phase — {@code confirm=false} (the default) returns the
+     * matched accounts without deleting anything; {@code confirm=true}
+     * loops the matched ids through {@link #deleteUser} (which routes
+     * to {@code hardPurge} for never-started accounts — which every
+     * REGISTERED intern by definition is) and returns a per-account
+     * outcome summary.</p>
+     *
+     * <h2>Signature</h2>
+     * <p>Matches an account IFF ALL of:</p>
+     * <ol>
+     *   <li>{@code lifecycle_status = 'REGISTERED'} — hasn't advanced
+     *       past initial signup. Real applicants advance to
+     *       APPLICATION_SUBMITTED (or beyond) the moment they apply.</li>
+     *   <li>{@code email_verified = true} — the bot pool went through
+     *       email-alias verification (this is the signal that
+     *       distinguishes verified-alias bots from the unverified
+     *       ones the scheduled purge handles).</li>
+     *   <li>{@code applicant_id IS NOT NULL} — issued at email verify
+     *       time; belt-and-suspenders check that verification actually
+     *       ran.</li>
+     *   <li>Exactly one role and it is {@code INTERN} — staff always
+     *       have multiple or non-INTERN roles, so this alone rules
+     *       out any risk of catching a real staff account.</li>
+     *   <li>No {@code applications} rows via the candidate — the
+     *       "never applied" belt to the REGISTERED-status suspenders.</li>
+     *   <li>{@code full_name} matches {@link #BOT_NAME_SHAPE} — the
+     *       Java-side filter step, so we don't need a Postgres-specific
+     *       {@code ~} POSIX-regex predicate in the SQL. Legitimate
+     *       users' names include a space, punctuation, or extend past
+     *       10 chars, so the regex is a tight signature.</li>
+     * </ol>
+     *
+     * <p>SUPER_ADMIN-gated on the controller ({@link
+     * com.anvicorp.api.controller.AdminUserController#purgeSuspectedBots}).
+     * Each per-account delete goes through the audited public path —
+     * every purged row lands a {@code USER_DELETED} audit line same as
+     * a manual admin DELETE.</p>
+     */
+    public SuspectedBotPurgeResponse purgeSuspectedBots(boolean confirm, User caller) {
+        // Phase 1 — signature scan. The SQL prefilter carries every
+        // condition we can express portably (works on both Postgres and
+        // the H2 in-memory test DB): status + email_verified +
+        // applicant_id + single-INTERN-role + never-applied. The
+        // Java-side loop then applies the name-shape regex — a Postgres-
+        // only `~` operator would break the test suite otherwise, and
+        // pulling every REGISTERED-with-applicant-id row is bounded
+        // (~hundreds at most) so the double-pass cost is trivial.
+        String sql = ""
+                + "SELECT u.id, u.email, u.full_name, u.created_at "
+                + "FROM users u "
+                + "JOIN user_roles ur ON ur.user_id = u.id "
+                + "WHERE u.lifecycle_status = 'REGISTERED' "
+                + "  AND u.email_verified = true "
+                + "  AND u.applicant_id IS NOT NULL "
+                + "  AND NOT EXISTS ( "
+                + "    SELECT 1 FROM applications a "
+                + "    JOIN candidates c ON c.id = a.candidate_id "
+                + "    WHERE c.user_id = u.id "
+                + "  ) "
+                + "GROUP BY u.id, u.email, u.full_name, u.created_at "
+                + "HAVING COUNT(ur.role) = 1 "
+                + "   AND MAX(ur.role) = 'INTERN' "
+                + "ORDER BY u.created_at ASC";
+        List<SuspectedBotPurgeResponse.BotCandidate> matched = new ArrayList<>();
+        try {
+            jdbcTemplate.query(sql, rs -> {
+                String fullName = rs.getString("full_name");
+                if (fullName == null) return;
+                if (!BOT_NAME_SHAPE.matcher(fullName).matches()) return;
+                java.sql.Timestamp ts = rs.getTimestamp("created_at");
+                matched.add(new SuspectedBotPurgeResponse.BotCandidate(
+                        UUID.fromString(rs.getString("id")),
+                        rs.getString("email"),
+                        fullName,
+                        ts != null ? ts.toInstant() : null));
+            });
+        } catch (Exception e) {
+            log.warn("[AdminUserService] bot-signature scan failed: {}", e.getMessage());
+            // Fail-open with empty match set — the operator sees "0 matched"
+            // and can investigate rather than the endpoint returning 500.
+        }
+
+        if (!confirm) {
+            log.info("[AdminUserService] purgeSuspectedBots DRY-RUN — matched={} caller={}",
+                    matched.size(), caller != null ? caller.getId() : null);
+            return new SuspectedBotPurgeResponse(
+                    true, matched.size(), matched, 0, Collections.emptyList());
+        }
+
+        // Phase 2 — confirm. Loop the matched ids and route each through
+        // the existing audited deleteUser path. That method routes to
+        // hardPurge for never-started accounts (which every REGISTERED
+        // intern is by definition), so the full 17-FK sweep +
+        // USER_DELETED audit line + S3 vault cleanup fires per row.
+        // We DO NOT write our own DELETE cascade — hardPurge owns that.
+        int purged = 0;
+        List<SuspectedBotPurgeResponse.PurgeFailure> failures = new ArrayList<>();
+        for (SuspectedBotPurgeResponse.BotCandidate row : matched) {
+            try {
+                deleteUser(row.id(), caller);
+                purged++;
+            } catch (Exception e) {
+                // Never fatal — a per-row failure (concurrent write, an
+                // unusual FK the sweep hasn't seen before) shouldn't
+                // stop the batch. Log + record so the operator sees the
+                // exact reason without grepping.
+                log.warn("[AdminUserService] purgeSuspectedBots row failed id={} email={}: {}",
+                        row.id(), row.email(), e.getMessage());
+                failures.add(new SuspectedBotPurgeResponse.PurgeFailure(
+                        row.id(), row.email(), e.getMessage()));
+            }
+        }
+        log.info("[AdminUserService] purgeSuspectedBots CONFIRM — "
+                        + "matched={} purged={} failed={} caller={}",
+                matched.size(), purged, failures.size(),
+                caller != null ? caller.getId() : null);
+        return new SuspectedBotPurgeResponse(
+                false, matched.size(), matched, purged, failures);
+    }
+
     @Transactional
     public Map<String, Object> deleteUnverifiedUser(UUID id, User caller) {
         User target = userRepository.findById(id)
