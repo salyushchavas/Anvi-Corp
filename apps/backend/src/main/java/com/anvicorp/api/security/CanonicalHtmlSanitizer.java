@@ -81,14 +81,28 @@ public final class CanonicalHtmlSanitizer {
             // Preserve the field-placeholder anchor + class.
             .addAttributes("span", "data-field-id", "data-field-name",
                     "data-field-type", "class", "style")
-            .addAttributes(":all", "class")
-            .addAttributes("div", "class", "style")
-            .addAttributes("p", "class", "style", "align")
-            .addAttributes("td", "class", "style", "colspan", "rowspan", "align", "valign", "width")
-            .addAttributes("th", "class", "style", "colspan", "rowspan", "align", "valign", "width")
-            .addAttributes("table", "class", "style", "border", "cellpadding", "cellspacing", "width")
-            .addAttributes("tr", "class", "style")
-            .addAttributes("img", "src", "alt", "width", "height", "class", "style")
+            // Allow class + style on EVERY safelisted tag. Docx-preview
+            // encodes fonts in two ways depending on version + document
+            // structure:
+            //   1. an injected <style> block + class attributes on
+            //      elements (preserved by the .addTags("style") below);
+            //   2. inline style="font-family:…;font-size:…" attributes
+            //      on every kind of run — <span>, <p>, <em>, <strong>,
+            //      <h1>..<h6>, <li>, <a>, <blockquote>, <small>, <sub>,
+            //      <sup>, <pre>, <code>, <cite>, <q>, …
+            // The previous fix added style only to a small subset
+            // (span/div/p/td/th/table/tr/img/article/section/…), so
+            // fonts encoded inline on bold / italic / heading runs
+            // silently got stripped on save. Broadening to :all closes
+            // that gap. Inline style values are XSS-scrubbed in the
+            // post-clean pass below via scrubStyleAttribute, matching
+            // the treatment given to <style> element content.
+            .addAttributes(":all", "class", "style")
+            .addAttributes("p", "align")
+            .addAttributes("td", "colspan", "rowspan", "align", "valign", "width")
+            .addAttributes("th", "colspan", "rowspan", "align", "valign", "width")
+            .addAttributes("table", "border", "cellpadding", "cellspacing", "width")
+            .addAttributes("img", "src", "alt", "width", "height")
             // The signature capture path stores a data: URL — whitelist
             // the data: protocol on img[src] but NOT on any other attribute
             // or tag, so a template can't smuggle a data:text/html payload
@@ -111,12 +125,7 @@ public final class CanonicalHtmlSanitizer {
             //  <br> / <hr> are already in Safelist.relaxed.
             .addTags("article", "section", "header", "footer",
                     "figure", "figcaption", "style")
-            .addAttributes("article", "class", "style", "id")
-            .addAttributes("section", "class", "style", "id")
-            .addAttributes("header", "class", "style", "id")
-            .addAttributes("footer", "class", "style", "id")
-            .addAttributes("figure", "class", "style", "id")
-            .addAttributes("figcaption", "class", "style", "id")
+            .addAttributes(":all", "id")
             .addAttributes("style", "type", "media");
 
     private static final Cleaner CLEANER = new Cleaner(SAFELIST);
@@ -170,7 +179,7 @@ public final class CanonicalHtmlSanitizer {
             // inline body fragment.
             Document dirty = Jsoup.parseBodyFragment(html);
             Document clean = CLEANER.clean(dirty);
-            // Post-clean pass: neutralise CSS-based XSS constructs inside
+            // Post-clean pass A: neutralise CSS-based XSS constructs inside
             // preserved <style> elements. Text content of <style> is a
             // DataNode (raw text) in jsoup; scrub in place. Modern
             // docx-preview output NEVER contains these constructs, so
@@ -189,6 +198,23 @@ public final class CanonicalHtmlSanitizer {
                     // Replace the DataNode's whole content in place.
                     styleEl.dataNodes().forEach(node -> node.setWholeData(""));
                     styleEl.appendChild(new DataNode(scrubbed));
+                }
+            }
+            // Post-clean pass B: same scrub for INLINE style attributes
+            // on every element. Inline style is now allowed globally so
+            // docx-preview's font-family / font-size runs survive save;
+            // that opens the same CSS-XSS surface the <style>-content
+            // scrub already defends against. url(javascript:…) inside
+            // style="background-image:url(javascript:…)" is the classic
+            // one. Same regex, same neutralisation.
+            for (Element el : clean.getAllElements()) {
+                String inline = el.attr("style");
+                if (inline.isEmpty()) continue;
+                String scrubbedInline = scrubCss(inline);
+                if (!scrubbedInline.equals(inline)) {
+                    log.info("[CanonicalHtmlSanitizer] scrubbed dangerous CSS from inline "
+                            + "style attribute on <{}>", el.tagName());
+                    el.attr("style", scrubbedInline);
                 }
             }
             return clean.body().html();

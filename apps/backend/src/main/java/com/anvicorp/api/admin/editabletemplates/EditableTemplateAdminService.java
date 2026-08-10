@@ -381,6 +381,34 @@ public class EditableTemplateAdminService {
         // signature <img> tags. See CanonicalHtmlSanitizer for the policy.
         String sanitizedHtml =
                 com.anvicorp.api.security.CanonicalHtmlSanitizer.sanitize(normalizedHtml);
+        // ── DIAGNOSTIC LOGGING — save-time font-strip investigation ──
+        // Logs the incoming payload (canvas.innerHTML) side-by-side with
+        // the stored canonical_html after both XhtmlNormalizer and
+        // CanonicalHtmlSanitizer have run, so the operator can compare
+        // what docx-preview actually encoded on the wire vs what
+        // survived to disk. Look for lines tagged
+        // [IdmsSaveSchemaTrace] in the Railway logs; grep for the
+        // template id or the "<style>" substring for the font-carrying
+        // rules. Includes a byte-count delta as a fast sanity check
+        // (a large negative delta = something big was stripped).
+        //
+        // OPERATOR: capture a save with the target template open, then
+        // pull the two blocks and diff. This should be removed once
+        // the font-strip investigation closes; it is diagnostic-only,
+        // logged at INFO so Railway captures it without extra
+        // configuration.
+        {
+            int inLen = html.length();
+            int outLen = sanitizedHtml == null ? 0 : sanitizedHtml.length();
+            log.info("[IdmsSaveSchemaTrace] template={} inLen={} outLen={} delta={}",
+                    id, inLen, outLen, outLen - inLen);
+            log.info("[IdmsSaveSchemaTrace] template={} INCOMING(canvas.innerHTML)=\n{}",
+                    id, html);
+            log.info("[IdmsSaveSchemaTrace] template={} NORMALIZED(XhtmlNormalizer)=\n{}",
+                    id, normalizedHtml);
+            log.info("[IdmsSaveSchemaTrace] template={} STORED(sanitizer)=\n{}",
+                    id, sanitizedHtml);
+        }
         t.setCanonicalHtml(sanitizedHtml);
         t.setFieldSchemaJson(fieldsJson);
         t.setFidelityWarningsJson(warningsJson);
