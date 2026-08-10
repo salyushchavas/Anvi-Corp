@@ -235,6 +235,35 @@ public class DocumentInstancePdfRenderer {
                 + "    box-sizing: border-box; }"
                 + "  p, li { margin: 0 0 8pt; line-height: 1.4;"
                 + "          word-wrap: break-word; overflow-wrap: break-word; }"
+                // Real <ul>/<ol>/<li> lists — a template that doesn't route
+                // through docx-preview (custom-authored, or a future editor)
+                // still gets sensible indentation + a visible marker + item
+                // breathing room instead of the bare browser default which
+                // openhtmltopdf under-renders.
+                + "  ul, ol { margin: 6pt 0; padding-left: 2.5em; }"
+                + "  ul { list-style-type: disc; }"
+                + "  ol { list-style-type: decimal; }"
+                + "  li { margin: 0 0 4pt; padding-left: 0.25em; }"
+                // docx-preview list-item pattern — a Word list becomes a
+                // <p class="docx-num-{id}-{lvl}"> carrying inline rules
+                // `display: list-item; list-style-position: inside;` from
+                // its injected <style>. `inside` crams the bullet into the
+                // text flow with no gap ("•Item" instead of "•  Item"),
+                // and the paragraph itself has no left indent so the block
+                // starts flush with the body — that's the "cramped bullets
+                // jammed together" complaint. Flipping to `outside` +
+                // margin-left gives the bullet its own column of space and
+                // a visible indent, matching how Word renders a real list.
+                // The `!important` beats the injected inline rule (same
+                // specificity otherwise), and `list-style-position` is a
+                // safe override because the marker rendering itself still
+                // works either way — only its position changes.
+                + "  p[class*=\"docx-num\"] {"
+                + "    list-style-position: outside !important;"
+                + "    margin-left: 2em !important;"
+                + "    padding-left: 0.5em !important;"
+                + "    margin-top: 2pt; margin-bottom: 4pt;"
+                + "  }"
                 + "  h1, h2, h3, h4 { font-weight: bold; margin: 12pt 0 6pt; }"
                 + "  table { border-collapse: collapse; max-width: 100%; }"
                 + "  td, th { padding: 4pt 6pt; word-wrap: break-word;"

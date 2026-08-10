@@ -88,8 +88,22 @@ final class IdmsFieldFontInheritance {
     private IdmsFieldFontInheritance() {}
 
     /** Return {@code canonicalHtml} with typography hoisted onto every
-     *  field anchor. Never throws — a jsoup parse failure returns the
-     *  input unchanged, so this pass is strictly additive. */
+     *  field anchor AND every docx-preview list-item paragraph. Never
+     *  throws — a jsoup parse failure returns the input unchanged, so
+     *  this pass is strictly additive.
+     *
+     *  <p>List-item hoist: docx-preview emits Word lists as {@code <p
+     *  class="docx-num-{id}-{lvl}">} with an injected {@code display:
+     *  list-item; list-style-position:inside;} rule; the bullet marker
+     *  (rendered via {@code p.docx-num-…:before}) inherits from the
+     *  {@code <p>} element, which inherits from {@code <body>}. The
+     *  runs INSIDE the paragraph carry the true font, but the bullet
+     *  does not — so a template authored in 12pt Times New Roman
+     *  renders the marker in the body-fallback face (11pt Calibri in
+     *  our PDF shell). Hoisting the inner run's font onto the {@code
+     *  <p>} makes the bullet inherit the right typography, and the
+     *  neighbouring rule that flips list-style-position to outside +
+     *  adds indentation makes the block match the source's rendering.</p> */
     static String applyToCanonicalHtml(String canonicalHtml) {
         if (canonicalHtml == null || canonicalHtml.isEmpty()) return canonicalHtml;
         try {
@@ -102,6 +116,14 @@ final class IdmsFieldFontInheritance {
                 String inheritedStyle = resolveFont(anchor);
                 if (inheritedStyle == null || inheritedStyle.isEmpty()) continue;
                 anchor.attr("style", mergeStyle(existing, inheritedStyle));
+                mutated = true;
+            }
+            for (Element listItem : doc.select("p[class*=docx-num]")) {
+                String existing = listItem.attr("style");
+                if (containsFontFamily(existing) && containsFontSize(existing)) continue;
+                String inner = descendantFont(listItem);
+                if (inner == null || inner.isEmpty()) continue;
+                listItem.attr("style", mergeStyle(existing, inner));
                 mutated = true;
             }
             if (!mutated) return canonicalHtml;

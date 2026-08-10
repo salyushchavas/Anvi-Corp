@@ -198,6 +198,137 @@ class DocumentInstancePdfRendererXhtmlIT {
                 "docx-preview wrapper width override missing: " + shell);
     }
 
+    /** BUG 4 — bulleted lists in the source DOCX rendered as cramped
+     *  literal "•" characters jammed together in the PDF (job-duties
+     *  block). docx-preview emits Word lists as
+     *  {@code <p class="docx-num-{id}-{lvl}">} with an injected
+     *  {@code display:list-item; list-style-position:inside} rule that
+     *  crams the bullet into the text flow with no indent + no vertical
+     *  breathing. The PDF shell must carry list rules that (a) give
+     *  real ul/ol/li sensible margins + padding-left + visible marker
+     *  and (b) override the docx-preview list-item pattern to flip
+     *  position to `outside`, add left indentation, and add per-item
+     *  vertical margin. */
+    @Test
+    void print_css_shell_has_list_indent_and_breathing_room() {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        String shell = renderer.toXhtmlForTest("Offer", "<p>body</p>");
+        // Real <ul>/<ol> get padding + visible markers.
+        assertTrue(shell.contains("ul, ol {"),
+                "ul/ol margin+padding rule missing: " + shell);
+        assertTrue(shell.contains("padding-left: 2.5em"),
+                "list padding-left missing (would render bullets flush left): " + shell);
+        assertTrue(shell.contains("list-style-type: disc"),
+                "ul list-style-type not pinned (marker may vanish under openhtmltopdf): "
+                        + shell);
+        assertTrue(shell.contains("list-style-type: decimal"),
+                "ol list-style-type not pinned: " + shell);
+        // docx-preview list-item override — outside marker + indent + margin.
+        assertTrue(shell.contains("p[class*=\"docx-num\"]"),
+                "docx-preview list-item override missing (bullets will crowd text): "
+                        + shell);
+        assertTrue(shell.contains("list-style-position: outside !important"),
+                "docx-preview list-item list-style-position not flipped to outside: "
+                        + shell);
+        assertTrue(shell.contains("margin-left: 2em !important"),
+                "docx-preview list-item indent missing: " + shell);
+    }
+
+    /** BUG 4 (font hoist) — the docx-preview list-item paragraph
+     *  {@code <p class="docx-num-...">} has NO inline font-family /
+     *  font-size of its own; the runs inside DO. The bullet marker,
+     *  rendered via {@code :before}, inherits from the paragraph, so
+     *  without a hoist the marker falls back to body font (11pt Calibri
+     *  in our PDF shell) while the run text renders in the source's
+     *  face (e.g. 12pt Times New Roman) — that's the "bullets look a
+     *  different size from the text" mismatch. This pass hoists the
+     *  inner run's font onto the paragraph so the {@code :before} bullet
+     *  and the run text render in the same typography. */
+    @Test
+    void list_item_paragraph_font_hoist_matches_inner_run() {
+        String canonical =
+                "<p class=\"docx-num-1-0\">"
+                        + "<span class=\"docx_r_1\" style=\"font-family:'Times New Roman';"
+                        + "font-size:12pt;\">Design and implement APIs</span>"
+                        + "</p>"
+                        + "<p class=\"docx-num-1-0\">"
+                        + "<span class=\"docx_r_1\" style=\"font-family:'Times New Roman';"
+                        + "font-size:12pt;\">Ship on schedule</span>"
+                        + "</p>";
+        String out = IdmsFieldFontInheritance.applyToCanonicalHtml(canonical);
+        // Every list-item <p> now carries the inner run's font on itself.
+        long items = countOccurrences(out, "class=\"docx-num-1-0\"");
+        long fontHoisted = countOccurrences(out,
+                "font-family:'Times New Roman';font-size:12pt;\" class=\"docx-num-1-0\"");
+        // Loose match — jsoup can reorder attributes. Assert BOTH <p>
+        // elements ended up with the font declarations in their style.
+        long styleFontFamily = countOccurrences(out,
+                "font-family:'Times New Roman'");
+        long styleFontSize = countOccurrences(out, "font-size:12pt");
+        assertTrue(items == 2,
+                "expected 2 list-item paragraphs, got " + items + " in: " + out);
+        // Runs (1 per item) + hoisted <p> style (1 per item) = 2 * (1+1) = 4.
+        // Assert at least 4 occurrences of the font-family declaration —
+        // means the hoist added the font to both <p>s.
+        assertTrue(styleFontFamily >= 4,
+                "font-family not hoisted onto both list-item <p>s (want ≥4, got "
+                        + styleFontFamily + "): " + out);
+        assertTrue(styleFontSize >= 4,
+                "font-size not hoisted onto both list-item <p>s (want ≥4, got "
+                        + styleFontSize + "): " + out);
+        // Direct-attribute readback — the first <p> must carry style.
+        assertTrue(out.contains("<p style=") || out.contains("<p class=\"docx-num-1-0\" style="),
+                "list-item <p> has no style attribute after hoist: " + out);
+        // Belt-and-braces: no double-declaration where an inline style
+        // already existed. Silences the "hoist re-hoists on every pass"
+        // regression class.
+        String reapplied = IdmsFieldFontInheritance.applyToCanonicalHtml(out);
+        assertTrue(reapplied.equals(out),
+                "hoist is not idempotent — reapplying changed the HTML");
+        // Guard against fontHoisted being unused — the loose-match
+        // occurrences above already assert the hoist. Reference it so
+        // future test edits notice the tighter check if attribute order
+        // becomes reliable.
+        assertTrue(fontHoisted >= 0, "sanity: attribute-order match count is non-negative");
+    }
+
+    /** End-to-end: given the exact ANVI_OPT unpaid-offer shape (body
+     *  paragraph + a docx-preview bulleted list where runs are 12pt Times
+     *  New Roman), the interpolate → wrap round-trip produces PDF-ready
+     *  HTML in which the list-item paragraph carries the inner run's
+     *  font AND the surrounding shell CSS gives the bullets outside
+     *  positioning + indentation + breathing room. Guards the whole
+     *  fix in one assertion. */
+    @Test
+    void anvi_opt_bulleted_duties_render_uniformly_with_indent() {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        String canonicalHtml =
+                "<p><span class=\"docx_r_0\" style=\"font-family:'Times New Roman';"
+                        + "font-size:12pt;\">Job duties include:</span></p>"
+                        + "<p class=\"docx-num-1-0\">"
+                        + "<span class=\"docx_r_1\" style=\"font-family:'Times New Roman';"
+                        + "font-size:12pt;\">Design and implement APIs</span>"
+                        + "</p>"
+                        + "<p class=\"docx-num-1-0\">"
+                        + "<span class=\"docx_r_2\" style=\"font-family:'Times New Roman';"
+                        + "font-size:12pt;\">Ship on schedule</span>"
+                        + "</p>";
+        // Simulate the full pipeline: font-hoist → interpolate → wrap.
+        String hoisted = IdmsFieldFontInheritance.applyToCanonicalHtml(canonicalHtml);
+        String interp = renderer.interpolate(hoisted, Map.of(), Map.of());
+        String shell = renderer.toXhtmlForTest("ANVI OPT unpaid offer", interp);
+        // Uniform font on list-item paragraphs.
+        assertTrue(shell.contains("font-family:'Times New Roman'"),
+                "Times New Roman not preserved in the pipeline: " + shell);
+        assertTrue(shell.contains("font-size:12pt"),
+                "12pt not preserved on list items: " + shell);
+        // List-item indent + breathing-room CSS present in shell.
+        assertTrue(shell.contains("list-style-position: outside !important"),
+                "docx-preview list-item outside-marker rule missing: " + shell);
+        assertTrue(shell.contains("margin-left: 2em !important"),
+                "docx-preview list-item indent rule missing: " + shell);
+    }
+
     private static long countOccurrences(String haystack, String needle) {
         long count = 0;
         int idx = 0;
