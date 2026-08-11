@@ -9,6 +9,11 @@ import ProjectSlotIndicator from '@/components/trainer/ProjectSlotIndicator';
 import ReportingStructureBadge from '@/components/trainer/ReportingStructureBadge';
 import WebexHostStartCard from '@/components/meeting/WebexHostStartCard';
 import WeeklyTrackerGrid from '@/components/trainer/weeklyTracker/WeeklyTrackerGrid';
+import MeetingTimezoneSelect from '@/components/ui/MeetingTimezoneSelect';
+import {
+  DEFAULT_MEETING_ZONE,
+  localInZoneToUtcIso,
+} from '@/lib/careers/meeting-timezones';
 import type {
   ActiveInternDetail,
   RecentMeetingRow,
@@ -950,17 +955,18 @@ function KtScheduleModal({
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
       + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
-  const browserTz = (() => {
-    try { return Intl.DateTimeFormat().resolvedOptions().timeZone; }
-    catch { return 'UTC'; }
-  })();
-
+  // Seed the picker with the row's stored zone if we're rescheduling —
+  // otherwise fall back to the org-wide default (India ops). Browser TZ
+  // is deliberately NOT used as the fallback: it caused the data-corruption
+  // bug where a trainer on Europe machine picked "3pm IST" and it landed
+  // at 3pm Europe because new Date(local).toISOString() ignored the
+  // picked zone.
   const [localDt, setLocalDt] = useState(toLocalInput(existing?.scheduledFor ?? null));
   const [durationMin, setDurationMin] = useState<number>(
     existing?.durationMinutes ?? 30,
   );
   const [timezone, setTimezone] = useState<string>(
-    existing?.timezone ?? browserTz,
+    existing?.timezone ?? DEFAULT_MEETING_ZONE,
   );
   const [topic, setTopic] = useState('');
   const [agenda, setAgenda] = useState('');
@@ -972,11 +978,13 @@ function KtScheduleModal({
     setBusy(true);
     setErr(null);
     try {
-      // datetime-local has no tz suffix; treat as local time and
-      // convert to an ISO instant. The user-selected `timezone` is
-      // sent separately for display formatting; the actual schedule
-      // semantics live in the instant.
-      const isoInstant = new Date(localDt).toISOString();
+      // datetime-local has no tz suffix. Use localInZoneToUtcIso so the
+      // wall-clock time the trainer typed is interpreted in the PICKED
+      // zone (not the browser's) — otherwise a scheduler on a European
+      // machine picking "3pm IST" would land the meeting at 3pm Europe.
+      // Regression cover for the data-corruption bug flagged in the UX
+      // audit.
+      const isoInstant = localInZoneToUtcIso(localDt, timezone);
       await api.post(`/api/v1/projects/${projectId}/kt-schedule`, {
         scheduledFor: isoInstant,
         durationMinutes: durationMin,
@@ -1039,12 +1047,10 @@ function KtScheduleModal({
               <label className="text-xs font-medium text-slate-800">
                 Timezone
               </label>
-              <input
-                type="text"
+              <MeetingTimezoneSelect
                 value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-                placeholder="Asia/Kolkata"
-                className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                onChange={setTimezone}
+                className="mt-1"
               />
             </div>
           </div>

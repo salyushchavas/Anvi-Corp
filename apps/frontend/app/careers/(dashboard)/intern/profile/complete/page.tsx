@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { api } from '@/lib/careers/api';
+import { parseFieldErrors } from '@/lib/careers/parseFieldErrors';
 import { Button } from '@/components/ui/Button';
 import FormField, { inputClass } from '@/components/ui/FormField';
 import FileUpload from '@/components/ui/FileUpload';
@@ -136,7 +137,7 @@ export default function CompleteProfilePage() {
         }
       } catch (e: any) {
         if (!cancelled) {
-          setError(e?.response?.data?.error ?? 'Could not load your profile. Try refresh.');
+          setError(parseFieldErrors(e, 'Could not load your profile. Try refresh.'));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -206,7 +207,10 @@ export default function CompleteProfilePage() {
       await api.put('/api/v1/users/me', body);
       return true;
     } catch (e: any) {
-      const msg = e?.response?.data?.error ?? e?.message ?? 'Could not save profile.';
+      // parseFieldErrors — surfaces per-field validation (e.g.
+      // "GraduationYear: must be after 1900") instead of the generic
+      // "Validation Failed" the audit flagged.
+      const msg = parseFieldErrors(e, 'Could not save profile.');
       setError(msg);
       return false;
     } finally {
@@ -249,7 +253,7 @@ export default function CompleteProfilePage() {
       setResume(null);
       toast.success('Resume removed');
     } catch (e: any) {
-      toast.error(e?.response?.data?.error ?? 'Could not remove resume.');
+      toast.error(parseFieldErrors(e, 'Could not remove resume.'));
     }
   }
 

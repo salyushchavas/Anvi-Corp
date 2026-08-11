@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import api from '@/lib/careers/api';
 import { useAuth } from '@/lib/careers/auth-context';
+import { parseFieldErrors } from '@/lib/careers/parseFieldErrors';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { formatDateOnly } from '@/lib/careers/format-date';
@@ -171,7 +172,7 @@ function UsersTable() {
         `/api/v1/admin/users?includeUnverified=${showUnverified}`);
       setUsers(res.data ?? []);
     } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Couldn't load users.");
+      setError(parseFieldErrors(err, "Couldn't load users."));
       setUsers([]);
     }
   }, [showUnverified]);
@@ -656,14 +657,18 @@ function NewUserModal({
         credentialsEmailSent: res.data.credentialsEmailSent ?? null,
       });
     } catch (err: any) {
+      // parseFieldErrors surfaces the per-field validation messages
+      // Spring puts on details.fields — the previous single-string
+      // read hid "email: must be a valid email" under "Some fields
+      // are invalid" (the "Validation Failed" class from the audit).
       const status = err?.response?.status;
-      const msg = err?.response?.data?.error;
+      const detailed = parseFieldErrors(err, '');
       if (status === 409) {
-        setError(msg ?? 'A user with that email already exists.');
+        setError(detailed || 'A user with that email already exists.');
       } else if (status === 400) {
-        setError(msg ?? 'Some fields are invalid.');
+        setError(detailed || 'Some fields are invalid.');
       } else {
-        setError(msg ?? 'Could not create user.');
+        setError(detailed || 'Could not create user.');
       }
     } finally {
       setSubmitting(false);

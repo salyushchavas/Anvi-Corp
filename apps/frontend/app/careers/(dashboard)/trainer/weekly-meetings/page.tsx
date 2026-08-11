@@ -469,6 +469,13 @@ function RescheduleForm({ meeting, onDone, onCancel }: {
   meeting: Meeting; onDone: () => void; onCancel: () => void;
 }) {
   const [datetime, setDatetime] = useState('');
+  // Seed tz from the meeting's stored zone if present so a reschedule
+  // preserves the original zone context; otherwise fall back to org default.
+  // Browser TZ deliberately NOT used — that's the data-corruption source.
+  const [timezone, setTimezone] = useState<string>(
+    meeting.timezone && meeting.timezone.trim().length > 0
+      ? meeting.timezone : DEFAULT_MEETING_ZONE,
+  );
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -477,9 +484,14 @@ function RescheduleForm({ meeting, onDone, onCancel }: {
     if (reason.trim().length < 20) { setErr('Reason must be at least 20 chars'); return; }
     setBusy(true);
     try {
+      // Interpret the picked wall-clock in the PICKED zone, not the
+      // browser's. Regression cover for the UX-audit data-corruption
+      // bug where a trainer on Europe machine picking "3pm IST" would
+      // land the meeting at 3pm Europe.
       await api.patch(`/api/v1/trainer/weekly-meetings/${meeting.id}`, {
-        newScheduledFor: new Date(datetime).toISOString(),
+        newScheduledFor: localInZoneToUtcIso(datetime, timezone),
         newDurationMinutes: meeting.durationMinutes,
+        timezone,
         reason: reason.trim(),
       });
       onDone();
@@ -493,6 +505,9 @@ function RescheduleForm({ meeting, onDone, onCancel }: {
       <Field label="New date + time*">
         <input type="datetime-local" value={datetime} onChange={(e) => setDatetime(e.target.value)}
           className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+      </Field>
+      <Field label="Timezone*">
+        <MeetingTimezoneSelect value={timezone} onChange={setTimezone} />
       </Field>
       <Field label={`Reason (≥ 20 chars — ${reason.length})*`}>
         <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={1000}

@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { parseFieldErrors } from '@/lib/careers/parseFieldErrors';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import RecordingUploader from '@/components/dashboard/RecordingUploader';
@@ -105,8 +106,7 @@ function PageContent() {
       setData(res.data);
       setErr(null);
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to load documents');
+      setErr(parseFieldErrors(e, 'Failed to load documents'));
     } finally {
       setLoading(false);
     }
@@ -658,8 +658,9 @@ function AddModal({ kind, onClose, onCreated }: {
       }
       setCreated({ id: res.data.id, title: res.data.title });
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to add');
+      // parseFieldErrors — surfaces per-field validation instead of
+      // hiding "Validation Failed" under a single generic string.
+      setErr(parseFieldErrors(e, 'Failed to add'));
     } finally { setSubmitting(false); }
   }
 
@@ -672,8 +673,7 @@ function AddModal({ kind, onClose, onCreated }: {
       setAttached(true);
       setTimeout(() => onCreated(), 900);
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to save file');
+      setErr(parseFieldErrors(e, 'Failed to save file'));
     }
   }
 
@@ -793,8 +793,7 @@ function ReplaceFileModal({ template, onClose, onReplaced }: {
       setAttached(true);
       setTimeout(() => onReplaced(), 900);
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to save file');
+      setErr(parseFieldErrors(e, 'Failed to save file'));
     } finally { setSaving(false); }
   }
 
@@ -860,8 +859,7 @@ function RemoveConfirmModal({ template, onClose, onRemoved }: {
       await api.delete(`/api/v1/admin/onboarding-templates/${template.id}`);
       onRemoved();
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      setErr(ax.response?.data?.error ?? ax.message ?? 'Failed to remove');
+      setErr(parseFieldErrors(e, 'Failed to remove'));
     } finally { setBusy(false); }
   }
   return (

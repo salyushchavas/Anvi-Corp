@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Paperclip, Send, Video, X } from 'lucide-react';
 import api from '@/lib/careers/api';
+import MeetingTimezoneSelect from '@/components/ui/MeetingTimezoneSelect';
+import {
+  DEFAULT_MEETING_ZONE,
+  localInZoneToUtcIso,
+} from '@/lib/careers/meeting-timezones';
 import { useTrainerDashboard } from '@/components/trainer/TrainerDashboardContext';
 
 // ── Types (mirrors DoubtDtos.DoubtResponse, trainer view) ────────────────
@@ -137,10 +142,10 @@ function DoubtRow({
   const [scheduledFor, setScheduledFor] = useState('');     // ISO local "YYYY-MM-DDTHH:mm"
   const [duration, setDuration] = useState<number>(30);
   const [topic, setTopic] = useState('Doubt-clearing session');
-  const [tz, setTz] = useState<string>(() => {
-    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
-    catch { return 'UTC'; }
-  });
+  // Seed with org default (India ops) — browser TZ was the source of
+  // the data-corruption bug where the trainer's machine's zone silently
+  // overrode the picked meeting zone in the UTC conversion below.
+  const [tz, setTz] = useState<string>(DEFAULT_MEETING_ZONE);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -163,9 +168,11 @@ function DoubtRow({
     if (!scheduledFor) { setErr('Pick a date + time.'); return; }
     setBusy(true); setErr(null);
     try {
-      // datetime-local input gives "YYYY-MM-DDTHH:mm" without tz. Combine
-      // with the resolved IANA timezone and let the server normalise.
-      const iso = new Date(scheduledFor).toISOString();
+      // Interpret the picked wall-clock in the PICKED zone via
+      // localInZoneToUtcIso — new Date(local).toISOString() would use
+      // the browser's zone and land the meeting at the wrong instant
+      // when the trainer's machine zone differs from the picked zone.
+      const iso = localInZoneToUtcIso(scheduledFor, tz);
       const res = await api.post<DoubtResponse>(
         `/api/v1/trainer/doubts/${d.id}/schedule-session`,
         {
@@ -337,12 +344,7 @@ function DoubtRow({
                 </div>
                 <div>
                   <label className="block text-[11px] font-medium text-slate-700">Timezone</label>
-                  <input
-                    type="text"
-                    value={tz}
-                    onChange={(e) => setTz(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
-                  />
+                  <MeetingTimezoneSelect value={tz} onChange={setTz} />
                 </div>
               </div>
               <div>

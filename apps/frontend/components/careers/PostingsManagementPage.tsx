@@ -5,6 +5,7 @@ import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { Briefcase, Pencil, Plus, Search } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { parseFieldErrors } from '@/lib/careers/parseFieldErrors';
 import { formatDateOnly } from '@/lib/careers/format-date';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
@@ -143,7 +144,7 @@ function PostingsTable() {
         },
       );
     } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Couldn't load postings.");
+      setError(parseFieldErrors(err, "Couldn't load postings."));
       setData(null);
     }
   }, [page, committedSearch, statusFilter]);
@@ -169,7 +170,7 @@ function PostingsTable() {
       toast.success(`Posting "${posting.title}" is now ${next.toLowerCase()}.`);
       await load();
     } catch (err: any) {
-      toast.error(err?.response?.data?.error ?? "Couldn't update posting status.");
+      toast.error(parseFieldErrors(err, "Couldn't update posting status."));
     } finally {
       setUpdatingId(null);
     }
@@ -440,7 +441,10 @@ function PostingEditorModal({
       }
       await onSaved();
     } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Couldn't save posting.");
+      // parseFieldErrors — surfaces per-field validation (title too
+      // long, slug format, etc.) instead of the audit-flagged
+      // "Validation Failed" class hiding the actual constraint.
+      setError(parseFieldErrors(err, "Couldn't save posting."));
     } finally {
       setSaving(false);
     }

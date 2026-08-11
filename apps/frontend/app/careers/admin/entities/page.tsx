@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Building2, Plus } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { parseFieldErrors } from '@/lib/careers/parseFieldErrors';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import type { Uuid } from '@/types';
@@ -39,7 +40,7 @@ function EntitiesList() {
       const res = await api.get<AdminEntityResponse[]>('/api/v1/admin/entities');
       setEntities(res.data ?? []);
     } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Couldn't load entities.");
+      setError(parseFieldErrors(err, "Couldn't load entities."));
       setEntities([]);
     }
   }, []);
@@ -196,7 +197,10 @@ function EntityModal({
       }
       onSaved();
     } catch (err: any) {
-      setError(err?.response?.data?.error ?? 'Could not save the entity.');
+      // parseFieldErrors surfaces per-field validation messages
+      // (name too long, country invalid, etc.) instead of the generic
+      // "Validation Failed" the backend returns when @Valid fails.
+      setError(parseFieldErrors(err, 'Could not save the entity.'));
     } finally {
       setSubmitting(false);
     }

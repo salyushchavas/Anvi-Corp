@@ -208,16 +208,33 @@ function PageContent() {
               Execute & render PDF
             </button>
           )}
-          {detail.actions.canErmRevoke && (
-            <button
-              type="button"
-              onClick={() => setRevokeOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-800 hover:bg-red-100"
-            >
-              <ShieldOff className="h-3.5 w-3.5" />
-              Revoke
-            </button>
-          )}
+          {/* Always render Revoke — disabled with a tooltip when
+              revokeBlockedReason is present. Hiding the button (or
+              replacing it with a tiny AlertCircle) is the precedent
+              bug the audit flagged: users don't see the action exists,
+              can't discover WHY it's unavailable, and try workarounds
+              that go nowhere. Same-shape fix as the earlier bug on the
+              other surface. */}
+          <button
+            type="button"
+            onClick={() => setRevokeOpen(true)}
+            disabled={!detail.actions.canErmRevoke}
+            title={
+              detail.actions.canErmRevoke
+                ? 'Revoke this document'
+                : detail.actions.revokeBlockedReason
+                  ?? 'Revoke unavailable in this state'
+            }
+            aria-label={
+              detail.actions.canErmRevoke
+                ? 'Revoke this document'
+                : `Revoke unavailable — ${detail.actions.revokeBlockedReason ?? 'not allowed in this state'}`
+            }
+            className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-red-50"
+          >
+            <ShieldOff className="h-3.5 w-3.5" />
+            Revoke
+          </button>
           {detail.finalPdfUrl && (
             <button
               type="button"
@@ -258,6 +275,11 @@ function PageContent() {
           {detail.revokeComments && <p className="mt-1 text-xs">Comments: {detail.revokeComments}</p>}
         </div>
       )}
+      {/* The Revoke button above now carries revokeBlockedReason in its
+          tooltip + aria-label, so the below inline note is redundant.
+          Kept for readers who miss the tooltip (touch devices, screen
+          readers with terse aria) — still shows only when the block is
+          active AND we have a concrete reason. */}
       {!detail.actions.canErmRevoke && detail.actions.revokeBlockedReason && (
         <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
           <AlertCircle className="mr-1 inline-block h-3 w-3" />

@@ -346,9 +346,29 @@ function DayCell({
     }
   }, [initialHours]);
 
+  // Debounce + supersede refs. `debounceRef` cancels a pending save when
+  // the intern edits the same cell again within the window (typing "8"
+  // then correcting to "8.5" shouldn't fire two PUTs). `saveSeq` /
+  // `latestSeq` implement supersede semantics — a slow response for an
+  // earlier value never overwrites the UI produced by a newer save.
+  // Fixes the audit-flagged race where rapid cell edits under jitter
+  // would drop hours: the last-write-wins response arrived stale
+  // because each PUT returned the FULL week and clobbered sibling cells
+  // whose fresher local state was already committed.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveSeq = useRef(0);
+  const latestSeq = useRef(0);
+  useEffect(() => {
+    // Flush + cancel on unmount so a pending debounce doesn't fire
+    // after the cell is gone (parent remounts on month switch).
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
   const disabled = !inMonth || locked;
 
-  async function save() {
+  async function performSave() {
     setErr(null);
     const trimmed = raw.trim();
     const hours = trimmed === '' ? 0 : Number(trimmed);
@@ -357,18 +377,41 @@ function DayCell({
       return;
     }
     if (initialHours != null && Math.abs(hours - initialHours) < 0.001) return;
+    const mySeq = ++saveSeq.current;
     setSaving(true);
     try {
+      // The PUT is idempotent server-side — the endpoint replaces the
+      // (weekStart, day) row with the new hours regardless of prior
+      // state, so a retry after network jitter can't double-count.
       const res = await api.put<TimesheetWeek>(
         `/api/v1/timesheets/me/day?weekStart=${weekStart}&day=${dayOfWeek}`,
         { hours },
       );
-      onSaved(res.data);
+      // Supersede — only apply this response if it's the latest save
+      // we've kicked off for this cell. A stale response (delayed by
+      // network jitter while the intern moved on) is silently dropped.
+      if (mySeq > latestSeq.current) {
+        latestSeq.current = mySeq;
+        onSaved(res.data);
+      }
     } catch (e: any) {
-      setErr(e?.response?.data?.error ?? 'Save failed');
+      if (mySeq >= latestSeq.current) {
+        setErr(e?.response?.data?.error ?? 'Save failed');
+      }
     } finally {
       setSaving(false);
     }
+  }
+
+  // 200ms coalescing window — a burst of onBlur/onChange triggers
+  // (fast tab across adjacent cells) collapses into one PUT per cell.
+  // Long enough to absorb jitter, short enough to feel synchronous.
+  function scheduleSave() {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      void performSave();
+    }, 200);
   }
 
   return (
@@ -392,7 +435,7 @@ function DayCell({
         step="0.25"
         value={raw}
         onChange={(e) => setRaw(e.target.value)}
-        onBlur={() => { if (!disabled) void save(); }}
+        onBlur={() => { if (!disabled) scheduleSave(); }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !disabled) (e.target as HTMLInputElement).blur();
         }}
