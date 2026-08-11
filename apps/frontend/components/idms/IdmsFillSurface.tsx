@@ -258,10 +258,22 @@ export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceCon
     const currentDetail = detailRef.current;
     const currentFields = fieldsRef.current;
     if (!currentDetail || !canEditRef.current) return false;
+    // Field-level correction lock — on a narrowed correction cycle
+    // the intern only owns the unlocked ids; every other intern
+    // field is read-only. Sending values for a LOCKED field would
+    // trip the server-side narrowing guard and 409 the entire
+    // autosave (including the ONE unlocked change the user made),
+    // reverting their edit. Filter locked fields OUT of the payload
+    // so the server only sees writes to fields it will accept.
+    // Legacy null set → no narrowing, every owned field goes.
+    const lockNarrowing = role === 'INTERN' && currentDetail.unlockedFieldIds
+      ? new Set(currentDetail.unlockedFieldIds)
+      : null;
     const payload: Record<string, string> = {};
     for (const f of currentFields) {
       if (f.assignee !== role) continue;
       if (f.type === 'signature') continue;
+      if (lockNarrowing != null && !lockNarrowing.has(f.id)) continue;
       payload[f.id] = values[f.id] ?? '';
     }
     if (Object.keys(payload).length === 0) return true;
@@ -381,9 +393,19 @@ export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceCon
         return;
       }
       const latestUpdatedAt = detailRef.current?.updatedAt;
+      // Same narrowing filter as the autosave — locked fields must
+      // not appear in the transition payload or the server-side lock
+      // guard 409s the submit. Locked fields keep their persisted
+      // values from the previous cycle; the completeness check on
+      // the server reads from valueRepo, not the request, so the
+      // required-fields gate still passes.
+      const lockNarrowing = role === 'INTERN' && detailRef.current?.unlockedFieldIds
+        ? new Set(detailRef.current.unlockedFieldIds)
+        : null;
       const payload: Record<string, string> = {};
       for (const f of fields) {
         if (f.assignee !== role || f.type === 'signature') continue;
+        if (lockNarrowing != null && !lockNarrowing.has(f.id)) continue;
         payload[f.id] = textValues[f.id] ?? '';
       }
       const returned = await resource.transition({

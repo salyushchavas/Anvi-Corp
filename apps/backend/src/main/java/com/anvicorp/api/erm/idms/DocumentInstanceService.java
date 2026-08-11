@@ -936,17 +936,21 @@ public class DocumentInstanceService {
                 throw new BadRequestException("Signature fields go through /sign, not /fill.");
             }
             requireFieldOwner(callerRole, f.assignee(), f.name());
+            String value = e.getValue();
+            DocumentInstanceFieldValue existing = valueRepo
+                    .findByInstanceIdAndFieldId(instance.getId(), fieldId)
+                    .orElse(null);
             if (!isFieldEditableUnderLock(fieldId, callerRole,
                     lockNarrowing == null ? null : new java.util.ArrayList<>(lockNarrowing))) {
+                if (isBenignNoopUnderLock(
+                        existing == null ? null : existing.getValueText(), value)) {
+                    continue;
+                }
                 throw new ConflictException(
                         "Field \"" + f.name() + "\" is locked on this correction "
                                 + "cycle — ERM didn't request a change here. Only the "
                                 + "fields ERM flagged in the return dialog are editable.");
             }
-            String value = e.getValue();
-            DocumentInstanceFieldValue existing = valueRepo
-                    .findByInstanceIdAndFieldId(instance.getId(), fieldId)
-                    .orElse(null);
             if (existing == null) {
                 existing = DocumentInstanceFieldValue.builder()
                         .instanceId(instance.getId())
@@ -1535,6 +1539,31 @@ public class DocumentInstanceService {
         if (!"INTERN".equals(callerRole)) return true;
         if (unlockedFieldIds == null) return true;
         return unlockedFieldIds.contains(fieldId);
+    }
+
+    /**
+     * Distinguishes a benign no-op write on a LOCKED field from an
+     * attempted-bypass write.
+     *
+     * <p>Background: the intern-side autosave used to send EVERY intern-
+     * owned field on every debounced save (see
+     * {@code IdmsFillSurface.persist}). Even with the client filter now
+     * in place, we keep this server-side tolerance as defence in depth —
+     * a stale in-flight payload can still ride out after the narrowing
+     * became known to the client, and we don't want a raced no-op to
+     * 409 the whole save (which reverts the user's actual unlocked-field
+     * edit).</p>
+     *
+     * <p>Rule: if the incoming value equals the stored value, treat the
+     * write as a silent no-op. Any DIFFERENT value on a locked field is
+     * a real attempted change and must 409 — the security guarantee of
+     * the correction lock. Null and empty string are normalised together
+     * so a "" that lands on an unset field doesn't false-trip either way.</p>
+     */
+    static boolean isBenignNoopUnderLock(String storedText, String incomingText) {
+        String s = storedText == null ? "" : storedText;
+        String i = incomingText == null ? "" : incomingText;
+        return s.equals(i);
     }
 
     private static byte[] decodeDataUrl(String dataUrl) {

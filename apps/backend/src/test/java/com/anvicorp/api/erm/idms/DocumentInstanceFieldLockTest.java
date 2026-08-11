@@ -134,4 +134,55 @@ class DocumentInstanceFieldLockTest {
                         + "normaliser converts empty → null before persisting, but the "
                         + "predicate stays safe if a corrupt row surfaces");
     }
+
+    /**
+     * Regression cover for the "intern can't save corrections" bug — the
+     * autosave used to ship every intern-owned field on every debounced
+     * save, so on a narrowed correction cycle the LOCKED fields' stored
+     * values also rode the payload. Any locked-field entry then tripped
+     * the narrowing guard and 409'd the whole save (reverting the user's
+     * actual unlocked-field edit — "John" flipped back to "Jhon"). The
+     * server-side tolerance says: if the incoming value equals the
+     * stored value, it's a benign no-op autosave — skip silently. A
+     * different value is a real attempted bypass and still 409s.
+     *
+     * <p>The client also filters locked fields out of the autosave
+     * payload now, but this backend tolerance is defence in depth
+     * against stale in-flight payloads and any future client variant
+     * that hasn't been taught the narrowing yet.</p>
+     */
+    @Test
+    void locked_field_write_with_unchanged_value_is_benign_noop() {
+        // Same stored value as incoming — the autosave repeat case.
+        assertTrue(DocumentInstanceService.isBenignNoopUnderLock("Jhon", "Jhon"),
+                "same value → skip silently (autosave with the unchanged locked "
+                        + "field must not 409 the batch and revert the unlocked edit)");
+        // Null and empty string treated as identical — a fresh detail
+        // row (no stored value yet) receiving "" from the client is
+        // still a no-op.
+        assertTrue(DocumentInstanceService.isBenignNoopUnderLock(null, ""),
+                "null stored + empty incoming = no-op (fresh row, empty send)");
+        assertTrue(DocumentInstanceService.isBenignNoopUnderLock("", null),
+                "empty stored + null incoming = no-op (symmetry)");
+        assertTrue(DocumentInstanceService.isBenignNoopUnderLock(null, null),
+                "both null = no-op");
+    }
+
+    /**
+     * Complements the previous test: a REAL change on a locked field
+     * is not benign — the caller (applyFieldValues) must proceed to
+     * throw ConflictException. This is the security bit; the correction
+     * lock's whole point is that intern-tampered clients CANNOT sneak a
+     * value change past the UI disable.
+     */
+    @Test
+    void locked_field_write_with_changed_value_is_NOT_benign() {
+        assertFalse(DocumentInstanceService.isBenignNoopUnderLock("Jhon", "John"),
+                "different value → not a no-op; the write path must 409 "
+                        + "so a tampered client cannot bypass the correction lock");
+        assertFalse(DocumentInstanceService.isBenignNoopUnderLock("", "smuggled"),
+                "empty stored → any non-empty incoming is a real write attempt");
+        assertFalse(DocumentInstanceService.isBenignNoopUnderLock("original", ""),
+                "clearing a stored value on a locked field is also a change — 409");
+    }
 }
