@@ -227,10 +227,15 @@ public class ManagerHireApprovalService {
      *       echo, no offer-send unlock);</li>
      *   <li>does NOT change {@code Application.status} (the candidate
      *       stays in their current pipeline state);</li>
-     *   <li>does NOT publish {@link ManagerHireDecisionEvent} (no offer
-     *       letter, no rejection email);</li>
+     *   <li>does publish {@link ManagerHireDecisionEvent} with
+     *       {@code decision=HOLD} so the ERM is notified they need to
+     *       act (nudge the manager, gather more info, etc.). The
+     *       applicant-side branch of that listener is a no-op for HOLD
+     *       because {@code iv.decision} is left unset — only the ERM
+     *       in-app + email dispatch fires;</li>
      *   <li>is idempotent — toggling HOLD while already on HOLD just
-     *       refreshes the timestamp/note.</li>
+     *       refreshes the timestamp/note and re-fires the ERM notify
+     *       (each hold-update is a fresh signal the ERM should see).</li>
      * </ul>
      */
     @Transactional
@@ -258,6 +263,31 @@ public class ManagerHireApprovalService {
             iv.setManagerHireDecisionNote(note.trim());
         }
         interviewRepository.save(iv);
+
+        // Notify the ERM so they know the manager parked this hire and
+        // needs input / a nudge. Best-effort — a publish failure never
+        // rolls back the HOLD state change (the manager still sees their
+        // action recorded). The listener's applicant email branch is a
+        // no-op for HOLD because iv.decision is not set by this method.
+        Application app = iv.getApplication();
+        try {
+            eventPublisher.publishEvent(new ManagerHireDecisionEvent(
+                    iv.getId(),
+                    app != null ? app.getId() : null,
+                    app != null && app.getCandidate() != null
+                            && app.getCandidate().getUser() != null
+                            ? app.getCandidate().getUser().getId() : null,
+                    app != null && app.getCandidate() != null
+                            && app.getCandidate().getUser() != null
+                            ? app.getCandidate().getUser().getEmail() : null,
+                    "HOLD",
+                    caller.getId(),
+                    iv.getFeedbackSubmittedBy(),
+                    Instant.now()));
+        } catch (Exception e) {
+            log.warn("[ManagerHireApproval] hold-event publish failed (non-fatal): {}",
+                    e.getMessage());
+        }
         return getDetail(interviewId);
     }
 

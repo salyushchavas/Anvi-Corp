@@ -69,6 +69,7 @@ public class UserNotificationDispatcher {
             "HIRE_APPROVAL_PENDING",          // Manager: ERM finalised scorecard, decide hire/no-hire
             "MANAGER_HIRE_APPROVED",          // ERM: Manager approved hire (send offer)
             "MANAGER_HIRE_DECLINED",          // ERM: Manager declined hire (send rejection)
+            "MANAGER_HIRE_HOLD",              // ERM: Manager parked hire on HOLD — nudge / gather info
             "SELECTION_ACKNOWLEDGED",         // ERM: intern acknowledged selection — send offer
             "APPLICATION_INFO_PROVIDED",      // ERM: applicant returned requested info
 

@@ -26,7 +26,10 @@ public final class ManagerHireDecisionEvent extends DomainEvent {
     private final UUID applicationId;
     private final UUID candidateUserId;
     private final String candidateEmail;
-    /** {@code APPROVED} or {@code REJECTED}. */
+    /** {@code APPROVED} or {@code REJECTED} for a final decision, or
+     *  {@code HOLD} when the manager parks the decision (the listener
+     *  only notifies the ERM in-app + email for HOLD; no applicant
+     *  outcome email fires because {@code iv.decision} is not set). */
     private final String decision;
     private final UUID managerUserId;
     /** The ERM who originally submitted the scorecard — recipient of

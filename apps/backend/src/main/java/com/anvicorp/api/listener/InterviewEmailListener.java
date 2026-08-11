@@ -272,12 +272,25 @@ public class InterviewEmailListener {
         String title;
         String body;
         String actionUrl;
+        String note = iv.getManagerHireDecisionNote();
+        String noteFragment = note != null && !note.isBlank()
+                ? " Note: " + note.trim() : "";
         if ("APPROVED".equalsIgnoreCase(e.getDecision())) {
             title = "Hire approved: " + name;
             body = "A Manager approved the hire for " + name
                     + ". The candidate is now SELECTED; once they "
                     + "acknowledge the selection, you can send the offer.";
             actionUrl = "/careers/erm/decision-center";
+        } else if ("HOLD".equalsIgnoreCase(e.getDecision())) {
+            // Manager parked the hire decision — ERM needs to know so they
+            // can nudge / gather info. Kept out of the applicant email
+            // path (sendDecision reads iv.decision which the hold() method
+            // deliberately leaves untouched).
+            title = "Hire on hold: " + name;
+            body = "A Manager placed the hire for " + name
+                    + " ON HOLD — no final decision yet." + noteFragment
+                    + " Check the interview and follow up as needed.";
+            actionUrl = "/careers/erm/interviews/" + iv.getId();
         } else {
             title = "Hire not approved: " + name;
             body = "A Manager declined the hire for " + name
