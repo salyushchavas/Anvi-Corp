@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '@/lib/careers/api';
+import RecordingUploader from '@/components/dashboard/RecordingUploader';
 import type { InterviewDetail } from './types';
 
 interface Props {
@@ -10,19 +11,6 @@ interface Props {
   onClose: () => void;
   onApplied: () => void;
 }
-
-interface PresignResponse {
-  uploadUrl: string;
-  documentId: string;
-  storageKey: string;
-  expiresAt: string;
-}
-
-type UploadState =
-  | { kind: 'idle' }
-  | { kind: 'uploading'; fileName: string; percent: number; abort: () => void }
-  | { kind: 'ready'; fileName: string; documentId: string }
-  | { kind: 'error'; fileName: string; message: string };
 
 /**
  * ERM Phase: Manager hire-approval gate. The ERM no longer sets the
@@ -33,10 +21,14 @@ type UploadState =
  *
  * <p>Recording upload is DIRECT to S3 via a presigned PUT — the browser
  * never routes video bytes through the backend (which caps at 10 MB).
- * Flow: on file pick we ask the backend to mint a presigned URL and a
- * Document row, XHR-PUT the bytes to that URL with a progress bar, then
- * pass the returned {@code documentId} back as {@code recordingDocumentId}
- * when the scorecard is submitted.</p>
+ * Delegated to the shared {@link RecordingUploader} component (whose
+ * own docstring notes it was extracted FROM this modal in the first
+ * place, but the modal wasn't updated to consume it — this refactor
+ * closes that loop). We track the terminal outcomes via
+ * {@code onReady} / {@code onClear} and use the shared component's
+ * {@code onUploadingChange} hook to gate the scorecard-submit button
+ * so it can't POST with a null {@code recordingDocumentId} a moment
+ * before an in-flight upload finishes.</p>
  */
 export default function CompleteInterviewModal({
   interview,
@@ -52,8 +44,15 @@ export default function CompleteInterviewModal({
   const [internalNotes, setInternalNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [upload, setUpload] = useState<UploadState>({ kind: 'idle' });
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [recordingDocumentId, setRecordingDocumentId] = useState<string | null>(null);
+  const [uploadInFlight, setUploadInFlight] = useState(false);
+  // Bump on modal reopen to force a fresh <RecordingUploader> subtree
+  // — the shared component owns its own state internally and its
+  // {@code initial} prop only reads on mount, so a raw prop change
+  // wouldn't reset the picker after a prior submission left it in
+  // the "ready" state. Keying by an incremented counter is the
+  // standard React pattern for a controlled remount.
+  const [uploaderKey, setUploaderKey] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -64,100 +63,18 @@ export default function CompleteInterviewModal({
     setApplicantVisibleNotes('');
     setInternalNotes('');
     setErr(null);
-    setUpload((prev) => {
-      if (prev.kind === 'uploading') prev.abort();
-      return { kind: 'idle' };
-    });
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    setRecordingDocumentId(null);
+    setUploadInFlight(false);
+    setUploaderKey((n) => n + 1);
   }, [open]);
 
   // applicantVisibleNotes is optional now — no field-level blocker.
   // Kept useMemo shape so future required-field additions have a place
   // to land without re-wiring canSubmit.
   const missingFields = useMemo<string[]>(() => [], []);
-  const uploadInFlight = upload.kind === 'uploading';
   const canSubmit = missingFields.length === 0 && !submitting && !uploadInFlight;
 
   if (!open) return null;
-
-  async function onPickRecording(file: File) {
-    if (!file.type.startsWith('video/')) {
-      setUpload({
-        kind: 'error',
-        fileName: file.name,
-        message: 'Please select a video file (mp4 / mov / webm).',
-      });
-      return;
-    }
-    let presign: PresignResponse;
-    try {
-      const res = await api.post<PresignResponse>(
-        `/api/v1/erm/interviews/${interview.id}/recording/presign-upload`,
-        {
-          fileName: file.name,
-          contentType: file.type,
-          fileSize: file.size,
-        },
-      );
-      presign = res.data;
-    } catch (e) {
-      const ax = e as { response?: { data?: { error?: string } } };
-      setUpload({
-        kind: 'error',
-        fileName: file.name,
-        message:
-          ax.response?.data?.error ??
-          (e instanceof Error ? e.message : 'Could not start upload'),
-      });
-      return;
-    }
-
-    // Direct-to-S3 PUT via XHR so we get upload progress events. Fetch
-    // does not expose upload progress in the browser today.
-    const xhr = new XMLHttpRequest();
-    const abort = () => xhr.abort();
-    setUpload({ kind: 'uploading', fileName: file.name, percent: 0, abort });
-
-    xhr.open('PUT', presign.uploadUrl);
-    xhr.setRequestHeader('Content-Type', file.type);
-    xhr.upload.onprogress = (ev) => {
-      if (!ev.lengthComputable) return;
-      const percent = Math.min(99, Math.round((ev.loaded / ev.total) * 100));
-      setUpload({ kind: 'uploading', fileName: file.name, percent, abort });
-    };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        setUpload({
-          kind: 'ready',
-          fileName: file.name,
-          documentId: presign.documentId,
-        });
-      } else {
-        setUpload({
-          kind: 'error',
-          fileName: file.name,
-          message: `S3 rejected the upload (HTTP ${xhr.status}). Try again.`,
-        });
-      }
-    };
-    xhr.onerror = () => {
-      setUpload({
-        kind: 'error',
-        fileName: file.name,
-        message: 'Network error while uploading. Try again.',
-      });
-    };
-    xhr.onabort = () => {
-      setUpload({ kind: 'idle' });
-    };
-    xhr.send(file);
-  }
-
-  function clearRecording() {
-    if (upload.kind === 'uploading') upload.abort();
-    setUpload({ kind: 'idle' });
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  }
 
   async function submit() {
     setErr(null);
@@ -172,7 +89,7 @@ export default function CompleteInterviewModal({
         overallRecommendation: recommendation || null,
         applicantVisibleNotes: applicantVisibleNotes.trim(),
         internalNotes: internalNotes.trim() || null,
-        recordingDocumentId: upload.kind === 'ready' ? upload.documentId : null,
+        recordingDocumentId,
       });
       onApplied();
       onClose();
@@ -211,15 +128,13 @@ export default function CompleteInterviewModal({
                 <span className="text-xs text-slate-500">(optional)</span>
               </label>
               <RecordingUploader
-                state={upload}
-                onPick={onPickRecording}
-                onClear={clearRecording}
-                inputRef={fileInputRef}
+                key={uploaderKey}
+                presignEndpoint={`/api/v1/erm/interviews/${interview.id}/recording/presign-upload`}
+                onReady={(docId) => setRecordingDocumentId(docId)}
+                onClear={() => setRecordingDocumentId(null)}
+                onUploadingChange={setUploadInFlight}
+                helperText="Uploads directly to secure storage — up to 2 GiB. The Manager previews it on the hire-approval screen."
               />
-              <p className="mt-1 text-[11px] text-slate-500">
-                Uploads directly to secure storage — up to 2 GiB. The Manager
-                previews it on the hire-approval screen.
-              </p>
             </div>
 
             <div>
@@ -285,7 +200,7 @@ export default function CompleteInterviewModal({
         <div className="flex flex-shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-white px-6 py-3">
           <p className="text-[11px] text-slate-500">
             {uploadInFlight
-              ? `Uploading recording (${upload.percent}%) — submit disabled.`
+              ? 'Uploading recording — submit disabled.'
               : missingFields.length > 0
               ? `Required: ${missingFields.join(' · ')}`
               : 'Ready to submit. Manager will action the hire decision.'}
@@ -342,104 +257,6 @@ function ScoreInput({
         }
         className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
       />
-    </div>
-  );
-}
-
-function RecordingUploader({
-  state,
-  onPick,
-  onClear,
-  inputRef,
-}: {
-  state: UploadState;
-  onPick: (file: File) => void;
-  onClear: () => void;
-  inputRef: React.MutableRefObject<HTMLInputElement | null>;
-}) {
-  return (
-    <div className="mt-1">
-      <input
-        ref={inputRef}
-        type="file"
-        accept="video/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onPick(file);
-        }}
-      />
-      {state.kind === 'idle' && (
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          className="w-full rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100"
-        >
-          Choose video file…
-        </button>
-      )}
-      {state.kind === 'uploading' && (
-        <div className="rounded-md border border-slate-200 bg-white p-3">
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="truncate font-mono text-slate-700">
-              {state.fileName}
-            </span>
-            <button
-              type="button"
-              onClick={onClear}
-              className="shrink-0 rounded border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
-            >
-              Cancel
-            </button>
-          </div>
-          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-            <div
-              className="h-full bg-brand-600 transition-[width] duration-200"
-              style={{ width: `${state.percent}%` }}
-            />
-          </div>
-          <p className="mt-1 text-[11px] text-slate-500">
-            Uploading directly to S3 — {state.percent}%
-          </p>
-        </div>
-      )}
-      {state.kind === 'ready' && (
-        <div className="flex items-center justify-between gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs">
-          <div className="min-w-0">
-            <p className="font-semibold text-green-900">Uploaded ✓</p>
-            <p className="truncate font-mono text-green-800">{state.fileName}</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClear}
-            className="shrink-0 rounded border border-green-300 bg-white px-2 py-0.5 text-[11px] font-medium text-green-800 hover:bg-green-100"
-          >
-            Replace
-          </button>
-        </div>
-      )}
-      {state.kind === 'error' && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
-          <p className="font-semibold">Upload failed</p>
-          <p className="mt-0.5">{state.message}</p>
-          <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              onClick={() => inputRef.current?.click()}
-              className="rounded border border-red-300 bg-white px-2 py-0.5 text-[11px] font-medium text-red-800 hover:bg-red-100"
-            >
-              Retry
-            </button>
-            <button
-              type="button"
-              onClick={onClear}
-              className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

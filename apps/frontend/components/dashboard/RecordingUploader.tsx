@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '@/lib/careers/api';
 
 /**
@@ -53,6 +53,15 @@ interface Props {
    *  other than {@code video/*} (e.g. admin template PDF uploads)
    *  should pass a matching label like "Choose file…". */
   chooseButtonLabel?: string;
+  /** Fires whenever the widget crosses in or out of the
+   *  {@code uploading} phase. Consumers that gate a parent submit
+   *  button (e.g. the ERM CompleteInterviewModal, where the recording
+   *  is optional but its documentId is submitted alongside the
+   *  scorecard) use this to disable submit mid-upload so the form
+   *  can't POST with a null documentId a moment before the upload
+   *  finishes. Consumers that only care about the terminal
+   *  {@code onReady} / {@code onClear} states can ignore this. */
+  onUploadingChange?: (isUploading: boolean) => void;
 }
 
 export default function RecordingUploader({
@@ -64,6 +73,7 @@ export default function RecordingUploader({
   helperText,
   presignExtras,
   chooseButtonLabel,
+  onUploadingChange,
 }: Props) {
   // Default label mirrors the historical text for video flows so no
   // existing caller changes behavior; non-video accepts pick a generic
@@ -72,6 +82,14 @@ export default function RecordingUploader({
     ?? (accept.startsWith('video/') ? 'Choose video file…' : 'Choose file…');
   const [state, setState] = useState<UploadState>(initial ?? { kind: 'idle' });
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Emit the uploading-in-flight boolean whenever the internal state
+  // crosses that phase in or out. Kept in an effect (not inline in every
+  // setState) so callers get exactly one notification per real
+  // transition, matching the two terminal callbacks' semantics.
+  useEffect(() => {
+    onUploadingChange?.(state.kind === 'uploading');
+  }, [state.kind, onUploadingChange]);
 
   // Step 1: file picked from the OS dialog. Validate synchronously and
   // park the file in a review state — DO NOT presign or upload yet. The
