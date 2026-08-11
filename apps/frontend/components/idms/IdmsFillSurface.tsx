@@ -559,6 +559,38 @@ export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceCon
         </aside>
       </div>
 
+      {/* Sticky-bottom primary CTA — the header cluster wraps below the
+          fold on narrow screens + long documents, so the Send/Submit
+          action disappears the moment the intern/ERM scrolls into the
+          document preview. This mobile-first bar mirrors the same
+          handler (openConfirm) — no duplicate transition, just a
+          duplicate button surface. Hidden on desktop (lg+) where the
+          header CTA is always visible; padding-safe (pb + safe-area)
+          for iOS bottom-sheet gestures. */}
+      {showPrimary && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 lg:hidden">
+          <div className="pointer-events-auto border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] backdrop-blur"
+               style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
+            <button
+              type="button"
+              onClick={openConfirm}
+              disabled={primaryDisabled}
+              title={primaryReason(primaryDisabled, completeness.blockingReason, saveState, primaryAction.label)}
+              className={`inline-flex w-full items-center justify-center gap-1.5 rounded-md px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 ${
+                completeness.canTransition
+                  ? 'bg-brand-700 hover:bg-brand-800'
+                  : 'bg-slate-500 hover:bg-slate-600'
+              }`}
+            >
+              {transitioning
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : (primaryAction.icon ?? <SendIcon />)}
+              {primaryAction.label}
+            </button>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}

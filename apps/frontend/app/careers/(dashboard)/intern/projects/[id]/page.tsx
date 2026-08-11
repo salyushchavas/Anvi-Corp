@@ -117,11 +117,18 @@ export default function InternProjectDetailPage() {
         </div>
       )}
 
-      {/* One-frame layout on lg+: outer grid has bounded height + no
-          overflow; each column scrolls internally. Mobile keeps natural
-          flow + page scroll. */}
-      <div className="grid gap-4 lg:grid-cols-3 lg:h-[calc(100vh-190px)] lg:overflow-hidden">
-        <main className="lg:col-span-2 space-y-3 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+      {/* Natural page flow on every breakpoint. The prior
+          "one-frame" layout on lg+ (outer h-[calc(100vh-190px)] +
+          overflow-hidden, per-column overflow-y-auto) hid the Submit
+          button below the internal scroll of the main column — the UX
+          audit flagged interns not discovering Submit because the
+          bounded viewport clipped it. Sidebar now uses lg:sticky so
+          MetaCard + Q&A + repository info stay in view while the main
+          column scrolls the page, preserving the "meta always
+          accessible" intent without trapping Submit inside a
+          bounded-scroll frame. */}
+      <div className="grid gap-4 lg:grid-cols-3 lg:items-start">
+        <main className="lg:col-span-2 space-y-3">
           <DescriptionCard a={data} />
           <ProjectFilesCard a={data} />
           <TrainerFeedbackCard a={data} />
@@ -132,7 +139,7 @@ export default function InternProjectDetailPage() {
               the column shorter than the right rail. */}
           <NeedHelpCard a={data} />
         </main>
-        <aside className="space-y-3 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+        <aside className="space-y-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-90px)] lg:overflow-y-auto lg:pr-1">
           <MetaCard a={data} />
           <QaSessionCard a={data} />
           <KtCard a={data} />

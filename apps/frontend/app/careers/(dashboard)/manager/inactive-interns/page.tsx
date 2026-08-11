@@ -336,8 +336,13 @@ function RowCard({
             </p>
           </DetailBlock>
           <div className="mt-3">
+            {/* Manager surfaces route to the Manager Portfolio detail
+                (keyed on internUserId), NOT the trainer-only
+                /careers/trainer/active-interns/{lifecycleId} — that
+                trainer route is RBAC-gated and would 403 for a
+                Manager. The audit flagged this cross-role nav bug. */}
             <Link
-              href={`/careers/trainer/active-interns/${row.internLifecycleId}`}
+              href={`/careers/manager/intern-portfolio/${row.internUserId}`}
               className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
             >
               Open full intern detail <ChevronRight className="h-3 w-3" />

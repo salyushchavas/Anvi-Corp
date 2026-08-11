@@ -79,7 +79,12 @@ function ManagerActiveInternsInner() {
         loading={loading}
         err={err}
         periodLabel={formatPeriod(period)}
-        detailHref={(_id) => `/careers/manager/timesheet-approvals`}
+        // Route each row to its own manager-portfolio detail keyed on
+        // internUserId. Previously every row routed to a single shared
+        // page (/careers/manager/timesheet-approvals), which meant
+        // "Know more" collapsed the whole roster into one landing —
+        // the audit flagged this silently-wrong nav.
+        detailHref={(row) => `/careers/manager/intern-portfolio/${row.internUserId}`}
       />
     </div>
   );

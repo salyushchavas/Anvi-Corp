@@ -86,8 +86,13 @@ interface Props {
   loading: boolean;
   err: string | null;
   periodLabel: string;
-  /** Per-row "Know more" link target. */
-  detailHref: (lifecycleId: string) => string;
+  /** Per-row "Know more" link target. Receives the full row so callers
+   *  can route by internLifecycleId (Trainer / ERM active-intern
+   *  detail) OR internUserId (Manager portfolio) — different roles
+   *  land on different detail surfaces keyed on different ids, and the
+   *  previous single-id signature forced a bug where the Manager
+   *  surface routed every row to the same page. */
+  detailHref: (row: ActiveInternRow) => string;
   /** ERM only — show the "No manager" filter chip, summary tile, and
    *  per-row badge. */
   showNoManagerControls?: boolean;
@@ -208,7 +213,7 @@ export default function MonthlyRosterTable({
                   <Row
                     key={r.internLifecycleId}
                     row={r}
-                    detailHref={detailHref(r.internLifecycleId)}
+                    detailHref={detailHref(r)}
                     showNoManagerBadge={Boolean(showNoManagerControls)}
                     rowExtra={renderRowExtra
                       ? renderRowExtra(r, () => onChanged?.())

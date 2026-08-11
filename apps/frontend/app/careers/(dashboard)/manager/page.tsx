@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   UserMinus,
   Users,
+  Video,
 } from 'lucide-react';
 import api from '@/lib/careers/api';
 import type { OverviewResponse } from '@/components/manager/types';
@@ -75,7 +76,37 @@ export default function ManagerHomePage() {
         <>
           <section>
             <h2 className="mb-3 text-sm font-semibold text-slate-900">Action required</h2>
-            <HireApprovalsKpi count={data.pendingHireApprovals} />
+            {/* All 4 pending queues surfaced up-front. The audit flagged
+                that only Hire Approvals was visible on this section, so
+                Timesheet / Weekly Report / Recording queues went
+                unnoticed until the manager clicked the sidebar. Each
+                tile self-fetches its pending count on mount — one
+                slow queue can't block the others (independent
+                loaders + graceful "—" on error). */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <HireApprovalsKpi count={data.pendingHireApprovals} />
+              <PendingQueueTile
+                href="/careers/manager/timesheet-approvals"
+                label="Timesheet Approvals"
+                icon={<ClipboardList className="h-3.5 w-3.5" />}
+                fetchCount={fetchPendingTimesheetCount}
+                blurbUnit="timesheet"
+              />
+              <PendingQueueTile
+                href="/careers/manager/weekly-reports"
+                label="Weekly Reports"
+                icon={<FileBarChart2 className="h-3.5 w-3.5" />}
+                fetchCount={fetchPendingWeeklyReportCount}
+                blurbUnit="report"
+              />
+              <PendingQueueTile
+                href="/careers/manager/recording-approvals"
+                label="Recording Approvals"
+                icon={<Video className="h-3.5 w-3.5" />}
+                fetchCount={fetchPendingRecordingCount}
+                blurbUnit="recording"
+              />
+            </div>
           </section>
 
           <section>
@@ -314,4 +345,111 @@ function SectionCard({
       <p className="mt-2 text-xs text-slate-700">{body}</p>
     </Link>
   );
+}
+
+/**
+ * Per-queue Action Required tile — self-fetches its pending count so a
+ * single slow / failing endpoint can't gate the whole "Action required"
+ * row. Same visual language as HireApprovalsKpi: amber tint when there
+ * IS work, muted otherwise; always links through to the queue so the
+ * manager can act even when the count fetch fails.
+ */
+function PendingQueueTile({
+  href, label, icon, fetchCount, blurbUnit,
+}: {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  fetchCount: () => Promise<number>;
+  blurbUnit: string;
+}) {
+  const [count, setCount] = useState<number | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const n = await fetchCount();
+        if (!cancelled) { setCount(n); setLoaded(true); }
+      } catch {
+        // Silent fail — tile still links + shows "—". Backend outage on
+        // one queue must not hide the other queues.
+        if (!cancelled) { setCount(null); setLoaded(true); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [fetchCount]);
+  const hasWork = (count ?? 0) > 0;
+  const containerCls = hasWork
+    ? 'border-amber-300 bg-amber-50 hover:border-amber-400 hover:shadow'
+    : 'border-slate-200 bg-white hover:border-brand-300 hover:shadow';
+  const numberCls = hasWork ? 'text-amber-800' : 'text-slate-400';
+  const iconCls = hasWork ? 'text-amber-700' : 'text-slate-500';
+  return (
+    <Link href={href} className={`block rounded-lg border p-4 shadow-sm ${containerCls}`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className={`inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide ${iconCls}`}>
+            {icon}
+            {label}
+            {hasWork && (
+              <span className="ml-1 rounded-full bg-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
+                Awaiting you
+              </span>
+            )}
+          </p>
+          <p className={`mt-2 text-3xl font-semibold tabular-nums ${numberCls}`}>
+            {loaded ? (count ?? '—') : '…'}
+          </p>
+          <p className="mt-1 text-xs text-slate-600">
+            {!loaded
+              ? 'Counting…'
+              : count == null
+                ? `Open queue to see pending ${blurbUnit}s.`
+                : hasWork
+                  ? `${count} ${blurbUnit}${count === 1 ? '' : 's'} awaiting your review.`
+                  : `Nothing waiting on a ${blurbUnit} review right now.`}
+          </p>
+        </div>
+        <span className={`text-xs font-semibold ${hasWork ? 'text-amber-800' : 'text-slate-400'}`}>
+          Review →
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+// Count fetchers — module-scoped so PendingQueueTile can hold a stable
+// reference in its dep array (avoids the tile re-firing on every parent
+// render). Each returns 0 on empty + throws on network failure so the
+// tile falls back to its "—" placeholder cleanly.
+
+async function fetchPendingWeeklyReportCount(): Promise<number> {
+  const res = await api.get<unknown[]>('/api/v1/manager/weekly-reports/pending');
+  return Array.isArray(res.data) ? res.data.length : 0;
+}
+
+async function fetchPendingRecordingCount(): Promise<number> {
+  const res = await api.get<{ items?: unknown[] }>('/api/v1/manager/recording-approvals');
+  return Array.isArray(res.data?.items) ? res.data.items.length : 0;
+}
+
+async function fetchPendingTimesheetCount(): Promise<number> {
+  // The timesheet queue is a monthly rollup — count VERIFIED cells
+  // across all interns for the current period. VERIFIED = ready for
+  // manager approval; SUBMITTED means ERM hasn't verified yet.
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  const res = await api.get<{
+    interns?: Array<{ cells?: Array<{ status?: string }> }>;
+  }>(`/api/v1/timesheets/rollup?y=${y}&m=${m}&scope=manager`);
+  const interns = res.data?.interns ?? [];
+  let pending = 0;
+  for (const intern of interns) {
+    for (const cell of intern.cells ?? []) {
+      if (cell.status === 'VERIFIED') pending++;
+    }
+  }
+  return pending;
 }

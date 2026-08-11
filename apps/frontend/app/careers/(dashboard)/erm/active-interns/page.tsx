@@ -139,7 +139,7 @@ function ErmActiveInternsInner() {
         loading={loading}
         err={err}
         periodLabel={formatPeriod(period)}
-        detailHref={(id) => `/careers/erm/active-interns/${id}`}
+        detailHref={(row) => `/careers/erm/active-interns/${row.internLifecycleId}`}
         showNoManagerControls
         onChanged={load}
         renderRowExtra={(row) => {

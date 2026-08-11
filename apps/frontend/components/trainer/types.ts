@@ -170,6 +170,13 @@ export interface ReportingStructure {
 
 export interface ActiveInternRow {
   internLifecycleId: string;
+  /** users.id — used by Manager surfaces to route each row to
+   *  /careers/manager/intern-portfolio/{userId}. The backend has always
+   *  emitted this (ErmActiveDtos.ActiveInternRow's second constructor
+   *  arg is basic.internUserId()), but the TS type omitted it until
+   *  the Wave B href fix needed it. Trainer/ERM surfaces route by
+   *  lifecycleId and still pass. */
+  internUserId: string;
   employeeId: string | null;
   fullName: string | null;
   email: string | null;

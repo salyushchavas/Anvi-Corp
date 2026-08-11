@@ -277,6 +277,33 @@ export default function InternOfferSignPage() {
               </section>
             )}
 
+            {/* Sticky-bottom Sign CTA — mirrors the in-section Sign
+                Offer button so applicants on narrow screens don't have
+                to scroll past a long letter body to sign. Same submit
+                handler (one action, one POST); hidden on lg+ where the
+                in-section button sits above the fold. Only rendered
+                when the offer is actually SENT + not expired — matches
+                the outer condition on the signing block. */}
+            {offer.status === 'SENT' && !expired && (
+              <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 lg:hidden">
+                <div className="pointer-events-auto border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] backdrop-blur"
+                     style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
+                  <button
+                    type="button"
+                    onClick={submit}
+                    disabled={!canSubmit}
+                    title={!hasSignature
+                      ? 'Draw your signature above first'
+                      : !agreed ? 'Tick the agreement above first' : 'Sign this offer'}
+                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    {submitting ? 'Signing…' : 'Sign Offer'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <footer className="text-center text-xs text-slate-500">
               Need help? Contact your ERM at{' '}
               <a className="text-brand-700 hover:underline" href="mailto:erm@skyzentech.com">

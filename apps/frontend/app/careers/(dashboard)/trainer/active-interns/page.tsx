@@ -101,7 +101,7 @@ function ActiveInternsInner() {
         loading={loading}
         err={err}
         periodLabel={formatPeriod(period)}
-        detailHref={(id) => `/careers/trainer/active-interns/${id}`}
+        detailHref={(row) => `/careers/trainer/active-interns/${row.internLifecycleId}`}
         cellActions={{
           // Project cell is actionable when a slot is empty (NO_PROJECTS
           // or PARTIAL). Button takes the trainer to the multi-step

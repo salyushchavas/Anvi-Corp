@@ -209,6 +209,31 @@ export default function InternI983DetailPage() {
           </div>
         </section>
       )}
+
+      {/* Sticky-bottom Sign CTA — mirrors the in-section Sign and
+          Acknowledge button so interns on narrow screens don't scroll
+          past a long evaluation body to find the action. Same submit
+          handler + same disabled predicate; hidden on lg+ where the
+          in-section button sits within reach. */}
+      {needsSign && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 lg:hidden">
+          <div className="pointer-events-auto border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] backdrop-blur"
+               style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!canSubmit}
+              title={typedName.trim().length === 0
+                ? 'Type your name above to enable signing'
+                : !agreed ? 'Tick the agreement above to enable signing' : 'Sign and acknowledge'}
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {submitting ? 'Signing…' : 'Sign and Acknowledge'}
+            </button>
+          </div>
+        </div>
+      )}
     </InternPageShell>
   );
 }
