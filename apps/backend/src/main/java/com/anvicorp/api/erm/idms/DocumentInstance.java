@@ -57,10 +57,39 @@ public class DocumentInstance {
     @Builder.Default
     private Integer version = 1;
 
-    /** True while the intern can't edit — set true on SEND, flipped false on RETURN. */
+    /** True while the intern can't edit — set true on SEND, flipped false on RETURN.
+     *  <p>This is the WHOLE-DOC master switch (layer 1). Field-level
+     *  narrowing lives on {@link #unlockedFieldIdsJson} (layer 2): when
+     *  populated, ONLY those field ids are editable on a RETURNED
+     *  instance even though {@code internLocked} is false.</p> */
     @Column(name = "intern_locked", nullable = false)
     @Builder.Default
     private Boolean internLocked = Boolean.FALSE;
+
+    /**
+     * Field-level correction lock — JSONB array of field ids that the
+     * ERM explicitly unlocked on the most recent RETURN. Two-layer
+     * model with {@link #internLocked}:
+     *
+     * <ul>
+     *   <li>NULL — legacy / backward-compat behaviour: every intern-
+     *       assigneed field is editable when {@code internLocked} is
+     *       false. Existing rows land here with no migration cost.</li>
+     *   <li>Populated array — only these field ids are editable; every
+     *       other intern field renders read-only. Signatures stay
+     *       untouched unless the ERM explicitly listed the signature
+     *       field's id in this set.</li>
+     * </ul>
+     *
+     * <p>Cleared to NULL on intern-submit so the next return cycle
+     * starts from a fresh selection. Enforced client-side (FieldForm
+     * disables locked fields) AND server-side (applyFieldValues
+     * rejects writes to non-listed ids) — the client check is UX, the
+     * server check is security.</p>
+     */
+    @Column(name = "unlocked_field_ids", columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    private String unlockedFieldIdsJson;
 
     // ── Snapshot at create ──────────────────────────────────────────────────
 

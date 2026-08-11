@@ -57,7 +57,19 @@ export interface FillCompleteness {
 export function useFillCompleteness(input: FillCompletenessInput): FillCompleteness {
   const { detail, fields, role, textValues, optimisticallySignedFieldIds } = input;
   return useMemo(() => {
-    const ownFields = fields.filter((f) => f.assignee === role);
+    // Field-level correction lock — on a narrowed correction cycle
+    // the intern only owns the unlocked ids; everything else is
+    // read-only and already-filled from the prior submission. Locked
+    // fields must NOT count toward the current submit gate (they're
+    // not editable, so requiring them completes would be a stuck
+    // Send button). Legacy null set → all intern-assigneed fields
+    // own as today.
+    const lockNarrowing = role === 'INTERN' && detail && detail.unlockedFieldIds
+      ? new Set(detail.unlockedFieldIds)
+      : null;
+    const ownFields = fields.filter((f) =>
+      f.assignee === role
+      && (lockNarrowing == null || lockNarrowing.has(f.id)));
     const optimistic = optimisticallySignedFieldIds ?? new Set<string>();
     const isFilled = (f: FieldSchemaEntry): boolean => {
       if (!detail) return false;

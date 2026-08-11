@@ -102,6 +102,14 @@ public final class DocumentInstanceDtos {
             String finalPdfUrl,
             String returnReasonCode,
             String returnComments,
+            /** Field-level correction lock — the ids ERM explicitly
+             *  unlocked on the last RETURN. {@code null} means legacy
+             *  behaviour (every intern-assigneed field editable while
+             *  the doc is RETURNED); a populated list means ONLY
+             *  those ids are editable. Server-side write path enforces
+             *  the same restriction — see
+             *  {@code DocumentInstanceService.applyFieldValues}. */
+            List<String> unlockedFieldIds,
             String revokeReasonCode,
             String revokeComments,
             /** Prior FINALIZED instance this one replaced. Nullable. */
@@ -253,6 +261,15 @@ public final class DocumentInstanceDtos {
     public record ReturnRequest(
             @NotBlank @Size(max = 40) String reasonCode,
             @Size(max = 2000) String comments,
+            /** Field-level unlock list. NULL or empty = current
+             *  behaviour (every intern-assigneed field becomes
+             *  editable — backward compatible). Populated = ONLY
+             *  those field ids are editable on the returned instance;
+             *  the intern sees the rest read-only. Signatures are
+             *  untouched by return by default; include a signature
+             *  field's id here to explicitly re-open it (the case
+             *  where the signature itself is what's wrong). */
+            @Size(max = 200) List<@Size(max = 64) String> unlockedFieldIds,
             Long expectedUpdatedAt
     ) {}
 

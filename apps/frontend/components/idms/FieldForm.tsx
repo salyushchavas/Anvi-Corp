@@ -84,7 +84,22 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(
       },
     }), []);
 
+    // Field-level correction lock — when the instance carries a
+    // non-null unlockedFieldIds set, only those ids are editable by
+    // the intern; everything else renders read-only under a "Locked
+    // by ERM" chip. The set only applies to the INTERN role (ERM
+    // writes happen before the correction cycle). Null set = legacy
+    // behaviour (every intern-assigneed field editable).
+    const lockNarrowing = role === 'INTERN' && detail.unlockedFieldIds
+      ? new Set(detail.unlockedFieldIds)
+      : null;
     const mine = fields.filter((f) => f.assignee === role);
+    const mineEditable = lockNarrowing == null
+      ? mine
+      : mine.filter((f) => lockNarrowing.has(f.id));
+    const mineLocked = lockNarrowing == null
+      ? []
+      : mine.filter((f) => !lockNarrowing.has(f.id));
     const other = fields.filter(
       (f) => f.assignee !== role && f.assignee !== 'AUTO',
     );
@@ -92,31 +107,41 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(
 
     const otherLabel = role === 'ERM' ? 'the intern' : 'your ERM';
 
-    // Completion — only the caller's REQUIRED fields count against
-    // send-readiness; optional caller fields are informational only.
-    const requiredMine = mine.filter((f) => f.required);
+    // Completion — only the caller's REQUIRED + EDITABLE fields count
+    // against send-readiness. On a narrowed correction cycle the
+    // locked fields already carry their previous values and don't
+    // participate in the current submit gate.
+    const requiredMine = mineEditable.filter((f) => f.required);
     const requiredComplete = requiredMine.filter((f) => isFilled(f, detail, textValues)).length;
-    const totalMine = mine.filter((f) => isFilled(f, detail, textValues)).length;
+    const totalMine = mineEditable.filter((f) => isFilled(f, detail, textValues)).length;
 
     return (
       <div className="space-y-5">
-        {mine.length > 0 && (
+        {mineEditable.length > 0 && (
           <SectionHeader
-            label={role === 'ERM' ? 'Your fields' : 'Your fields'}
+            label={
+              lockNarrowing == null
+                ? 'Your fields'
+                : 'Needs correction'
+            }
             done={totalMine}
-            total={mine.length}
+            total={mineEditable.length}
             requiredDone={requiredComplete}
             requiredTotal={requiredMine.length}
           />
         )}
 
-        {mine.length === 0 ? (
+        {mineEditable.length === 0 && mineLocked.length === 0 ? (
           <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
             Nothing for you to fill on this document.
           </p>
+        ) : mineEditable.length === 0 ? (
+          <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+            ERM didn't flag any fields for correction — nothing for you to change.
+          </p>
         ) : (
           <ul className="space-y-3">
-            {mine.map((f) => (
+            {mineEditable.map((f) => (
               <FieldRow
                 key={f.id}
                 field={f}
@@ -136,6 +161,31 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(
               />
             ))}
           </ul>
+        )}
+
+        {mineLocked.length > 0 && (
+          <div>
+            <SectionHeader label="Locked (ERM didn't request changes)" muted />
+            <ul className="mt-2 space-y-2">
+              {mineLocked.map((f) => {
+                const persisted = detail.values[f.id];
+                const filled = isFilled(f, detail, {});
+                return (
+                  <LockedRow
+                    key={f.id}
+                    name={f.name}
+                    value={filled
+                      ? (persisted?.valueText
+                        ?? (f.type === 'signature' ? 'Signature captured' : '—'))
+                      : null}
+                    chip="Locked"
+                    chipTone="slate"
+                    icon={<Lock className="h-3 w-3" />}
+                  />
+                );
+              })}
+            </ul>
+          </div>
         )}
 
         {auto.length > 0 && (

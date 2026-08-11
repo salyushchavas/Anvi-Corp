@@ -432,6 +432,12 @@ public class DocumentInstanceService {
         // Clear any prior return reason — the fresh submission overwrites.
         instance.setReturnReasonCode(null);
         instance.setReturnComments(null);
+        // Clear the field-level unlock set — a fresh correction cycle
+        // must start from a new ERM selection. Without this, a later
+        // RETURN that omits unlockedFieldIds would inherit the previous
+        // narrowed set instead of falling back to legacy "all editable"
+        // behaviour.
+        instance.setUnlockedFieldIdsJson(null);
         // "Viewed before verify" gate — reset in the SAME transaction as
         // the resubmit so the stale stamp from a PREVIOUS submission
         // never satisfies the verify() gate at :469-472. Without this,
@@ -480,12 +486,41 @@ public class DocumentInstanceService {
         instance.setReturnReasonCode(req.reasonCode());
         instance.setReturnComments(req.comments());
         instance.setInternLocked(false); // intern can edit their fields again
+        // Field-level narrowing. NULL/empty → clear the column (legacy
+        // behaviour: every intern field editable). Populated → persist
+        // the exact set so applyFieldValues can enforce it + the
+        // intern-side UI knows which anchors to render editable.
+        List<String> unlocked = req.unlockedFieldIds();
+        if (unlocked != null && !unlocked.isEmpty()) {
+            // Defensive validation — every listed id must exist in the
+            // instance's snapshot schema. Rejects a UI regression that
+            // sends stale ids from a previous template version.
+            List<FieldSchemaEntry> schema = parseSchema(instance.getSnapshotFieldSchemaJson());
+            java.util.Set<String> knownIds = new java.util.HashSet<>();
+            for (FieldSchemaEntry f : schema) knownIds.add(f.id());
+            for (String id : unlocked) {
+                if (id == null || !knownIds.contains(id)) {
+                    throw new BadRequestException(
+                            "Unknown unlockedFieldIds entry: " + id);
+                }
+            }
+            try {
+                instance.setUnlockedFieldIdsJson(objectMapper.writeValueAsString(unlocked));
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new BadRequestException(
+                        "Could not serialise unlockedFieldIds: " + e.getMessage());
+            }
+        } else {
+            instance.setUnlockedFieldIdsJson(null);
+        }
         instance.setVersion(instance.getVersion() + 1);
         instanceRepo.save(instance);
         writeReview(instance.getId(), "RETURN", req.reasonCode(), req.comments(), caller, "ERM");
         writeAudit("RETURN", instance, caller,
                 Map.of("reasonCode", req.reasonCode(),
-                        "comments", req.comments() == null ? "" : req.comments()));
+                        "comments", req.comments() == null ? "" : req.comments(),
+                        "unlockedFieldIds",
+                        unlocked == null ? "" : String.join(",", unlocked)));
         notifyIntern(instance,
                 "Please make corrections to your document",
                 "Your ERM has asked for changes to \"" + instance.getTemplateTitle() + "\".",
@@ -875,6 +910,20 @@ public class DocumentInstanceService {
         List<FieldSchemaEntry> schema = parseSchema(instance.getSnapshotFieldSchemaJson());
         Map<String, FieldSchemaEntry> byId = schema.stream()
                 .collect(java.util.stream.Collectors.toMap(FieldSchemaEntry::id, f -> f));
+        // Field-level correction lock — when the instance carries an
+        // unlocked-field-ids set AND the caller is the intern, ONLY
+        // those field ids are writable. Every other write 409s so a
+        // client bug / tampered client can't sneak edits past the UI
+        // disable. NULL set = legacy behaviour (no narrowing); ERM
+        // writes bypass this narrowing (their edits during
+        // INTERN_SUBMITTED aren't in the return-loop scope).
+        java.util.Set<String> lockNarrowing = null;
+        if ("INTERN".equals(callerRole)) {
+            List<String> unlocked = parseUnlockedFieldIds(instance);
+            if (unlocked != null) {
+                lockNarrowing = new java.util.HashSet<>(unlocked);
+            }
+        }
         Instant now = Instant.now();
         for (Map.Entry<String, String> e : values.entrySet()) {
             String fieldId = e.getKey();
@@ -887,6 +936,13 @@ public class DocumentInstanceService {
                 throw new BadRequestException("Signature fields go through /sign, not /fill.");
             }
             requireFieldOwner(callerRole, f.assignee(), f.name());
+            if (!isFieldEditableUnderLock(fieldId, callerRole,
+                    lockNarrowing == null ? null : new java.util.ArrayList<>(lockNarrowing))) {
+                throw new ConflictException(
+                        "Field \"" + f.name() + "\" is locked on this correction "
+                                + "cycle — ERM didn't request a change here. Only the "
+                                + "fields ERM flagged in the return dialog are editable.");
+            }
             String value = e.getValue();
             DocumentInstanceFieldValue existing = valueRepo
                     .findByInstanceIdAndFieldId(instance.getId(), fieldId)
@@ -1190,6 +1246,7 @@ public class DocumentInstanceService {
                 finalPdfUrl,
                 instance.getReturnReasonCode(),
                 instance.getReturnComments(),
+                parseUnlockedFieldIds(instance),
                 instance.getRevokeReasonCode(),
                 instance.getRevokeComments(),
                 instance.getSupersedesId(),
@@ -1425,6 +1482,59 @@ public class DocumentInstanceService {
             log.warn("[IDMS] schema parse failed: {}", e.getMessage());
             return List.of();
         }
+    }
+
+    /**
+     * Read the persisted per-return unlocked-field-ids set.
+     *
+     * <p>Returns {@code null} when the column is null OR the stored
+     * JSON is unparseable (defensive — treats a corrupt blob as "no
+     * narrowing" so the intern isn't accidentally locked out of every
+     * field). Returns an empty list ONLY when the ERM persisted an
+     * explicitly empty array (never today — {@code returnForCorrections}
+     * normalises empty → null before saving).</p>
+     *
+     * <p>The distinction between {@code null} (legacy: every intern
+     * field editable) and non-null (narrowed) is load-bearing —
+     * callers must preserve it. See {@link #applyFieldValues} and
+     * {@code InstanceDetail.unlockedFieldIds} on the wire.</p>
+     */
+    private List<String> parseUnlockedFieldIds(DocumentInstance instance) {
+        String json = instance.getUnlockedFieldIdsJson();
+        if (json == null || json.isBlank()) return null;
+        try {
+            return objectMapper.readValue(json, new TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            log.warn("[IDMS] unlockedFieldIds parse failed on instance {}: {}",
+                    instance.getId(), e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Testable narrowing predicate — package-private + static so the
+     * unit test can exercise every branch of the field-level
+     * correction lock without spinning a Spring context or mocking
+     * repositories. Returns {@code true} when the write should be
+     * allowed by the lock (still subject to role + status guards).
+     *
+     * <p>Rules:</p>
+     * <ul>
+     *   <li>ERM writes are never narrowed by this lock — the ERM's
+     *       fills happen before the correction cycle even starts.</li>
+     *   <li>{@code unlockedFieldIds == null} — legacy behaviour, every
+     *       intern field editable. Existing rows before this feature
+     *       land here (safe backward compat).</li>
+     *   <li>Populated list — only listed ids editable; the caller
+     *       ({@link #applyFieldValues}) throws {@link ConflictException}
+     *       for any other id.</li>
+     * </ul>
+     */
+    static boolean isFieldEditableUnderLock(
+            String fieldId, String callerRole, List<String> unlockedFieldIds) {
+        if (!"INTERN".equals(callerRole)) return true;
+        if (unlockedFieldIds == null) return true;
+        return unlockedFieldIds.contains(fieldId);
     }
 
     private static byte[] decodeDataUrl(String dataUrl) {
