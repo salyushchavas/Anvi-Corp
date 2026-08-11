@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import DraftAutosaveIndicator from '@/components/ui/DraftAutosaveIndicator';
 import PageHeader from '@/components/ui/PageHeader';
+import { readDraft, useDraftAutosave } from '@/lib/careers/useDraftAutosave';
 
 type Tab = 'templates' | 'reasons' | 'workload';
 
@@ -186,13 +188,31 @@ function TemplateEditor({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // ── Per-template draft autosave ───────────────────────────────────
+  // The previous useEffect below reset state whenever template.key
+  // changed — that's what LOST unsaved edits on a template switch.
+  // Now: pull any saved draft for the NEW key when switching in, and
+  // save the OUTGOING edits under the OUTGOING key before the reset.
+  // Two open templates keep their own drafts (session-scoped, cleared
+  // on successful save).
+  const draftKey = `draft:erm-template:${template.key}`;
+  interface DraftShape { subject: string; body: string; active: boolean }
+  const draftValue = useMemo<DraftShape>(() => ({ subject, body, active }),
+    [subject, body, active]);
+  const draftAutosave = useDraftAutosave(draftKey, draftValue);
+
   useEffect(() => {
-    setSubject(template.subjectTemplate);
-    setBody(template.bodyTemplate);
-    setActive(!!template.active);
+    // Prefer this template's stored draft (sessionStorage) over the
+    // server payload — the local blob is by definition newer than
+    // the last committed save. Falls back cleanly to the server
+    // fields when no draft exists.
+    const stored = readDraft<DraftShape>(`draft:erm-template:${template.key}`);
+    setSubject(stored?.subject ?? template.subjectTemplate);
+    setBody(stored?.body ?? template.bodyTemplate);
+    setActive(stored?.active ?? !!template.active);
     setPreview(null);
     setErr(null);
-  }, [template.key]);
+  }, [template.key, template.subjectTemplate, template.bodyTemplate, template.active]);
 
   const vars = (template.variablesCsv ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -205,6 +225,9 @@ function TemplateEditor({
         { subjectTemplate: subject, bodyTemplate: body, active },
       );
       onSaved(res.data);
+      // Server accepted — drop the local draft so a subsequent
+      // template switch back doesn't restore the pre-save copy.
+      draftAutosave.clear();
     } catch (e: any) {
       setErr(e?.response?.data?.error ?? 'Save failed');
     } finally {
@@ -221,6 +244,9 @@ function TemplateEditor({
         `/api/v1/erm/settings/templates/${template.key}/restore-default`,
       );
       onSaved(res.data);
+      // Restore-to-default explicitly discards edits — drop the local
+      // draft so the reset actually takes effect on next switch-back.
+      draftAutosave.clear();
     } catch (e: any) {
       setErr(e?.response?.data?.error ?? 'Restore failed');
     } finally {
@@ -248,7 +274,13 @@ function TemplateEditor({
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="mb-2 flex items-baseline justify-between">
-        <h3 className="text-sm font-semibold text-slate-900">{template.key}</h3>
+        <div className="flex items-baseline gap-3">
+          <h3 className="text-sm font-semibold text-slate-900">{template.key}</h3>
+          {/* Per-template autosave indicator — lets the ERM see that
+              switching templates won't lose their in-progress edits,
+              and that a restored draft is what they're looking at. */}
+          <DraftAutosaveIndicator state={draftAutosave} />
+        </div>
         <label className="flex items-center gap-2 text-xs text-slate-600">
           <input
             type="checkbox"

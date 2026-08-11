@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { ChevronLeft, Save, Send, Star, Video } from 'lucide-react';
 import api from '@/lib/careers/api';
+import DraftAutosaveIndicator from '@/components/ui/DraftAutosaveIndicator';
+import { readDraft, useDraftAutosave } from '@/lib/careers/useDraftAutosave';
 import type { EvaluatorEvaluationDetail, RecommendationFinal } from '@/components/evaluator/types';
 import { RECOMMENDATIONS, RECOMMENDATIONS_FINAL } from '@/components/evaluator/types';
 import WebexHostStartCard from '@/components/meeting/WebexHostStartCard';
@@ -62,6 +64,31 @@ export default function ComposePage() {
   const [recordingErr, setRecordingErr] = useState<string | null>(null);
   const [recordingSavedAt, setRecordingSavedAt] = useState<Date | null>(null);
 
+  // ── Draft autosave ────────────────────────────────────────────────
+  // Keyed per evaluation id — sessionStorage draft survives crash /
+  // refresh / accidental nav. Restored after the server payload loads
+  // (so unsaved local edits take precedence over the last committed
+  // draft), cleared on publish.
+  const draftKey = id ? `draft:evaluator-eval:${id}` : 'draft:evaluator-eval:disabled';
+  interface DraftShape {
+    technical: number | null;
+    communication: number | null;
+    professionalism: number | null;
+    learning: number | null;
+    strengths: string;
+    areas: string;
+    comments: string;
+    recommendation: RecommendationFinal | '';
+    internalNotes: string;
+  }
+  const draftValue = useMemo<DraftShape>(() => ({
+    technical, communication, professionalism, learning,
+    strengths, areas, comments, recommendation, internalNotes,
+  }), [technical, communication, professionalism, learning,
+    strengths, areas, comments, recommendation, internalNotes]);
+  const draftAutosave = useDraftAutosave(draftKey, draftValue,
+    { enabled: !!id });
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -70,15 +97,23 @@ export default function ComposePage() {
         `/api/v1/evaluator/evaluations/${id}`,
       );
       setData(res.data);
-      setTechnical(res.data.technicalSkillsScore ?? null);
-      setCommunication(res.data.communicationScore ?? null);
-      setProfessionalism(res.data.professionalismScore ?? null);
-      setLearning(res.data.learningApplicationScore ?? null);
-      setStrengths(res.data.strengths ?? '');
-      setAreas(res.data.areasForImprovement ?? '');
-      setComments(res.data.comments ?? '');
-      setRecommendation((res.data.recommendation as RecommendationFinal | null) ?? '');
-      setInternalNotes(res.data.internalNotes ?? '');
+      // Prefer a local session draft over the server payload when one
+      // exists — the local blob is by definition newer than the last
+      // saveDraft. Overriding-after-load lets the initial fetch
+      // populate the base state first, then draft restore stomps only
+      // the composer fields (recording state and other server-only
+      // fields stay).
+      const stored = readDraft<DraftShape>(draftKey);
+      setTechnical(stored?.technical ?? res.data.technicalSkillsScore ?? null);
+      setCommunication(stored?.communication ?? res.data.communicationScore ?? null);
+      setProfessionalism(stored?.professionalism ?? res.data.professionalismScore ?? null);
+      setLearning(stored?.learning ?? res.data.learningApplicationScore ?? null);
+      setStrengths(stored?.strengths ?? res.data.strengths ?? '');
+      setAreas(stored?.areas ?? res.data.areasForImprovement ?? '');
+      setComments(stored?.comments ?? res.data.comments ?? '');
+      setRecommendation(stored?.recommendation
+        ?? (res.data.recommendation as RecommendationFinal | null) ?? '');
+      setInternalNotes(stored?.internalNotes ?? res.data.internalNotes ?? '');
       setRecordingDocId(res.data.recordingDocumentId ?? null);
       if (res.data.linkedProjectId) setSelectedProject(res.data.linkedProjectId);
       setErr(null);
@@ -167,6 +202,10 @@ export default function ComposePage() {
       // Save current edits as draft first, then publish.
       await api.patch(`/api/v1/evaluator/evaluations/${id}/draft`, body());
       await api.post(`/api/v1/evaluator/evaluations/${id}/publish`);
+      // Server now has the canonical row — drop the local session
+      // snapshot so re-opening starts fresh instead of restoring the
+      // just-published payload.
+      draftAutosave.clear();
       router.push(`/careers/evaluator/evaluees/${data?.internLifecycleId}`);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -516,13 +555,19 @@ export default function ComposePage() {
 
           {!readOnly && (
             <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3">
-              <p className="text-[11px] text-slate-500">
+              <div className="flex items-center gap-3 text-[11px] text-slate-500">
                 {savedAt && (
                   <span className="text-green-700">
                     Saved at {savedAt.toLocaleTimeString()}
                   </span>
                 )}
-              </p>
+                {/* Local (sessionStorage) autosave indicator — separate
+                    from the server-side "Save draft" affordance above.
+                    Reads "Saving draft… / Saved 12s ago / Draft
+                    restored" so the evaluator knows their typed work
+                    survives a refresh even before they hit Save draft. */}
+                <DraftAutosaveIndicator state={draftAutosave} />
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"

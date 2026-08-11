@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { ChevronLeft, FileText, Save, Send } from 'lucide-react';
 import api from '@/lib/careers/api';
+import DraftAutosaveIndicator from '@/components/ui/DraftAutosaveIndicator';
+import { readDraft, useDraftAutosave } from '@/lib/careers/useDraftAutosave';
 import type { EvaluatorI983Detail } from '@/components/evaluator/types';
 
 export default function ComposeI983Page() {
@@ -27,17 +29,39 @@ export default function ComposeI983Page() {
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  // ── Draft autosave ────────────────────────────────────────────────
+  // Federal-compliance form — losing typed work to F5 is a real
+  // problem here (min 100-char sections × 3). sessionStorage draft
+  // keyed per I-983 id; restored after the initial fetch so local
+  // edits beat the last committed draft; cleared on publish.
+  const draftKey = id ? `draft:evaluator-i983:${id}` : 'draft:evaluator-i983:disabled';
+  interface DraftShape {
+    progress: string;
+    supervision: string;
+    outcomes: string;
+    objectives: string;
+    supervisorAssessment: string;
+  }
+  const draftValue = useMemo<DraftShape>(() => ({
+    progress, supervision, outcomes, objectives, supervisorAssessment,
+  }), [progress, supervision, outcomes, objectives, supervisorAssessment]);
+  const draftAutosave = useDraftAutosave(draftKey, draftValue, { enabled: !!id });
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     try {
       const res = await api.get<EvaluatorI983Detail>(`/api/v1/evaluator/i983-evaluations/${id}`);
       setData(res.data);
-      setProgress(res.data.trainingObjectivesProgress ?? '');
-      setSupervision(res.data.trainingSupervisionProvided ?? '');
-      setOutcomes(res.data.trainingEvaluationOutcomes ?? '');
-      setObjectives(res.data.objectivesAchieved ?? '');
-      setSupervisorAssessment(res.data.supervisorAssessment ?? '');
+      // Prefer local draft over server payload — local was written
+      // more recently than the last saveDraft call.
+      const stored = readDraft<DraftShape>(draftKey);
+      setProgress(stored?.progress ?? res.data.trainingObjectivesProgress ?? '');
+      setSupervision(stored?.supervision ?? res.data.trainingSupervisionProvided ?? '');
+      setOutcomes(stored?.outcomes ?? res.data.trainingEvaluationOutcomes ?? '');
+      setObjectives(stored?.objectives ?? res.data.objectivesAchieved ?? '');
+      setSupervisorAssessment(stored?.supervisorAssessment
+        ?? res.data.supervisorAssessment ?? '');
       setErr(null);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -83,6 +107,10 @@ export default function ComposeI983Page() {
     try {
       await api.patch(`/api/v1/evaluator/i983-evaluations/${id}/draft`, body());
       await api.post(`/api/v1/evaluator/i983-evaluations/${id}/publish`);
+      // Drop the local session snapshot so a subsequent re-open of
+      // this now-published evaluation shows the server state, not the
+      // just-published local draft.
+      draftAutosave.clear();
       router.push(`/careers/evaluator/i983-evaluations/${id}`);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -237,11 +265,17 @@ export default function ComposeI983Page() {
 
       {!readOnly && (
         <div className="sticky bottom-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <p className="text-[11px] text-slate-500">
+          <div className="flex items-center gap-3 text-[11px] text-slate-500">
             {savedAt
               ? <span className="text-green-700">Saved at {savedAt.toLocaleTimeString()}</span>
               : <span>Required: 3 sections × 100+ chars before Publish</span>}
-          </p>
+            {/* Local sessionStorage autosave — independent of Save
+                draft above. Reads "Saving draft… / Saved 12s ago /
+                Draft restored" so the evaluator knows their typed
+                federal-compliance sections survive a refresh even
+                before the server-side draft fires. */}
+            <DraftAutosaveIndicator state={draftAutosave} />
+          </div>
           <div className="flex gap-2">
             <button
               type="button"

@@ -8,6 +8,8 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import api from '@/lib/careers/api';
 import { ChevronLeft, ChevronRight, FileText, Upload, X } from 'lucide-react';
+import DraftAutosaveIndicator from '@/components/ui/DraftAutosaveIndicator';
+import { readDraft, useDraftAutosave } from '@/lib/careers/useDraftAutosave';
 
 type InternRow = {
   internLifecycleId: string;
@@ -115,6 +117,75 @@ function AssignProjectPageInner() {
   // Submission
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // ── Draft autosave ────────────────────────────────────────────────
+  // Keyed per (intern, month, slot) so re-opening the wizard for the
+  // same combo restores the in-progress work, but a different combo
+  // starts fresh. Only active once ALL three are chosen (otherwise
+  // the key would be ambiguous). Persists to sessionStorage — survives
+  // refresh + accidental nav within the tab, cleared on publish.
+  // File uploads (projectFile) are intentionally excluded — File
+  // objects don't survive JSON serialisation and the trainer can
+  // re-attach after restore.
+  const draftKey = internLifecycleId && monthYear && projectNumber
+    ? `draft:trainer-assign-project:${internLifecycleId}:${monthYear}:${projectNumber}`
+    : null;
+  interface DraftShape {
+    title: string;
+    technologyArea: string;
+    secondaryTag: string;
+    dueDate: string;
+    learningObjectiveLabel: string;
+    usesGithub: boolean;
+    instructions: string;
+    githubInstructions: string;
+    notifyStakeholders: boolean;
+    repositoryUrl: string;
+    repositoryName: string;
+    backdateAuthorizedByName: string;
+    backdateReason: string;
+    projectTemplateId: string | null;
+  }
+  const draftValue = useMemo<DraftShape>(() => ({
+    title, technologyArea, secondaryTag, dueDate, learningObjectiveLabel,
+    usesGithub, instructions, githubInstructions, notifyStakeholders,
+    repositoryUrl, repositoryName, backdateAuthorizedByName, backdateReason,
+    projectTemplateId,
+  }), [title, technologyArea, secondaryTag, dueDate, learningObjectiveLabel,
+    usesGithub, instructions, githubInstructions, notifyStakeholders,
+    repositoryUrl, repositoryName, backdateAuthorizedByName, backdateReason,
+    projectTemplateId]);
+  const draftAutosave = useDraftAutosave(
+    draftKey ?? 'draft:trainer-assign-project:disabled',
+    draftValue,
+    { enabled: draftKey != null },
+  );
+  // Restore on key change — populates state from sessionStorage when
+  // the trainer picks (intern, month, slot). Guarded by hasRestoredRef
+  // so a re-render (or the user editing the fields) doesn't clobber
+  // fresh input by re-reading the stored draft.
+  const restoredForKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!draftKey) return;
+    if (restoredForKeyRef.current === draftKey) return;
+    restoredForKeyRef.current = draftKey;
+    const stored = readDraft<DraftShape>(draftKey);
+    if (!stored) return;
+    setTitle(stored.title);
+    setTechnologyArea(stored.technologyArea);
+    setSecondaryTag(stored.secondaryTag);
+    setDueDate(stored.dueDate);
+    setLearningObjectiveLabel(stored.learningObjectiveLabel);
+    setUsesGithub(stored.usesGithub);
+    setInstructions(stored.instructions);
+    setGithubInstructions(stored.githubInstructions);
+    setNotifyStakeholders(stored.notifyStakeholders);
+    setRepositoryUrl(stored.repositoryUrl);
+    setRepositoryName(stored.repositoryName);
+    setBackdateAuthorizedByName(stored.backdateAuthorizedByName);
+    setBackdateReason(stored.backdateReason);
+    setProjectTemplateId(stored.projectTemplateId);
+  }, [draftKey]);
 
   // Load interns
   useEffect(() => {
@@ -255,6 +326,10 @@ function AssignProjectPageInner() {
             + '. You can link it from the active-intern detail page.');
         }
       }
+      // Draft is now committed — drop the sessionStorage snapshot so
+      // re-opening the wizard for this (intern, month, slot) starts
+      // fresh instead of restoring the just-submitted body.
+      draftAutosave.clear();
       router.push(`/careers/trainer/active-interns/${internLifecycleId}`);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -279,13 +354,16 @@ function AssignProjectPageInner() {
             publish to fan out PROJECT_ASSIGNED.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowTemplatePanel(true)}
-          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-        >
-          <FileText className="h-3.5 w-3.5" /> Use Template
-        </button>
+        <div className="flex items-center gap-3">
+          <DraftAutosaveIndicator state={draftAutosave} />
+          <button
+            type="button"
+            onClick={() => setShowTemplatePanel(true)}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <FileText className="h-3.5 w-3.5" /> Use Template
+          </button>
+        </div>
       </header>
 
       <StepIndicator step={step} />

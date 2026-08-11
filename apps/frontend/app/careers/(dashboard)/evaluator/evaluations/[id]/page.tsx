@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { ChevronLeft, Pencil, Save, Star, X } from 'lucide-react';
 import api from '@/lib/careers/api';
+import DraftAutosaveIndicator from '@/components/ui/DraftAutosaveIndicator';
+import { readDraft, useDraftAutosave } from '@/lib/careers/useDraftAutosave';
 import type { EvaluatorEvaluationDetail, Recommendation } from '@/components/evaluator/types';
 import { RECOMMENDATIONS } from '@/components/evaluator/types';
 
@@ -219,19 +221,47 @@ function AmendModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [reason, setReason] = useState('');
-  const [technical, setTechnical] = useState(data.technicalSkillsScore);
-  const [communication, setCommunication] = useState(data.communicationScore);
-  const [professionalism, setProfessionalism] = useState(data.professionalismScore);
-  const [learning, setLearning] = useState(data.learningApplicationScore);
-  const [strengths, setStrengths] = useState(data.strengths ?? '');
-  const [areas, setAreas] = useState(data.areasForImprovement ?? '');
-  const [comments, setComments] = useState(data.comments ?? '');
+  // ── Draft autosave for the amendment ─────────────────────────────
+  // Modal composers are the easiest to lose: an accidental X-click or
+  // Esc drops everything. Restore-on-mount reads the last stored
+  // amendment draft under this evaluation's amendment key; clear on
+  // successful submit. Reason field alone can be 1000 chars of
+  // federal-compliance rationale — worth persisting.
+  const draftKey = `draft:evaluator-eval-amend:${data.evaluationId}`;
+  interface DraftShape {
+    reason: string;
+    technical: number | null;
+    communication: number | null;
+    professionalism: number | null;
+    learning: number | null;
+    strengths: string;
+    areas: string;
+    comments: string;
+    recommendation: Recommendation | '';
+  }
+  const stored = useMemo(() => readDraft<DraftShape>(draftKey), [draftKey]);
+  const [reason, setReason] = useState(stored?.reason ?? '');
+  const [technical, setTechnical] = useState<number | null>(
+    stored?.technical ?? data.technicalSkillsScore);
+  const [communication, setCommunication] = useState<number | null>(
+    stored?.communication ?? data.communicationScore);
+  const [professionalism, setProfessionalism] = useState<number | null>(
+    stored?.professionalism ?? data.professionalismScore);
+  const [learning, setLearning] = useState<number | null>(
+    stored?.learning ?? data.learningApplicationScore);
+  const [strengths, setStrengths] = useState(stored?.strengths ?? (data.strengths ?? ''));
+  const [areas, setAreas] = useState(stored?.areas ?? (data.areasForImprovement ?? ''));
+  const [comments, setComments] = useState(stored?.comments ?? (data.comments ?? ''));
   const [recommendation, setRecommendation] = useState<Recommendation | ''>(
-    (data.recommendation as Recommendation | null) ?? '',
+    stored?.recommendation
+      ?? (data.recommendation as Recommendation | null) ?? '',
   );
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const draftAutosave = useDraftAutosave(draftKey, {
+    reason, technical, communication, professionalism, learning,
+    strengths, areas, comments, recommendation,
+  });
 
   const canSubmit = reason.trim().length >= 30;
 
@@ -254,6 +284,10 @@ function AmendModal({
         comments: comments.trim() || null,
         recommendation: recommendation || null,
       });
+      // Amendment committed — drop the local draft so a subsequent
+      // reopen of the modal shows the freshly-amended payload rather
+      // than the just-submitted draft body.
+      draftAutosave.clear();
       onSaved();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -268,7 +302,15 @@ function AmendModal({
       <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg bg-white shadow-xl">
         <div className="flex items-start justify-between border-b border-slate-200 px-5 py-3">
           <div>
-            <h3 className="text-base font-semibold text-slate-900">Amend evaluation</h3>
+            <div className="flex items-baseline gap-3">
+              <h3 className="text-base font-semibold text-slate-900">Amend evaluation</h3>
+              {/* Modal composers lose typed work the fastest — an
+                  accidental X-click drops everything. This indicator
+                  reads "Draft restored / Saving draft… / Saved 12s
+                  ago" so the evaluator can see their amendment body
+                  survives closing the modal. */}
+              <DraftAutosaveIndicator state={draftAutosave} />
+            </div>
             <p className="text-xs text-slate-500">
               Version will increment to v{data.version + 1}. Intern's acknowledgment
               resets and they will receive a re-acknowledge notification.
