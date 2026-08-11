@@ -4850,6 +4850,12 @@ public class SchemaFixupRunner implements CommandLineRunner {
                             + "  finalized_at TIMESTAMP,"
                             + "  superseded_at TIMESTAMP,"
                             + "  last_erm_viewed_at TIMESTAMP,"
+                            // Field-level correction lock — JSONB
+                            // array of the field ids ERM chose to
+                            // unlock on the most recent RETURN. NULL
+                            // = legacy (all intern fields editable
+                            // while internLocked is false).
+                            + "  unlocked_field_ids JSONB,"
                             + "  created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
                             + "  updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
                             + ")");
@@ -4882,7 +4888,12 @@ public class SchemaFixupRunner implements CommandLineRunner {
                 "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP",
                 "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMP",
                 "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMP",
-                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS last_erm_viewed_at TIMESTAMP"
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS last_erm_viewed_at TIMESTAMP",
+                // Field-level correction lock — JSONB array of the
+                // field ids ERM chose to unlock on the last RETURN.
+                // NULL = legacy (all intern fields editable), safe
+                // default for existing rows; no backfill needed.
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS unlocked_field_ids JSONB"
         };
         for (String sql : instAlters) {
             try { jdbcTemplate.execute(sql); }

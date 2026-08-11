@@ -310,11 +310,22 @@ function PageContent() {
           title="Return with corrections"
           hint="The intern will see this reason and any comments you add."
           reasons={RETURN_REASONS}
+          // Field-level correction lock — the ERM ticks specific
+          // intern fields to unlock; leaving all unchecked reopens
+          // every intern field (legacy behaviour). Signatures show
+          // in the list so the ERM can explicitly re-open them when
+          // the signature ITSELF is wrong; otherwise a return
+          // leaves signatures untouched.
+          fields={fields
+            .filter((f) => f.assignee === 'INTERN')
+            .map((f) => ({ id: f.id, label: f.name, isSignature: f.type === 'signature' }))}
           onCancel={() => setReturnOpen(false)}
-          onSubmit={async (reasonCode, comments) => {
+          onSubmit={async (reasonCode, comments, unlockedFieldIds) => {
             // Close only on success — a failed action keeps the dialog +
             // the ERM's typed reason so they don't have to retype.
-            const ok = await act('return', 'return', { reasonCode, comments });
+            const ok = await act('return', 'return', {
+              reasonCode, comments, unlockedFieldIds,
+            });
             if (ok) setReturnOpen(false);
           }}
           confirmLabel="Return"
@@ -380,27 +391,53 @@ function HistoryPanel({ detail }: { detail: InstanceDetail }) {
 }
 
 function ReasonDialog({
-  title, hint, reasons, onCancel, onSubmit, confirmLabel, confirmTone,
+  title, hint, reasons, fields, onCancel, onSubmit, confirmLabel, confirmTone,
 }: {
   title: string;
   hint: string;
   reasons: { code: string; label: string }[];
+  /** Field-level unlock list — optional. When present, the dialog
+   *  renders a checkbox for each field so the ERM can select which
+   *  ones the intern may edit on this correction cycle. Only the
+   *  Return flow currently passes this; Revoke leaves it undefined. */
+  fields?: { id: string; label: string; isSignature: boolean }[];
   onCancel: () => void;
-  onSubmit: (reasonCode: string, comments: string) => Promise<void>;
+  /** {@code unlockedFieldIds} is only meaningful when {@code fields}
+   *  was passed; caller ignores it otherwise. Empty selection = null
+   *  (legacy "all editable") not empty array. */
+  onSubmit: (
+    reasonCode: string,
+    comments: string,
+    unlockedFieldIds?: string[] | undefined,
+  ) => Promise<void>;
   confirmLabel: string;
   confirmTone: 'brand' | 'danger';
 }) {
   const [code, setCode] = useState(reasons[0].code);
   const [comments, setComments] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Field-checklist state — Set for O(1) toggle; converted to array on
+  // submit. Empty set → pass undefined so the backend gets legacy
+  // "unlock all" behaviour + server-side normalises empty → null.
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  function toggle(id: string) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
   const requireText = code.endsWith('_OTHER');
   const canSubmit = Boolean(code) && (!requireText || comments.trim().length > 0);
 
   async function go() {
     if (!canSubmit) return;
     setSubmitting(true);
-    try { await onSubmit(code, comments.trim()); }
-    finally { setSubmitting(false); }
+    try {
+      const unlocked = fields && checked.size > 0
+        ? Array.from(checked) : undefined;
+      await onSubmit(code, comments.trim(), unlocked);
+    } finally { setSubmitting(false); }
   }
 
   return (
@@ -426,6 +463,48 @@ function ReasonDialog({
         >
           {reasons.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
         </select>
+
+        {fields && fields.length > 0 && (
+          <div className="mt-3">
+            <p className="text-xs font-medium text-slate-700">
+              Fields the intern may edit
+              <span className="ml-1 font-normal text-slate-500">
+                (leave all unchecked to reopen every intern field)
+              </span>
+            </p>
+            <div className="mt-1 max-h-40 space-y-1 overflow-y-auto rounded-md border border-slate-200 p-2">
+              {fields.map((f) => (
+                <label
+                  key={f.id}
+                  className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-slate-50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked.has(f.id)}
+                    onChange={() => toggle(f.id)}
+                    className="h-3.5 w-3.5 rounded border-slate-300"
+                  />
+                  <span className="flex-1 truncate text-slate-800">{f.label}</span>
+                  {f.isSignature && (
+                    <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800">
+                      Signature
+                    </span>
+                  )}
+                </label>
+              ))}
+            </div>
+            {checked.size === 0 ? (
+              <p className="mt-1 text-[11px] text-slate-500">
+                All intern fields will unlock (legacy behaviour).
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] text-slate-500">
+                {checked.size} field{checked.size === 1 ? '' : 's'} will unlock. Every other intern field stays read-only — signatures included unless ticked above.
+              </p>
+            )}
+          </div>
+        )}
+
         <label className="mt-3 block text-xs font-medium text-slate-700">
           Comments {requireText && <span className="text-red-500">*</span>}
         </label>

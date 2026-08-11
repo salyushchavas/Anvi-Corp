@@ -100,6 +100,12 @@ export interface InstanceDetail {
   finalPdfUrl: string | null;
   returnReasonCode: string | null;
   returnComments: string | null;
+  /** Field-level correction lock — the ids ERM explicitly unlocked on
+   *  the last RETURN. {@code null} = legacy behaviour (every intern-
+   *  assigneed field editable when {@code internLocked} is false). A
+   *  populated array narrows the set — only these ids are editable
+   *  and the server-side write path rejects writes to others. */
+  unlockedFieldIds: string[] | null;
   revokeReasonCode: string | null;
   revokeComments: string | null;
   supersedesId: string | null;
