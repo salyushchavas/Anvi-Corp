@@ -133,7 +133,7 @@ async function tryRefreshAccessToken(): Promise<boolean> {
       // httpOnly cookie; no body needed. Server reads the cookie, rotates
       // the session, and Set-Cookies the new access + refresh + CSRF
       // values on the response.
-      await axios.post(
+      const resp = await axios.post(
         `${baseURL}/auth/refresh`,
         {},
         {
@@ -143,6 +143,18 @@ async function tryRefreshAccessToken(): Promise<boolean> {
           },
         },
       );
+      // Capture the freshly-rotated CSRF token off the refresh response
+      // so the auto-retried request doesn't replay the STALE pre-rotation
+      // value. The refresh call uses raw axios (bypasses api's response
+      // interceptor) so without this pull the in-memory {@code csrfToken}
+      // stays at the pre-refresh value, the retry sends it, and the
+      // backend's double-submit filter rejects with "CSRF token missing
+      // or mismatched" — cookie now holds the NEW rotated value but the
+      // retry replays the OLD one. Symptom users report: any long-lived
+      // detail page (ERM cockpit, intern fill, return-for-correction
+      // dialog) fails on the FIRST mutation after JWT expiry.
+      const fresh = extractCsrfHeader(resp.headers);
+      if (fresh) csrfToken = fresh;
       return true;
     } catch {
       return false;
