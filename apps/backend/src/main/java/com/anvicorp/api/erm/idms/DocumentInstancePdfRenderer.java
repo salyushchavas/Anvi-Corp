@@ -7,10 +7,13 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Entities;
 import org.jsoup.nodes.TextNode;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
@@ -50,6 +53,17 @@ public class DocumentInstancePdfRenderer {
 
     private static final int RENDER_TIMEOUT_SECONDS = 45;
 
+    /**
+     * ANVI header logo — loaded once at construction time from
+     * {@code /idms/anvi-header-logo.png} on the classpath and embedded as
+     * a base64 data URL in the PDF's running header. The source template
+     * (ANVI_OPT unpaid) carries this exact asset in {@code header2.xml};
+     * hardcoding it here (rather than round-tripping through the DOCX
+     * import) keeps the header uniform across every generated PDF
+     * regardless of which template variant an admin uploads.
+     */
+    private final String anviHeaderLogoDataUrl = loadLogoDataUrl();
+
     /** Single-thread executor with a named factory so heap dumps are legible. */
     private final ExecutorService executor = Executors.newSingleThreadExecutor(new ThreadFactory() {
         private final AtomicLong seq = new AtomicLong(1);
@@ -60,6 +74,25 @@ public class DocumentInstancePdfRenderer {
             return t;
         }
     });
+
+    private static String loadLogoDataUrl() {
+        try (InputStream in = new ClassPathResource("idms/anvi-header-logo.png").getInputStream()) {
+            byte[] bytes = in.readAllBytes();
+            return "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes);
+        } catch (IOException e) {
+            // Non-fatal — the PDF still renders body + footer without
+            // the logo. A missing classpath resource is a packaging bug,
+            // not a per-render failure; log once at load and continue.
+            LoggerHolder.LOG.warn("[IDMS] anvi header logo missing from classpath: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** Static-init logger holder — avoids @Slf4j field access from a static method. */
+    private static final class LoggerHolder {
+        private static final org.slf4j.Logger LOG =
+                org.slf4j.LoggerFactory.getLogger(DocumentInstancePdfRenderer.class);
+    }
 
     /**
      * Interpolate the anchor spans with their filled values (or signature
@@ -181,6 +214,10 @@ public class DocumentInstancePdfRenderer {
      *  matching the docx-preview canvas — same font-family + margins so the
      *  executed PDF reads visually equivalent to the studio preview. */
     private String wrapInHtmlDoc(String title, String bodyHtml) {
+        String logoImg = anviHeaderLogoDataUrl == null
+                ? ""
+                : "<img src=\"" + anviHeaderLogoDataUrl
+                        + "\" alt=\"ANVI\" style=\"width:287px;height:75px;\" />";
         return ""
                 + "<!DOCTYPE html>"
                 + "<html xmlns=\"http://www.w3.org/1999/xhtml\">"
@@ -188,12 +225,22 @@ public class DocumentInstancePdfRenderer {
                 + "<meta charset=\"UTF-8\" />"
                 + "<title>" + escapeHtml(title == null ? "Document" : title) + "</title>"
                 + "<style>"
-                // Letter (8.5x11in) matches the Word default docx-preview
-                // exports as, so a template authored on a US Letter page
-                // fits the PDF page byte-for-byte instead of relying on the
-                // browser's viewport-scaled preview to hide overflow.
-                // 20mm ≈ 0.79in margins on all four sides.
-                + "  @page { size: letter; margin: 20mm; }"
+                // Source of truth — ANVI_OPT unpaid template DOCX:
+                //   Page: A4 (8.27in × 11.69in)
+                //   Margins: LEFT 1.0in, RIGHT 0.88in, TOP 1.0in, BOTTOM 1.0in
+                //   Header: ANVI logo at 0.08in from page top
+                //   Footer: address block at 0.12in from page bottom
+                // Prior config was `letter, 20mm` which over-inset the
+                // body ~0.21in on top/bottom + 0.12in on right (Letter is
+                // narrower than A4). The mismatch made the finalized PDF
+                // read visibly cramped vs the source template.
+                + "  @page { size: A4; margin: 1in 0.88in 1in 1in;"
+                + "          @top-center { content: element(anviHeader);"
+                + "                        vertical-align: top;"
+                + "                        padding-top: 0.08in; }"
+                + "          @bottom-center { content: element(anviFooter);"
+                + "                        vertical-align: bottom;"
+                + "                        padding-bottom: 0.12in; } }"
                 // WIDTH SAFETY — docx-preview emits an outer
                 // <article class=\"docx\"> and per-page <section> wrappers
                 // that carry an explicit fixed width matching the source
@@ -219,15 +266,12 @@ public class DocumentInstancePdfRenderer {
                 // none) or as a last-resort fallback when a template's
                 // stylesheet doesn't declare a font at all.
                 //
-                // Uses the modern-Word default cascade (Calibri) rather
-                // than the openhtmltopdf sample default (Times New Roman)
-                // so a template without an explicit stylesheet still
-                // renders in the face a Word author expects. Serif kept
-                // in the fallback chain so older Times-heavy legal docs
-                // don't drop to a system default they'd never see in Word.
-                + "  body { font-family: Calibri, 'Segoe UI', Arial,"
-                + "                       'Times New Roman', serif;"
-                + "         font-size: 11pt; color: #111;"
+                // Source template (ANVI_OPT unpaid) uses Times New Roman
+                // 12pt for body; the fallback matches so a legacy
+                // template without an explicit stylesheet still lands on
+                // the same face the author intended.
+                + "  body { font-family: 'Times New Roman', Times, serif;"
+                + "         font-size: 12pt; color: #111;"
                 + "         word-wrap: break-word;"
                 + "         overflow-wrap: break-word; }"
                 + "  article, section, div, article.docx, section.docx {"
@@ -283,9 +327,28 @@ public class DocumentInstancePdfRenderer {
                 + "                   vertical-align: baseline;"
                 + "                   display: inline-block; }"
                 + "  header, footer { display: block; color: #555; font-size: 9pt; }"
+                // openhtmltopdf running elements — hoisted OUT of the
+                // body flow and INTO the @page's @top-center / @bottom-
+                // center margin boxes above. The elements below live at
+                // the top of the body but never render there; the
+                // renderer clones them into each page's margin. `running(x)`
+                // is CSS3 Paged Media (see openhtmltopdf docs).
+                + "  .pdf-anvi-header { position: running(anviHeader);"
+                + "    text-align: center; margin: 0; padding: 0; }"
+                + "  .pdf-anvi-header img { display: inline-block;"
+                + "    vertical-align: top; }"
+                + "  .pdf-anvi-footer { position: running(anviFooter);"
+                + "    text-align: center; font-size: 9pt; color: #333;"
+                + "    line-height: 1.3; margin: 0; padding: 0; }"
                 + "</style>"
                 + "</head>"
                 + "<body>"
+                + "<div class=\"pdf-anvi-header\">" + logoImg + "</div>"
+                + "<div class=\"pdf-anvi-footer\">"
+                + "Address: 7950 Legacy Dr, Suite 400, Plano, TX, 75024"
+                + "<br />"
+                + "Phone # 913-297-7493, Email: info@anvicorp.com"
+                + "</div>"
                 + sanitiseForXhtml(bodyHtml)
                 + "</body>"
                 + "</html>";

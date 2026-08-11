@@ -183,19 +183,78 @@ class DocumentInstancePdfRendererXhtmlIT {
      *  so a docx-preview wrapper's fixed pixel/inch width can't push text
      *  past the right margin. This test checks the CSS shell (asserted
      *  via the test-hook wrap) so a future edit that drops the width
-     *  overrides fails loudly. */
+     *  overrides fails loudly.
+     *
+     *  <p>Page size pinned to A4 with the exact margins the ANVI_OPT
+     *  source template DOCX declares (LEFT 1.0in, RIGHT 0.88in, TOP
+     *  1.0in, BOTTOM 1.0in). Prior config was Letter with 20mm all-
+     *  round which over-inset the body ~0.21in top/bottom + shifted the
+     *  right edge (Letter is narrower than A4); the executed PDF read
+     *  visibly cramped vs the source. Guard test — a change that drifts
+     *  back to Letter fails here.</p> */
     @Test
     void print_css_shell_pins_content_width_and_page_size() {
         DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
         String shell = renderer.toXhtmlForTest("Offer", "<p>body</p>");
-        assertTrue(shell.contains("@page { size: letter"),
-                "page size not pinned to letter: " + shell);
+        assertTrue(shell.contains("@page { size: A4"),
+                "page size not pinned to A4: " + shell);
+        assertTrue(shell.contains("margin: 1in 0.88in 1in 1in"),
+                "A4 margins not pinned to source-truth 1.0/0.88/1.0/1.0 in: " + shell);
         assertTrue(shell.contains("max-width: 100%"),
                 "content max-width constraint missing: " + shell);
         assertTrue(shell.contains("word-wrap: break-word"),
                 "long-token break-word missing (email/url overflow guard): " + shell);
         assertTrue(shell.contains("article, section, div"),
                 "docx-preview wrapper width override missing: " + shell);
+    }
+
+    /** ANVI running header/footer contract — the page CSS declares
+     *  {@code @top-center} + {@code @bottom-center} margin boxes, and
+     *  the body carries the two {@code position: running(...)} elements
+     *  the renderer hoists into those boxes. Guards the layout
+     *  against a future edit that (a) drops the running-element rule,
+     *  (b) drops the margin-box content, or (c) forgets to embed the
+     *  header/footer nodes in the body.
+     *
+     *  <p>Prior renders had NO header/footer at all: the source
+     *  template's ANVI logo + address block simply never made it to the
+     *  PDF, so the executed offer differed from the source at a glance.
+     *  This test also asserts the source-truth insets (header 0.08in
+     *  from page top, footer 0.12in from page bottom) so a future style
+     *  refactor that shifts the padding fails loudly.</p> */
+    @Test
+    void print_css_shell_has_anvi_running_header_and_footer() {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        String shell = renderer.toXhtmlForTest("Offer", "<p>body</p>");
+        // @page margin-boxes reference the two running elements.
+        assertTrue(shell.contains("@top-center { content: element(anviHeader)"),
+                "@top-center running header missing: " + shell);
+        assertTrue(shell.contains("@bottom-center { content: element(anviFooter)"),
+                "@bottom-center running footer missing: " + shell);
+        // Source-truth insets — header 0.08in from page top, footer
+        // 0.12in from page bottom. If these drift the header/footer
+        // move off the source's exact position.
+        assertTrue(shell.contains("padding-top: 0.08in"),
+                "header 0.08in top offset (source-truth) missing: " + shell);
+        assertTrue(shell.contains("padding-bottom: 0.12in"),
+                "footer 0.12in bottom offset (source-truth) missing: " + shell);
+        // The two elements marked `position: running(...)` — openhtmltopdf
+        // hoists these OUT of body flow and INTO the margin boxes.
+        assertTrue(shell.contains("position: running(anviHeader)"),
+                "header running-element declaration missing: " + shell);
+        assertTrue(shell.contains("position: running(anviFooter)"),
+                "footer running-element declaration missing: " + shell);
+        // Header + footer nodes actually present in the body — the CSS
+        // declaration is useless if there's nothing to hoist.
+        assertTrue(shell.contains("class=\"pdf-anvi-header\""),
+                "header element missing from body: " + shell);
+        assertTrue(shell.contains("class=\"pdf-anvi-footer\""),
+                "footer element missing from body: " + shell);
+        // Footer copy matches the source template's address block.
+        assertTrue(shell.contains("7950 Legacy Dr, Suite 400, Plano, TX, 75024"),
+                "footer address block copy missing: " + shell);
+        assertTrue(shell.contains("info@anvicorp.com"),
+                "footer email missing: " + shell);
     }
 
     /** BUG 4 — bulleted lists in the source DOCX rendered as cramped

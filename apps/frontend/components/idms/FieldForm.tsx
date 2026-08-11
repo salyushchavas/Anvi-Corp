@@ -8,7 +8,7 @@ import {
   useMemo,
   useRef,
 } from 'react';
-import { CheckCircle2, CircleDashed, Info, Lock, PenLine } from 'lucide-react';
+import { Calendar, CheckCircle2, CircleDashed, Info, Lock, PenLine } from 'lucide-react';
 import InlineSignatureCapture from '@/components/idms/InlineSignatureCapture';
 import type { FieldSchemaEntry, InstanceDetail } from '@/lib/careers/idms';
 
@@ -397,9 +397,20 @@ function FieldRow({
     );
   }
 
-  const value = textValues[field.id] ?? '';
-  const isDate = field.type === 'date';
-  const isBlock = field.type === 'content_block';
+  const rawValue = textValues[field.id] ?? '';
+  // Case-insensitive so a template imported from a legacy source that
+  // stored the type in uppercase ("DATE") still resolves to the date
+  // input rather than falling through to a plain text field.
+  const fieldTypeLower = (field.type ?? '').toLowerCase();
+  const isDate = fieldTypeLower === 'date';
+  const isBlock = fieldTypeLower === 'content_block';
+  // <input type="date"> ONLY renders its value if it's ISO YYYY-MM-DD;
+  // a legacy stored value like "08/15/2026" would show as blank in the
+  // picker (which then looks to the user like the field is broken /
+  // free-text). Normalise on the way IN so any stored variant renders
+  // correctly and users get the native date picker; the on-change
+  // handler stores back the ISO shape the input emits.
+  const value = isDate ? normaliseForDateInput(rawValue) : rawValue;
   const missing = field.required && !filled;
   // Mirrors the backend @Size(max = 50_000) on FillFieldsRequest.values —
   // surface a live counter on content_block textareas that can plausibly
@@ -453,11 +464,32 @@ function FieldRow({
               </p>
             )}
           </>
+        ) : isDate ? (
+          // Date row — visible calendar affordance on the LEFT of the
+          // input so the user reads the row as "date picker" at a
+          // glance instead of guessing at a bare box. Chrome's
+          // built-in picker icon sits on the right INSIDE the input
+          // and is easy to miss when the input is full-width; the
+          // outer calendar icon removes that ambiguity. The <input
+          // type="date"> still owns the actual picker.
+          <div className="relative mt-2">
+            <Calendar className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              id={`fld-${field.id}`}
+              ref={(el) => registerRef(el)}
+              type="date"
+              value={value}
+              onChange={(e) => onTextChange(field.id, e.target.value)}
+              onFocus={handleFocus}
+              disabled={disabled}
+              className="w-full rounded-md border border-slate-200 py-1.5 pl-7 pr-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
+            />
+          </div>
         ) : (
           <input
             id={`fld-${field.id}`}
             ref={(el) => registerRef(el)}
-            type={isDate ? 'date' : 'text'}
+            type="text"
             value={value}
             onChange={(e) => onTextChange(field.id, e.target.value)}
             onFocus={handleFocus}
@@ -476,6 +508,34 @@ function FieldRow({
       </div>
     </li>
   );
+}
+
+/**
+ * Coerce a stored date-field value into the {@code YYYY-MM-DD} shape
+ * an {@code <input type="date">} requires for its {@code value} prop.
+ *
+ * <p>Accepted inputs:</p>
+ * <ul>
+ *   <li>{@code YYYY-MM-DD} (or a full ISO datetime) — pass through as-is</li>
+ *   <li>{@code MM/DD/YYYY} — the pipeline's display format; convert
+ *       so a legacy row (or an admin who typed it manually) still
+ *       renders in the picker instead of showing blank</li>
+ *   <li>Empty / null / unrecognised — return {@code ""} so the input
+ *       renders empty rather than tripping the picker into "invalid"</li>
+ * </ul>
+ *
+ * <p>Kept co-located with FieldRow so the two places that render date
+ * inputs (ERM + intern paths share this row) stay in sync. Peer of the
+ * frontend {@code formatIsoDateMdy} display helper and the backend
+ * {@code IdmsDateFormat} PDF-render helper.</p>
+ */
+function normaliseForDateInput(v: string): string {
+  if (!v) return '';
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(v.trim());
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const mdy = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v.trim());
+  if (mdy) return `${mdy[3]}-${mdy[1]}-${mdy[2]}`;
+  return '';
 }
 
 interface SectionHeaderProps {

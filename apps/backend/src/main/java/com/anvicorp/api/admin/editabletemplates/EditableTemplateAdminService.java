@@ -1,10 +1,12 @@
 package com.anvicorp.api.admin.editabletemplates;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.anvicorp.api.entity.AuditLog;
 import com.anvicorp.api.entity.Document;
 import com.anvicorp.api.entity.User;
+import com.anvicorp.api.erm.idms.DocumentInstancePdfRenderer;
 import com.anvicorp.api.exception.BadRequestException;
 import com.anvicorp.api.exception.ResourceNotFoundException;
 import com.anvicorp.api.integration.s3.S3StorageService;
@@ -75,6 +77,7 @@ public class EditableTemplateAdminService {
     private final S3StorageService s3;
     private final AuditLogRepository auditLogRepository;
     private final ObjectMapper objectMapper;
+    private final DocumentInstancePdfRenderer pdfRenderer;
 
     // ── List + get ───────────────────────────────────────────────────
 
@@ -114,6 +117,78 @@ public class EditableTemplateAdminService {
         Document doc = t.getSourceDocumentId() != null
                 ? documentRepo.findById(t.getSourceDocumentId()).orElse(null) : null;
         return toRow(t, doc, /*includeHeavy*/ true);
+    }
+
+    // ── Preview PDF (admin studio iteration path) ────────────────────
+
+    /**
+     * Render the template's canonical HTML with placeholder values
+     * through the SAME {@link DocumentInstancePdfRenderer} the real
+     * finalize path uses — so what an admin sees here is byte-
+     * representative of a finalized offer's fidelity (margins, fonts,
+     * header logo, footer address, list indentation, all the anchor
+     * substitutions). Without this endpoint every PDF change required
+     * spending a real intern's time (ERM send → intern signs → finalize
+     * → download) because finalized PDFs are frozen — the admin could
+     * not iterate on layout / typography fixes without burning a live
+     * offer per attempt.
+     *
+     * <p>Placeholder policy: each field renders its own display name
+     * ("Full legal name", "Start date", …) as the value; date fields
+     * get today's date in ISO form so the renderer's date normaliser
+     * (MM/DD/YYYY) exercises; signature fields get a "[Signed]" text
+     * placeholder rather than an image so the admin doesn't need a
+     * captured PNG on file. All of these round-trip through the same
+     * interpolate() → sanitiseForXhtml() → openhtmltopdf pipeline as
+     * a real finalize.</p>
+     */
+    @Transactional(readOnly = true)
+    public byte[] previewPdf(String key) {
+        EditableTemplate t = repo.findByKey(key).orElseThrow(() ->
+                new ResourceNotFoundException("Template not found: " + key));
+        String canonicalHtml = t.getCanonicalHtml();
+        if (canonicalHtml == null || canonicalHtml.isBlank()) {
+            throw new BadRequestException(
+                    "This template has no saved canonical HTML yet — "
+                            + "open the studio, place the field anchors, and Save first.");
+        }
+        List<EditableTemplateDtos.FieldEntry> fields = parseFieldSchemaJson(t.getFieldSchemaJson());
+        Map<String, String> textByField = new LinkedHashMap<>();
+        Map<String, String> sigByField = new LinkedHashMap<>();
+        String isoToday = java.time.LocalDate.now().toString();
+        for (EditableTemplateDtos.FieldEntry f : fields) {
+            String type = f.type() == null ? "text" : f.type().toLowerCase(java.util.Locale.ROOT);
+            if ("signature".equals(type)) {
+                // Text placeholder — a fake data URL would round-trip
+                // through the image pipeline but produce a broken-image
+                // glyph. Text keeps the preview obviously "just a
+                // preview" while still reserving the anchor's space.
+                textByField.put(f.id(), "[Signed: " + placeholderFor(f.name()) + "]");
+            } else if ("date".equals(type)) {
+                textByField.put(f.id(), isoToday);
+            } else {
+                textByField.put(f.id(), placeholderFor(f.name()));
+            }
+        }
+        return pdfRenderer.renderToPdf(
+                canonicalHtml, textByField, sigByField,
+                (t.getTitle() == null ? "Preview" : t.getTitle()) + " (preview)");
+    }
+
+    private List<EditableTemplateDtos.FieldEntry> parseFieldSchemaJson(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json,
+                    new TypeReference<List<EditableTemplateDtos.FieldEntry>>() {});
+        } catch (JsonProcessingException e) {
+            log.warn("[EditableTemplate] preview: field schema JSON malformed for key: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private static String placeholderFor(String fieldName) {
+        if (fieldName == null || fieldName.isBlank()) return "Sample Text";
+        return fieldName;
     }
 
     // ── Create + update metadata ─────────────────────────────────────
