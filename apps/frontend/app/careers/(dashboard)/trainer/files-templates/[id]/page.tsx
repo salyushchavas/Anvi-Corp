@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronLeft, Copy, Eye, EyeOff, Archive, RotateCcw, Save, Upload, Trash2 } from 'lucide-react';
 import api from '@/lib/careers/api';
+import ConfirmDialog from '@/components/ConfirmDialog';
 
 type Attachment = {
   documentId: string;
@@ -144,15 +145,17 @@ export default function TemplateDetailPage() {
     }
   }
 
-  async function detach(documentId: string) {
-    if (!confirm('Remove this attachment?')) return;
+  const [detachDocId, setDetachDocId] = useState<string | null>(null);
+  async function detach() {
+    if (!detachDocId) return;
     setBusy(true);
     try {
       const res = await api.delete<TemplateDetail>(
-        `/api/v1/trainer/project-templates/${id}/attachments/${documentId}`,
+        `/api/v1/trainer/project-templates/${id}/attachments/${detachDocId}`,
       );
       setT(res.data);
       setErr(null);
+      setDetachDocId(null);
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
       setErr(ax.response?.data?.error ?? ax.message ?? 'Detach failed');
@@ -295,7 +298,7 @@ export default function TemplateDetailPage() {
                     {a.mimeType}{a.fileSize ? ` · ${Math.round(a.fileSize / 1024)} KB` : ''}
                   </p>
                 </div>
-                <button type="button" onClick={() => detach(a.documentId)} disabled={busy}
+                <button type="button" onClick={() => setDetachDocId(a.documentId)} disabled={busy}
                   className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs text-red-800">
                   <Trash2 className="h-3 w-3" /> Remove
                 </button>
@@ -314,6 +317,15 @@ export default function TemplateDetailPage() {
           {t.archivedAt && (<><dt>Archived</dt><dd className="text-slate-800">{new Date(t.archivedAt).toLocaleString()}</dd></>)}
         </dl>
       </section>
+      <ConfirmDialog
+        open={detachDocId != null}
+        onClose={() => setDetachDocId(null)}
+        onConfirm={detach}
+        title="Remove this attachment?"
+        description="The file will be detached from this template. Existing project instances that already inherited the attachment keep it."
+        confirmLabel="Remove"
+        variant="danger"
+      />
     </div>
   );
 }

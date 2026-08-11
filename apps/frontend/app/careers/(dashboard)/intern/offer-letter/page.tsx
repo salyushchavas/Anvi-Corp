@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import toast from 'react-hot-toast';
 import {
   AlertCircle,
   CheckCircle2,
@@ -225,7 +226,7 @@ function StateCard({ offer }: { offer: InstanceDetail }) {
                   (offer.templateTitle ?? 'Offer Letter') + '.pdf');
               } catch (e) {
                 const ax = e as { response?: { data?: { error?: string } }; message?: string };
-                alert(ax.response?.data?.error ?? ax.message ?? 'Download failed');
+                toast.error(ax.response?.data?.error ?? ax.message ?? 'Download failed');
               }
             }}
             className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-900"

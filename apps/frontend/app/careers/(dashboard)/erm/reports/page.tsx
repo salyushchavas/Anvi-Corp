@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
@@ -209,7 +210,7 @@ function CsvButton({
         URL.revokeObjectURL(url);
       })
       .catch((e: any) =>
-        alert('CSV download failed: ' + (e?.response?.data?.error ?? e?.message)),
+        toast.error('CSV download failed: ' + (e?.response?.data?.error ?? e?.message)),
       );
   }
   return (

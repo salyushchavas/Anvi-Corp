@@ -12,6 +12,7 @@ import {
   Search,
 } from 'lucide-react';
 import api from '@/lib/careers/api';
+import toast from 'react-hot-toast';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 
@@ -291,7 +292,7 @@ function DownloadAllButton({
           msg = parsed.error ?? parsed.message;
         } catch { /* not JSON */ }
       }
-      alert(msg ?? ax.message ?? 'Download failed');
+      toast.error(msg ?? ax.message ?? 'Download failed');
     } finally {
       setBusy(false);
     }

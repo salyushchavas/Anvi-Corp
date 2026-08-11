@@ -67,11 +67,13 @@ export default function ErmDecisionCenterPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  function goToOffer(_applicationId: string) {
+  function goToOffer(applicationId: string) {
     // Repointed off the legacy /offers/new form onto the IDMS cockpit's
-    // "Awaiting offer" tab — the ERM picks the applicant there and the
-    // template picker starts the IDMS instance. Old free-form flow gone.
-    router.push(`/careers/erm/offers?tab=awaiting`);
+    // "Awaiting offer" tab. Now passes the applicationId as a query
+    // param so the cockpit pre-selects THIS applicant instead of
+    // dropping the ERM into a stateless list where they'd have to
+    // re-find the row they just came from.
+    router.push(`/careers/erm/offers?tab=awaiting&applicationId=${applicationId}`);
   }
 
   return (

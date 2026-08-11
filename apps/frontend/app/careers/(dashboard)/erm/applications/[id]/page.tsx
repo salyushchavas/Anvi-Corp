@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
+import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
@@ -79,7 +80,7 @@ export default function ApplicationDetailPage() {
       await load();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
-      alert(
+      toast.error(
         ax.response?.data?.error ??
           (e instanceof Error ? e.message : 'Failed to resume'),
       );
@@ -345,7 +346,11 @@ export default function ApplicationDetailPage() {
                     if last interview wasn't SELECTED, the POST will 409. */}
                 {a.stage === 'INTERVIEWED' && (
                   <Link
-                    href={`/careers/erm/offers?tab=awaiting`}
+                    // Pass this applicant's id so the cockpit pre-
+                    // selects them in the awaiting-offers list instead
+                    // of forcing the ERM to re-find the row they just
+                    // came from.
+                    href={`/careers/erm/offers?tab=awaiting&applicationId=${id}`}
                     className="block w-full rounded-md bg-brand-700 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-brand-800"
                   >
                     Send offer

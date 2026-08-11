@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { CheckCircle2, ChevronLeft, ExternalLink, Send } from 'lucide-react';
+import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
@@ -87,7 +88,7 @@ export default function InterviewDetailPage() {
       await api.post(`/api/v1/erm/interviews/${id}/notes`, notesDraft);
       await load();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to save notes');
+      toast.error(e instanceof Error ? e.message : 'Failed to save notes');
     } finally {
       setSavingNotes(false);
     }
@@ -425,7 +426,14 @@ export default function InterviewDetailPage() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => router.push(`/careers/erm/offers?tab=awaiting`)}
+                      // Include the applicationId so the cockpit pre-
+                      // selects this applicant on landing instead of
+                      // rendering a stateless list — the audit flagged
+                      // the ERM having to re-find the row they just
+                      // interviewed as the top Send-Offer friction.
+                      onClick={() => router.push(
+                        `/careers/erm/offers?tab=awaiting&applicationId=${data.applicant?.applicationId}`,
+                      )}
                       disabled={!data.applicant?.applicationId}
                       className="mt-3 inline-flex w-full items-center justify-center gap-1 rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:bg-slate-300"
                     >

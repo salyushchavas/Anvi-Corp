@@ -6,6 +6,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
 import { ChevronLeft, ChevronRight, FileText, Upload, X } from 'lucide-react';
 import DraftAutosaveIndicator from '@/components/ui/DraftAutosaveIndicator';
@@ -303,7 +304,7 @@ function AssignProjectPageInner() {
           await api.post(`/api/v1/trainer/projects/${projectId}/file`, fd);
         } catch (fileErr) {
           const ax = fileErr as { response?: { data?: { error?: string } } };
-          alert('Project assigned, but file upload failed: '
+          toast.error('Project assigned, but file upload failed: '
             + (ax.response?.data?.error ?? 'unknown'));
         }
       }
@@ -321,7 +322,7 @@ function AssignProjectPageInner() {
           });
         } catch (repoErr) {
           const ax = repoErr as { response?: { data?: { error?: string } } };
-          alert('Project assigned, but repository link failed: '
+          toast.error('Project assigned, but repository link failed: '
             + (ax.response?.data?.error ?? 'unknown')
             + '. You can link it from the active-intern detail page.');
         }

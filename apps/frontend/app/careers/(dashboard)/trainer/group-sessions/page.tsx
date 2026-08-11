@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AlertOctagon, CheckCircle2, Copy, Plus, RefreshCw, Users, Video, X, XCircle } from 'lucide-react';
 import api from '@/lib/careers/api';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import MeetingTimezoneSelect from '@/components/ui/MeetingTimezoneSelect';
 import { formatInZone } from '@/lib/careers/format-interview-time';
 import {
@@ -188,12 +189,13 @@ function SessionRow({ s, past, onCancelled }: {
 }) {
   const [busy, setBusy] = useState(false);
   const [rowErr, setRowErr] = useState<string | null>(null);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   async function cancel() {
-    if (!confirm(`Cancel "${s.topic}"? All participants will be notified.`)) return;
     setBusy(true);
     setRowErr(null);
     try {
       await api.post(`/api/v1/trainer/group-sessions/${s.id}/cancel`, {});
+      setCancelConfirmOpen(false);
       onCancelled();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -261,7 +263,7 @@ function SessionRow({ s, past, onCancelled }: {
             </button>
           )}
           {!past && !cancelled && (
-            <button type="button" onClick={cancel} disabled={busy}
+            <button type="button" onClick={() => setCancelConfirmOpen(true)} disabled={busy}
               className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-60">
               <XCircle className="h-3 w-3" /> {busy ? 'Cancelling…' : 'Cancel'}
             </button>
@@ -273,6 +275,18 @@ function SessionRow({ s, past, onCancelled }: {
           {rowErr}
         </p>
       )}
+      {/* Themed danger confirm — cancelling notifies every
+          participant, so a native browser confirm was too easy to
+          fire by accident. */}
+      <ConfirmDialog
+        open={cancelConfirmOpen}
+        onClose={() => setCancelConfirmOpen(false)}
+        onConfirm={cancel}
+        title={`Cancel "${s.topic}"?`}
+        description="Every participant will be notified. The session slot is released."
+        confirmLabel="Cancel session"
+        variant="danger"
+      />
     </li>
   );
 }

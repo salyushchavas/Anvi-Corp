@@ -12,6 +12,7 @@ import AssignReportingStructureModal from '@/components/erm/newhire/AssignReport
 import UpdateStartDateModal from '@/components/erm/offers/UpdateStartDateModal';
 import AssignPacketModal from '@/components/erm/documents/AssignPacketModal';
 import AssignCompanyEmailDialog from '@/components/erm/mail/AssignCompanyEmailDialog';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import OnboardingStepTracker from '@/components/erm/onboarding/OnboardingStepTracker';
 import { Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -50,17 +51,14 @@ export default function NewHireDetailPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  const [activateConfirmOpen, setActivateConfirmOpen] = useState(false);
   async function activateNow() {
     if (!data) return;
-    if (!confirm(
-      'Activate this intern now? This bypasses the start-date gate and '
-      + 'flips them to ACTIVE_INTERN immediately. Only use when ERM has '
-      + 'documented an early-start exception.',
-    )) return;
     setActivating(true);
     setActivateErr(null);
     try {
       await api.post(`/api/v1/intern-lifecycles/${data.internLifecycleId}/activate`);
+      setActivateConfirmOpen(false);
       await load();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -206,7 +204,7 @@ export default function NewHireDetailPage() {
                 {data.canActivateNow && (
                   <button
                     type="button"
-                    onClick={activateNow}
+                    onClick={() => setActivateConfirmOpen(true)}
                     disabled={activating}
                     title="Bypass the joining-date gate and activate this intern immediately"
                     className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60"
@@ -215,6 +213,15 @@ export default function NewHireDetailPage() {
                     {activating ? 'Activating…' : 'Activate now'}
                   </button>
                 )}
+                <ConfirmDialog
+                  open={activateConfirmOpen}
+                  onClose={() => setActivateConfirmOpen(false)}
+                  onConfirm={activateNow}
+                  title="Activate this intern now?"
+                  description="This bypasses the start-date gate and flips them to ACTIVE_INTERN immediately. Only use when ERM has documented an early-start exception."
+                  confirmLabel="Activate now"
+                  variant="danger"
+                />
               </div>
               {data.docsAccepted && (
                 <p className="mt-2 text-[11px] text-slate-500">

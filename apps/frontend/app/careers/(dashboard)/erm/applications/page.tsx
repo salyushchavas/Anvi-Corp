@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
@@ -275,15 +276,22 @@ function ApplicationInboxPageInner() {
             decision={modal}
             onClose={() => setModal(null)}
             onApplied={(result) => {
-              alert(
-                `Succeeded: ${result.succeeded.length}\nFailed: ${result.failed.length}` +
-                  (result.failed.length > 0
-                    ? '\n\n' +
-                      result.failed
-                        .map((f) => `${f.applicationId}: ${f.reason}`)
-                        .join('\n')
+              // Toast pair instead of a blocking native alert. Success
+              // stands alone when nothing failed; failures fire a
+              // separate persistent error toast that lists the per-
+              // application reasons so the ERM can act on them.
+              toast.success(
+                `${result.succeeded.length} succeeded`
+                  + (result.failed.length > 0
+                    ? `, ${result.failed.length} failed`
                     : ''),
               );
+              if (result.failed.length > 0) {
+                const detail = result.failed
+                  .map((f) => `${f.applicationId}: ${f.reason}`)
+                  .join('\n');
+                toast.error(`Bulk failures:\n${detail}`, { duration: 8000 });
+              }
               setSelected(new Set());
               void load();
             }}

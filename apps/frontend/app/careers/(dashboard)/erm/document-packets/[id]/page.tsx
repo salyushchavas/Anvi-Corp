@@ -8,6 +8,7 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
+import ReasonDialog from '@/components/ReasonDialog';
 import AssignAdditionalDocumentModal from '@/components/erm/documents/AssignAdditionalDocumentModal';
 import type {
   DocumentPacketDetail,
@@ -25,6 +26,8 @@ export default function DocumentPacketDetailPage() {
   const [err, setErr] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [waiveOpen, setWaiveOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -45,17 +48,16 @@ export default function DocumentPacketDetailPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  async function cancel() {
+  // Destructive actions now go through the themed ReasonDialog —
+  // replaces the previous window.prompt() → alert() loop that was
+  // unstyled, easy to bypass, and left the app-shell backgrounded
+  // during the browser-native prompt. Both actions require a ≥10-char
+  // rationale for the audit trail.
+  async function runCancel(reason: string) {
     if (!id) return;
-    const reason = window.prompt('Reason for cancelling this packet?');
-    if (!reason || reason.trim().length < 10) {
-      alert('Reason must be at least 10 characters');
-      return;
-    }
     try {
-      await api.post(`/api/v1/erm/document-packets/${id}/cancel`, {
-        reason: reason.trim(),
-      });
+      await api.post(`/api/v1/erm/document-packets/${id}/cancel`, { reason });
+      setCancelOpen(false);
       await load();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -63,17 +65,11 @@ export default function DocumentPacketDetailPage() {
     }
   }
 
-  async function waivePending() {
+  async function runWaivePending(reason: string) {
     if (!id) return;
-    const reason = window.prompt('Reason to waive all pending tasks?');
-    if (!reason || reason.trim().length < 10) {
-      alert('Reason must be at least 10 characters');
-      return;
-    }
     try {
-      await api.post(`/api/v1/erm/document-packets/${id}/waive-pending`, {
-        reason: reason.trim(),
-      });
+      await api.post(`/api/v1/erm/document-packets/${id}/waive-pending`, { reason });
+      setWaiveOpen(false);
       await load();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -179,7 +175,7 @@ export default function DocumentPacketDetailPage() {
           </button>
           <button
             type="button"
-            onClick={waivePending}
+            onClick={() => setWaiveOpen(true)}
             disabled={p.status === 'COMPLETED' || p.status === 'CANCELLED'}
             className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-50 disabled:opacity-50"
           >
@@ -187,13 +183,36 @@ export default function DocumentPacketDetailPage() {
           </button>
           <button
             type="button"
-            onClick={cancel}
+            onClick={() => setCancelOpen(true)}
             disabled={p.status === 'COMPLETED' || p.status === 'CANCELLED'}
             className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50 disabled:opacity-50"
           >
             Cancel packet (SUPER_ADMIN)
           </button>
         </div>
+
+        <ReasonDialog
+          open={cancelOpen}
+          onClose={() => setCancelOpen(false)}
+          onConfirm={runCancel}
+          title="Cancel this document packet?"
+          description="The packet's pending tasks will be closed and the intern will be notified. This can't be undone."
+          reasonLabel="Reason for cancelling"
+          placeholder="Why is this packet being cancelled? (audit trail)"
+          confirmLabel="Cancel packet"
+          variant="danger"
+        />
+        <ReasonDialog
+          open={waiveOpen}
+          onClose={() => setWaiveOpen(false)}
+          onConfirm={runWaivePending}
+          title="Waive all pending tasks?"
+          description="Every task still in-flight will be marked WAIVED. Only use for exceptional cases with a documented reason."
+          reasonLabel="Reason to waive"
+          placeholder="Why are these tasks being waived? (audit trail)"
+          confirmLabel="Waive all pending"
+          variant="danger"
+        />
 
         <AssignAdditionalDocumentModal
           open={addOpen}

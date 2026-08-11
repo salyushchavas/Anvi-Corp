@@ -18,6 +18,7 @@ import toast from 'react-hot-toast';
 import { Plus, Save, Star, StarOff, Trash2 } from 'lucide-react';
 import { api } from '@/lib/careers/api';
 import { Button } from '@/components/ui/Button';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import FormField, { inputClass } from '@/components/ui/FormField';
 import PhoneInput from '@/components/ui/PhoneInput';
 import FileUpload from '@/components/ui/FileUpload';
@@ -323,11 +324,13 @@ function EducationSection({
     }
   }
 
-  async function remove(id: string) {
-    if (!confirm('Remove this education entry?')) return;
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  async function remove() {
+    if (!removeId) return;
     try {
-      await api.delete(`/api/v1/candidates/me/educations/${id}`);
+      await api.delete(`/api/v1/candidates/me/educations/${removeId}`);
       toast.success('Removed');
+      setRemoveId(null);
       await onReload();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
@@ -381,7 +384,7 @@ function EducationSection({
               )}
               <button
                 type="button"
-                onClick={() => void remove(e.id)}
+                onClick={() => setRemoveId(e.id)}
                 title="Remove"
                 className="rounded-md border border-red-200 bg-red-50 p-1.5 text-red-700 hover:bg-red-100"
               >
@@ -439,6 +442,15 @@ function EducationSection({
           Add degree
         </Button>
       )}
+      <ConfirmDialog
+        open={removeId != null}
+        onClose={() => setRemoveId(null)}
+        onConfirm={remove}
+        title="Remove this education entry?"
+        description="This entry will be deleted from your profile. You can re-add it any time."
+        confirmLabel="Remove"
+        variant="danger"
+      />
     </SectionCard>
   );
 }

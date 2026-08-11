@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, CheckCircle2, Loader2, RotateCcw } from 'lucide-react';
 import api from '@/lib/careers/api';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import WeeklyReportAttachmentPreview from '@/components/report/WeeklyReportAttachmentPreview';
 
 /**
@@ -230,9 +231,10 @@ function ReportPanel({
   onReturn: () => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
   async function submit() {
     setSaving(true);
-    try { await onApprove(); } finally { setSaving(false); }
+    try { await onApprove(); } finally { setSaving(false); setApproveConfirmOpen(false); }
   }
 
   return (
@@ -250,13 +252,27 @@ function ReportPanel({
             className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100">
             <RotateCcw className="h-3 w-3" /> Return
           </button>
-          <button type="button" onClick={submit} disabled={saving}
+          <button type="button" onClick={() => setApproveConfirmOpen(true)} disabled={saving}
             className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-800 disabled:bg-slate-300">
             {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
             Approve
           </button>
         </div>
       </header>
+
+      {/* Themed confirmation — Approve is terminal (locks the week's
+          report for the intern), so a single-click was too easy to
+          fire by accident. Optional approval note above is respected
+          — it's already in `approveNotes` when submit fires. */}
+      <ConfirmDialog
+        open={approveConfirmOpen}
+        onClose={() => setApproveConfirmOpen(false)}
+        onConfirm={submit}
+        title={`Approve weekly report for ${report.weekStart}?`}
+        description="Approval is terminal — the intern can no longer edit this week's report. Optional note above (if any) will be included."
+        confirmLabel="Approve report"
+        variant="primary"
+      />
 
       <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-2">
         <div className="space-y-3">

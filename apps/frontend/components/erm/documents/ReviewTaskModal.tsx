@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import toast from 'react-hot-toast';
 import { Download, Eye, X } from 'lucide-react';
 import api from '@/lib/careers/api';
 import type {
@@ -146,7 +147,7 @@ export default function ReviewTaskModal({ taskId, onClose, onReviewed }: Props) 
         const o = raw as { error?: string; message?: string };
         msg = o.error ?? o.message;
       }
-      alert(msg ?? ax.message ?? 'Download failed');
+      toast.error(msg ?? ax.message ?? 'Download failed');
     }
   }
 

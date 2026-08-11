@@ -18,6 +18,8 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import toast from 'react-hot-toast';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -86,6 +88,7 @@ export default function OnboardingStepTracker({
   const [err, setErr] = useState<string | null>(null);
   const [notifyOpen, setNotifyOpen] = useState(false);
   const [activatingNow, setActivatingNow] = useState(false);
+  const [activateConfirmOpen, setActivateConfirmOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,15 +113,12 @@ export default function OnboardingStepTracker({
   useEffect(() => { void load(); }, [load, refreshKey]);
 
   async function activateNow() {
-    if (!confirm(
-      'Activate this intern now? This bypasses the auto-activation schedule '
-      + 'and flips them to ACTIVE_INTERN immediately.',
-    )) return;
     setActivatingNow(true);
     try {
       await api.post(`/api/v1/intern-lifecycles/${lifecycleId}/activate`);
       await load();
       onChanged?.();
+      setActivateConfirmOpen(false);
     } finally {
       setActivatingNow(false);
     }
@@ -134,7 +134,7 @@ export default function OnboardingStepTracker({
       onChanged?.();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } }; message?: string };
-      alert(ax.response?.data?.error ?? ax.message ?? 'Notify failed');
+      toast.error(ax.response?.data?.error ?? ax.message ?? 'Notify failed');
     }
   }
 
@@ -209,7 +209,7 @@ export default function OnboardingStepTracker({
             activatingNow={activatingNow}
             mailHandoverState={mailHandoverState}
             companyEmailReady={companyEmailReady}
-            onActivateNow={activateNow}
+            onActivateNow={() => setActivateConfirmOpen(true)}
             onOpenNotifyTeam={() => setNotifyOpen(true)}
             onOpenAssignPacketModal={onOpenAssignPacketModal}
             onOpenCompanyEmailModal={onOpenCompanyEmailModal}
@@ -224,6 +224,19 @@ export default function OnboardingStepTracker({
           onConfirm={confirmNotifyTeam}
         />
       )}
+
+      {/* Themed danger confirm — Activate Now bypasses the scheduled
+          auto-activation, so a native confirm() was too easy to click
+          past. */}
+      <ConfirmDialog
+        open={activateConfirmOpen}
+        onClose={() => setActivateConfirmOpen(false)}
+        onConfirm={activateNow}
+        title="Activate this intern now?"
+        description="This bypasses the auto-activation schedule and flips them to ACTIVE_INTERN immediately."
+        confirmLabel="Activate now"
+        variant="danger"
+      />
     </section>
   );
 }

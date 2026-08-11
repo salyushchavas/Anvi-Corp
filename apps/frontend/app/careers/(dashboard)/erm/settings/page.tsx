@@ -6,6 +6,7 @@ import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import DraftAutosaveIndicator from '@/components/ui/DraftAutosaveIndicator';
 import PageHeader from '@/components/ui/PageHeader';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { readDraft, useDraftAutosave } from '@/lib/careers/useDraftAutosave';
 
 type Tab = 'templates' | 'reasons' | 'workload';
@@ -187,6 +188,7 @@ function TemplateEditor({
   const [preview, setPreview] = useState<{ subject: string; body: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
 
   // ── Per-template draft autosave ───────────────────────────────────
   // The previous useEffect below reset state whenever template.key
@@ -236,7 +238,8 @@ function TemplateEditor({
   }
 
   async function restoreDefault() {
-    if (!confirm(`Restore '${template.key}' to seeded default? Edits will be lost.`)) return;
+    // The confirm gate now lives on the themed ConfirmDialog below;
+    // this fn is the "user said yes" branch.
     setSaving(true);
     setErr(null);
     try {
@@ -247,6 +250,7 @@ function TemplateEditor({
       // Restore-to-default explicitly discards edits — drop the local
       // draft so the reset actually takes effect on next switch-back.
       draftAutosave.clear();
+      setRestoreConfirmOpen(false);
     } catch (e: any) {
       setErr(e?.response?.data?.error ?? 'Restore failed');
     } finally {
@@ -347,12 +351,26 @@ function TemplateEditor({
         </button>
         <button
           type="button"
-          onClick={() => void restoreDefault()}
+          onClick={() => setRestoreConfirmOpen(true)}
           className="ml-auto rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
         >
           Restore default
         </button>
       </div>
+
+      {/* Themed danger confirm — replaces the native confirm() so the
+          restore-to-default action stays inside the app shell + carries
+          the app's styling. Same guardrail (opt-in confirm before the
+          server call), better presentation. */}
+      <ConfirmDialog
+        open={restoreConfirmOpen}
+        onClose={() => setRestoreConfirmOpen(false)}
+        onConfirm={restoreDefault}
+        title={`Restore '${template.key}' to seeded default?`}
+        description="Your unsaved edits AND the current saved copy will be replaced with the original template shipped by Ops. This can't be undone."
+        confirmLabel="Restore default"
+        variant="danger"
+      />
       {preview && (
         <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
           <p className="text-[10px] font-semibold uppercase text-slate-500">Preview</p>

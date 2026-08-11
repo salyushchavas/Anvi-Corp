@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import api from '@/lib/careers/api';
+import ConfirmDialog from '@/components/ConfirmDialog';
+import ReasonDialog from '@/components/ReasonDialog';
 import ResumePreview from '@/components/erm/applications/ResumePreview';
 import type { HireApprovalDetail } from '@/components/manager/hire-approval-types';
 
@@ -17,6 +19,8 @@ export default function HireApprovalDetailPage() {
   const [note, setNote] = useState('');
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [hireConfirmOpen, setHireConfirmOpen] = useState(false);
+  const [rejectReasonOpen, setRejectReasonOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!interviewId) return;
@@ -37,19 +41,32 @@ export default function HireApprovalDetailPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  async function decide(action: 'approve' | 'reject' | 'hold') {
+  // Terminal hire decisions (Hire / No-Hire) now go through themed
+  // confirmation dialogs; hold stays direct because it's non-terminal
+  // and revisitable. Reject requires a REASON with min-length
+  // validation — the previous native confirm() accepted empty
+  // rationale, so a No-Hire that lost the audit trail context was
+  // one click away.
+  async function decide(
+    action: 'approve' | 'reject' | 'hold',
+    reasonOverride?: string,
+  ) {
     if (!interviewId) return;
-    if (action === 'reject') {
-      const ok = confirm('Reject this hire? The candidate will be marked REJECTED and the ERM will be notified.');
-      if (!ok) return;
-    }
     setSubmitting(true);
     setActionErr(null);
     try {
+      // Reason override (from the ReasonDialog) supersedes the free-
+      // text note field for reject flow — dialog input is required
+      // + validated, note field is the ambient optional context.
+      const body: { note?: string } = {};
+      const effectiveNote = reasonOverride ?? note.trim();
+      if (effectiveNote) body.note = effectiveNote;
       await api.post(
         `/api/v1/manager/hire-approvals/${interviewId}/${action}`,
-        note.trim() ? { note: note.trim() } : {},
+        body,
       );
+      setHireConfirmOpen(false);
+      setRejectReasonOpen(false);
       // Hold stays revisitable — reload the same page so the manager sees
       // the HOLD banner with the option to change to Hire/Reject later.
       // Hire/Reject are final — bounce back to the queue.
@@ -251,7 +268,7 @@ export default function HireApprovalDetailPage() {
               <div className="mt-3 space-y-2">
                 <button
                   type="button"
-                  onClick={() => decide('approve')}
+                  onClick={() => setHireConfirmOpen(true)}
                   disabled={submitting}
                   className="w-full rounded-md bg-green-700 px-3 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:bg-slate-300"
                 >
@@ -267,13 +284,40 @@ export default function HireApprovalDetailPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => decide('reject')}
+                  onClick={() => setRejectReasonOpen(true)}
                   disabled={submitting}
                   className="w-full rounded-md border border-red-300 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
                 >
                   No-Hire
                 </button>
               </div>
+              {/* Themed confirmations for the two TERMINAL decisions.
+                  Hire opens ConfirmDialog (irreversible-but-positive
+                  action; no rationale needed). No-Hire opens
+                  ReasonDialog with a 20-char min so the audit trail
+                  carries a real justification — the previous native
+                  confirm() accepted a bare click with no note. */}
+              <ConfirmDialog
+                open={hireConfirmOpen}
+                onClose={() => setHireConfirmOpen(false)}
+                onConfirm={() => decide('approve')}
+                title="Hire this candidate?"
+                description="The candidate is marked SELECTED and the ERM is unblocked to send the offer. This decision is final."
+                confirmLabel="Confirm hire"
+                variant="primary"
+              />
+              <ReasonDialog
+                open={rejectReasonOpen}
+                onClose={() => setRejectReasonOpen(false)}
+                onConfirm={(reason) => decide('reject', reason)}
+                title="No-Hire this candidate?"
+                description="The candidate is marked REJECTED and the ERM is notified. This decision is final."
+                reasonLabel="Reason for No-Hire (visible internally)"
+                placeholder="Why is this candidate not moving forward? (audit trail)"
+                minLength={20}
+                confirmLabel="Confirm No-Hire"
+                variant="danger"
+              />
               <p className="mt-3 text-[11px] text-slate-500">
                 Hire = SELECTED + unblocks Send Offer. Hold = pause (no
                 emails, no lifecycle change; revisit anytime).

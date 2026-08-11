@@ -76,6 +76,15 @@ function PageContent() {
   });
   const [search, setSearch] = useState('');
   const [pickerOpen, setPickerOpen] = useState<QueueRow | null>(null);
+  // Applicant pre-select from ?applicationId=… — set by every Send
+  // Offer CTA (decision-center, application-detail, interview-detail)
+  // so the ERM lands with the intended applicant already highlighted
+  // + the template picker auto-open. Cleared after the first match
+  // so a re-render doesn't keep re-opening the picker.
+  const preselectApplicationId = typeof window === 'undefined'
+    ? null
+    : new URLSearchParams(window.location.search).get('applicationId');
+  const [autoOpenedForApplicationId, setAutoOpenedForApplicationId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -91,6 +100,29 @@ function PageContent() {
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+
+  // Applicant pre-select — once rows load, find the AWAITING row that
+  // matches the URL's applicationId and open the template picker for
+  // it. Same-row-not-blank guard prevents a repeat auto-open on
+  // subsequent refetches. Silent no-op when: URL didn't carry the
+  // hint / no matching row exists / the row already has an instance
+  // (past the "awaiting" state — nothing to pick).
+  useEffect(() => {
+    if (!preselectApplicationId) return;
+    if (autoOpenedForApplicationId === preselectApplicationId) return;
+    if (rows.length === 0) return;
+    const match = rows.find((r) =>
+      !r.instanceId && r.applicationId === preselectApplicationId);
+    if (!match) return;
+    setAutoOpenedForApplicationId(preselectApplicationId);
+    if (match.selectionAckStatus === 'PENDING') {
+      // Same guard as manual openRow — surface the ack-pending toast
+      // instead of opening the picker to a wall.
+      toast('Acknowledgement pending — the intern needs to click "Receive my offer letter" on their dashboard before you can send an offer.', { icon: '⏳' });
+      return;
+    }
+    setPickerOpen(match);
+  }, [rows, preselectApplicationId, autoOpenedForApplicationId]);
 
   // Refetch when the tab regains focus — an ERM working the cockpit in
   // one window and a detail page in another sees the queue stay fresh

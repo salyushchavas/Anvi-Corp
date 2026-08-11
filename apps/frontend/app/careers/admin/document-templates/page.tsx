@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { CheckCircle2, Edit3, FileText, MinusCircle, Plus, RefreshCw, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import type { TemplateRow } from '@/lib/careers/editable-templates';
@@ -35,6 +36,7 @@ function PageContent() {
   const [err, setErr] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [showRemoved, setShowRemoved] = useState(false);
+  const [deactivateRow, setDeactivateRow] = useState<TemplateRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -64,10 +66,10 @@ function PageContent() {
   }, [items, search, showRemoved]);
 
   async function deactivate(row: TemplateRow) {
-    if (!confirm(`Deactivate "${row.title}"? It stays in the list under "Show inactive".`)) return;
     try {
       await api.delete(`/api/v1/admin/editable-templates/${row.id}`);
       toast.success(`Deactivated "${row.title}"`);
+      setDeactivateRow(null);
       await load();
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
@@ -197,7 +199,7 @@ function PageContent() {
                       {row.active && (
                         <button
                           type="button"
-                          onClick={() => void deactivate(row)}
+                          onClick={() => setDeactivateRow(row)}
                           className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
                         >
                           <MinusCircle className="h-3.5 w-3.5" />
@@ -212,6 +214,17 @@ function PageContent() {
           </table>
         </div>
       )}
+      {/* Themed danger confirm for template deactivation — replaces
+          the native confirm() so the app-shell stays owned. */}
+      <ConfirmDialog
+        open={deactivateRow != null}
+        onClose={() => setDeactivateRow(null)}
+        onConfirm={async () => { if (deactivateRow) await deactivate(deactivateRow); }}
+        title={deactivateRow ? `Deactivate "${deactivateRow.title}"?` : 'Deactivate template?'}
+        description={'The template stays visible under "Show inactive" and can be reactivated later, but the ERM Studio + new instances will hide it.'}
+        confirmLabel="Deactivate"
+        variant="danger"
+      />
     </div>
   );
 }

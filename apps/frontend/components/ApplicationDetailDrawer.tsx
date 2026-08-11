@@ -5,6 +5,7 @@ import { Ban, CheckCircle, Download, ExternalLink, LogOut, Video, X, XCircle, ty
 import toast from 'react-hot-toast';
 import api from '@/lib/careers/api';
 import ApplicationStatusBadge from '@/components/ApplicationStatusBadge';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import type { ApplicationResponse, ApplicationStatus } from '@/types';
 
 const TERMINAL_STATUSES: ReadonlyArray<ApplicationStatus> = [
@@ -153,10 +154,23 @@ export default function ApplicationDetailDrawer({
     }
   }
 
+  // Themed ConfirmDialog replaces window.confirm() so status changes
+  // (Reject / Withdraw / Mark offer declined) stay inside the app
+  // shell + carry the app's styling. State captures the target
+  // status + prompt/msg so the same dialog serves all three action
+  // buttons without three separate boilerplate copies.
+  const [pendingChange, setPendingChange] = useState<{
+    target: ApplicationStatus;
+    prompt: string;
+    msg: string;
+  } | null>(null);
   function confirmAndPatch(target: ApplicationStatus, prompt: string, msg: string) {
-    if (typeof window !== 'undefined' && window.confirm(prompt)) {
-      void patchStatus(target, msg);
-    }
+    setPendingChange({ target, prompt, msg });
+  }
+  async function applyPendingChange() {
+    if (!pendingChange) return;
+    await patchStatus(pendingChange.target, pendingChange.msg);
+    setPendingChange(null);
   }
 
   const isTerminal = app ? TERMINAL_STATUSES.includes(app.status) : false;
@@ -401,6 +415,20 @@ export default function ApplicationDetailDrawer({
           )}
         </div>
       </aside>
+
+      {/* Themed status-change confirm (Reject / Withdraw / Mark
+          declined). Replaces window.confirm() so the ERM stays inside
+          the app shell instead of a browser-native modal that
+          interrupts the drawer's animation. */}
+      <ConfirmDialog
+        open={pendingChange != null}
+        onClose={() => setPendingChange(null)}
+        onConfirm={applyPendingChange}
+        title="Confirm status change"
+        description={pendingChange?.prompt}
+        confirmLabel={pendingChange?.target === 'REJECTED' ? 'Reject' : 'Confirm'}
+        variant={pendingChange?.target === 'REJECTED' ? 'danger' : 'primary'}
+      />
     </>
   );
 }
