@@ -19,6 +19,7 @@ import {
   ChevronDown,
   Edit3,
   Eye,
+  FileText,
   Info,
   Loader2,
   RefreshCw,
@@ -513,6 +514,46 @@ function PageContent() {
     }
   }
 
+  // ── Preview PDF (iterate on layout without a real intern run) ────
+  const [previewingPdf, setPreviewingPdf] = useState(false);
+  async function previewPdf() {
+    if (!template) return;
+    setPreviewingPdf(true);
+    try {
+      // Blob response so the browser can open the returned PDF in a
+      // new tab; the shared api client attaches the session cookie +
+      // CSRF header exactly like every other admin write.
+      const res = await api.post(
+        `/api/v1/admin/editable-templates/by-key/${template.key}/preview-pdf`,
+        {},
+        { responseType: 'blob' },
+      );
+      const url = URL.createObjectURL(res.data as Blob);
+      // Open in a new tab so the studio state (canvas selections, edit
+      // draft) survives — a same-tab window.location swap would nuke
+      // any in-flight anchor placement the admin was making.
+      const win = window.open(url, '_blank');
+      // Some browsers block window.open under a fetch chain — fall
+      // back to a hidden anchor download so the admin still gets the
+      // file rather than a silent failure.
+      if (!win) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${template.key}-preview.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      // Revoke on the next macrotask so the new tab has time to load.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: string } }; message?: string };
+      toast.error(ax.response?.data?.error ?? ax.message ?? 'Preview failed');
+    } finally {
+      setPreviewingPdf(false);
+    }
+  }
+
   // ── Re-upload source DOCX (clears the schema server-side) ────────
   async function reuploadSource(file: File) {
     if (!template) return;
@@ -571,8 +612,10 @@ function PageContent() {
         previewMode={previewMode}
         onModeChange={setPreviewMode}
         onSave={save}
+        onPreviewPdf={previewPdf}
         onReupload={() => setReuploadOpen(true)}
         saving={saving}
+        previewingPdf={previewingPdf}
         validationError={validation.error}
       />
 
@@ -718,16 +761,20 @@ function StudioHeader({
   previewMode,
   onModeChange,
   onSave,
+  onPreviewPdf,
   onReupload,
   saving,
+  previewingPdf,
   validationError,
 }: {
   template: TemplateRow;
   previewMode: PreviewMode;
   onModeChange: (m: PreviewMode) => void;
   onSave: () => void;
+  onPreviewPdf: () => void;
   onReupload: () => void;
   saving: boolean;
+  previewingPdf: boolean;
   validationError: string | null;
 }) {
   return (
@@ -761,6 +808,18 @@ function StudioHeader({
         >
           <RefreshCw className="h-3.5 w-3.5" />
           Replace source
+        </button>
+        <button
+          type="button"
+          onClick={onPreviewPdf}
+          disabled={previewingPdf}
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          title="Render this template as a PDF with sample values — same renderer the finalized offer uses"
+        >
+          {previewingPdf
+            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            : <FileText className="h-3.5 w-3.5" />}
+          Preview PDF
         </button>
         <button
           type="button"

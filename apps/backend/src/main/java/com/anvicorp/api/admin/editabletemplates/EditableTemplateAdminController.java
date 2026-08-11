@@ -2,6 +2,9 @@ package com.anvicorp.api.admin.editabletemplates;
 
 import com.anvicorp.api.entity.User;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -101,5 +104,31 @@ public class EditableTemplateAdminController {
             @jakarta.validation.Valid @RequestBody EditableTemplateDtos.SaveSchemaRequest req,
             @AuthenticationPrincipal User caller) {
         return service.saveSchema(id, req, caller);
+    }
+
+    // ── Preview PDF (admin studio iteration path) ─────────────────────
+
+    /**
+     * Render a placeholder-filled PDF from the template's canonical HTML
+     * via the SAME {@link com.anvicorp.api.erm.idms.DocumentInstancePdfRenderer}
+     * the real finalize path uses. Byte-representative of a finalized
+     * offer so the admin can iterate on layout / typography / header /
+     * footer without a live intern run per attempt.
+     *
+     * <p>POST so a mutation isn't cached by any intermediary. RBAC
+     * mirrors the rest of this controller (SUPER_ADMIN / JOBS_ADMIN);
+     * CSRF flows through the shared api client on the frontend.</p>
+     */
+    @PostMapping("/by-key/{key}/preview-pdf")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'JOBS_ADMIN')")
+    public ResponseEntity<byte[]> previewPdf(@PathVariable String key) {
+        byte[] pdf = service.previewPdf(key);
+        String filename = key + "-preview.pdf";
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .cacheControl(CacheControl.noStore().cachePrivate())
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"" + filename + "\"")
+                .body(pdf);
     }
 }
