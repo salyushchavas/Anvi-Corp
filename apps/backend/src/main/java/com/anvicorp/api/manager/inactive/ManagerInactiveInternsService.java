@@ -57,6 +57,21 @@ public class ManagerInactiveInternsService {
     @Transactional(readOnly = true)
     public ManagerInactiveInternsDtos.InactiveInternsListResponse list(
             User caller, Integer year, Integer month) {
+        return list(caller, year, month, false);
+    }
+
+    /**
+     * B3-remainder overload — {@code terminatedOnly=true} narrows the
+     * inactive-interns query to just the TERMINATED cohort (management-
+     * initiated separations), the shape the /manager/terminated-interns
+     * section renders. Kept as an overload of the existing all-inactives
+     * list so the two views share every join, DTO mapping, and closure-
+     * snapshot enrichment — the only difference is the WHERE clause
+     * predicate.
+     */
+    @Transactional(readOnly = true)
+    public ManagerInactiveInternsDtos.InactiveInternsListResponse list(
+            User caller, Integer year, Integer month, boolean terminatedOnly) {
         requireManagerOrSuperAdmin(caller);
 
         // Build period filter (optional). Default = all time.
@@ -68,9 +83,15 @@ public class ManagerInactiveInternsService {
             exitToExclusive = java.sql.Date.valueOf(period.plusMonths(1).atDay(1));
         }
 
+        // TERMINATED = ERM/Manager-initiated separation (recorded on
+        // il.active_status by ExitService via
+        // mapToLifecycleActiveStatus). All-inactive default catches
+        // both the lifecycle_status flip AND the granular exit types.
         StringBuilder where = new StringBuilder(
-                " WHERE (u.lifecycle_status = 'INACTIVE_INTERN' "
-                        + "      OR il.active_status IN ('COMPLETED','RESIGNED','TERMINATED')) ");
+                terminatedOnly
+                        ? " WHERE il.active_status = 'TERMINATED' "
+                        : " WHERE (u.lifecycle_status = 'INACTIVE_INTERN' "
+                                + "      OR il.active_status IN ('COMPLETED','RESIGNED','TERMINATED')) ");
         List<Object> params = new ArrayList<>();
         // Manager scope is org-wide — no manager_id filter. SUPER_ADMIN
         // and MANAGER see the same set; the role gate ran above.

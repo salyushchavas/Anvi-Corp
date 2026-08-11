@@ -35,6 +35,7 @@ const ITEMS: { href: string; label: string; phase?: number }[] = [
   { href: '/careers/manager/risk-center',           label: 'Risk Center',         phase: 4 },
   { href: '/careers/manager/reports',               label: 'Reports',             phase: 4 },
   { href: '/careers/manager/inactive-interns',      label: 'Inactive Interns',    phase: 4 },
+  { href: '/careers/manager/terminated-interns',    label: 'Terminated Interns',  phase: 4 },
   { href: '/careers/manager/settings',              label: 'Settings',            phase: 5 },
   { href: '/careers/manager/help',                  label: 'Help',                phase: 5 },
 ];

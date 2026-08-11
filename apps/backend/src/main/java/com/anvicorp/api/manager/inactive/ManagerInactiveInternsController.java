@@ -28,6 +28,8 @@ public class ManagerInactiveInternsController {
     public ManagerInactiveInternsDtos.InactiveInternsListResponse list(
             @RequestParam(required = false, name = "y") Integer year,
             @RequestParam(required = false, name = "m") Integer month,
+            @RequestParam(required = false, name = "terminatedOnly",
+                    defaultValue = "false") boolean terminatedOnly,
             @AuthenticationPrincipal User caller) {
         if (year != null && (year < 1900 || year > 2999)) {
             throw new BadRequestException("y (year) out of range");
@@ -38,6 +40,6 @@ public class ManagerInactiveInternsController {
         if ((year == null) ^ (month == null)) {
             throw new BadRequestException("y and m must be provided together");
         }
-        return service.list(caller, year, month);
+        return service.list(caller, year, month, terminatedOnly);
     }
 }
