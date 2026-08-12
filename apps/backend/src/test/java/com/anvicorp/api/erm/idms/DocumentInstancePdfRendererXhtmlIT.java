@@ -185,76 +185,232 @@ class DocumentInstancePdfRendererXhtmlIT {
      *  via the test-hook wrap) so a future edit that drops the width
      *  overrides fails loudly.
      *
-     *  <p>Page size pinned to A4 with the exact margins the ANVI_OPT
-     *  source template DOCX declares (LEFT 1.0in, RIGHT 0.88in, TOP
-     *  1.0in, BOTTOM 1.0in). Prior config was Letter with 20mm all-
-     *  round which over-inset the body ~0.21in top/bottom + shifted the
-     *  right edge (Letter is narrower than A4); the executed PDF read
-     *  visibly cramped vs the source. Guard test — a change that drifts
-     *  back to Letter fails here.</p> */
+     *  <p>Default fallback path — for a body without a
+     *  {@code section.docx} wrapper (hand-authored template or unit test
+     *  input), the shell must fall back to A4 + 1in/0.88in/1in/1in as a
+     *  sensible default. When the body DOES carry a docx-preview section,
+     *  the geometry is scraped FROM THAT SECTION (see the
+     *  {@link #page_geometry_scraped_from_docx_preview_section} test) so
+     *  the default doesn't leak past documents that have their own real
+     *  page dimensions.</p> */
     @Test
     void print_css_shell_pins_content_width_and_page_size() {
         DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
         String shell = renderer.toXhtmlForTest("Offer", "<p>body</p>");
-        assertTrue(shell.contains("@page { size: A4"),
-                "page size not pinned to A4: " + shell);
+        assertTrue(shell.contains("size: A4"),
+                "default page size not A4: " + shell);
         assertTrue(shell.contains("margin: 1in 0.88in 1in 1in"),
-                "A4 margins not pinned to source-truth 1.0/0.88/1.0/1.0 in: " + shell);
+                "default page margins missing: " + shell);
         assertTrue(shell.contains("max-width: 100%"),
                 "content max-width constraint missing: " + shell);
         assertTrue(shell.contains("word-wrap: break-word"),
                 "long-token break-word missing (email/url overflow guard): " + shell);
         assertTrue(shell.contains("article, section, div"),
                 "docx-preview wrapper width override missing: " + shell);
+        // Defence-in-depth CSS strip for the double-margin bug — the
+        // renderer's jsoup pass zeroes inline padding on sections; the
+        // CSS override catches any variant that slipped through.
+        assertTrue(shell.contains("padding: 0 !important"),
+                "section.docx padding-strip CSS override missing "
+                        + "(would re-double the margin with docx-preview inline padding): "
+                        + shell);
     }
 
-    /** ANVI running header/footer contract — the page CSS declares
-     *  {@code @top-center} + {@code @bottom-center} margin boxes, and
-     *  the body carries the two {@code position: running(...)} elements
-     *  the renderer hoists into those boxes. Guards the layout
-     *  against a future edit that (a) drops the running-element rule,
-     *  (b) drops the margin-box content, or (c) forgets to embed the
-     *  header/footer nodes in the body.
+    /** BUG (survey findings for commit c4f568d) — the executed PDF had:
+     *   1. DOUBLED margins because @page margin + docx-preview's inline
+     *      section padding both applied.
+     *   2. DOUBLE header/footer because the DOCX's own <header>/<footer>
+     *      rendered inline while a hardcoded ANVI logo header also
+     *      repeated per page.
+     *   3. Non-generic ANVI branding stamped onto every template even
+     *      when the uploaded doc had nothing to do with ANVI.
      *
-     *  <p>Prior renders had NO header/footer at all: the source
-     *  template's ANVI logo + address block simply never made it to the
-     *  PDF, so the executed offer differed from the source at a glance.
-     *  This test also asserts the source-truth insets (header 0.08in
-     *  from page top, footer 0.12in from page bottom) so a future style
-     *  refactor that shifts the padding fails loudly.</p> */
+     *  <p>This test guards the generic contract that fixed all three.
+     *  Feed the renderer a docx-preview-shaped body (a
+     *  {@code section.docx} carrying inline padding + width + min-height,
+     *  wrapping a {@code <header>} + body + {@code <footer>}), then
+     *  assert:</p>
+     *  <ol>
+     *   <li>The scraped padding becomes the effective @page margin —
+     *       so each document uses ITS OWN page geometry, not a
+     *       hardcoded default.</li>
+     *   <li>The section's inline padding / width / min-height are
+     *       STRIPPED — no double-margin.</li>
+     *   <li>The document's own {@code <header>} is marked
+     *       {@code position: running(docHeader)} and the {@code <footer>}
+     *       {@code running(docFooter)}, referenced from
+     *       {@code @top-center / @bottom-center} by GENERIC names —
+     *       no hardcoded ANVI logo, no hardcoded address footer.</li>
+     *  </ol> */
     @Test
-    void print_css_shell_has_anvi_running_header_and_footer() {
+    void page_geometry_scraped_from_docx_preview_section() {
         DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
-        String shell = renderer.toXhtmlForTest("Offer", "<p>body</p>");
-        // @page margin-boxes reference the two running elements.
-        assertTrue(shell.contains("@top-center { content: element(anviHeader)"),
-                "@top-center running header missing: " + shell);
-        assertTrue(shell.contains("@bottom-center { content: element(anviFooter)"),
-                "@bottom-center running footer missing: " + shell);
-        // Source-truth insets — header 0.08in from page top, footer
-        // 0.12in from page bottom. If these drift the header/footer
-        // move off the source's exact position.
-        assertTrue(shell.contains("padding-top: 0.08in"),
-                "header 0.08in top offset (source-truth) missing: " + shell);
-        assertTrue(shell.contains("padding-bottom: 0.12in"),
-                "footer 0.12in bottom offset (source-truth) missing: " + shell);
-        // The two elements marked `position: running(...)` — openhtmltopdf
-        // hoists these OUT of body flow and INTO the margin boxes.
-        assertTrue(shell.contains("position: running(anviHeader)"),
-                "header running-element declaration missing: " + shell);
-        assertTrue(shell.contains("position: running(anviFooter)"),
-                "footer running-element declaration missing: " + shell);
-        // Header + footer nodes actually present in the body — the CSS
-        // declaration is useless if there's nothing to hoist.
-        assertTrue(shell.contains("class=\"pdf-anvi-header\""),
-                "header element missing from body: " + shell);
-        assertTrue(shell.contains("class=\"pdf-anvi-footer\""),
-                "footer element missing from body: " + shell);
-        // Footer copy matches the source template's address block.
-        assertTrue(shell.contains("7950 Legacy Dr, Suite 400, Plano, TX, 75024"),
-                "footer address block copy missing: " + shell);
-        assertTrue(shell.contains("info@anvicorp.com"),
-                "footer email missing: " + shell);
+        // Shape a real docx-preview canvas: outer article + one section
+        // per page, section carrying inline padding=DOCX margins and
+        // width/min-height=DOCX page size, header + content + footer
+        // nested inside. Two sections = two docx-preview "pages".
+        String body =
+                "<article class=\"docx\">"
+                        + "<section class=\"docx\" style=\"padding-left: 1in; "
+                        + "padding-right: 0.88in; padding-top: 1in; padding-bottom: 1in; "
+                        + "width: 21cm; min-height: 29.7cm;\">"
+                        + "<header style=\"margin-top: calc(0.5in - 1in); min-height: 0.5in;\">"
+                        + "<img src=\"data:image/png;base64,XX\" alt=\"logo\" /></header>"
+                        + "<p>Body of page 1.</p>"
+                        + "<footer style=\"margin-bottom: calc(0.5in - 1in); min-height: 0.5in;\">"
+                        + "Company address line</footer>"
+                        + "</section>"
+                        + "<section class=\"docx\" style=\"padding-left: 1in; "
+                        + "padding-right: 0.88in; padding-top: 1in; padding-bottom: 1in; "
+                        + "width: 21cm; min-height: 29.7cm;\">"
+                        + "<header><img src=\"data:image/png;base64,YY\" alt=\"logo\" /></header>"
+                        + "<p>Body of page 2.</p>"
+                        + "<footer>Company address line</footer>"
+                        + "</section>"
+                        + "</article>";
+        String shell = renderer.toXhtmlForTest("Any Template", body);
+
+        // 1. @page geometry scraped from the section — 21cm × 29.7cm size,
+        //    1in/0.88in/1in/1in margin (top / right / bottom / left).
+        assertTrue(shell.contains("size: 21cm 29.7cm"),
+                "@page size not scraped from section width+min-height: " + shell);
+        assertTrue(shell.contains("margin: 1in 0.88in 1in 1in"),
+                "@page margin not scraped from section padding: " + shell);
+
+        // 2. Section inline padding / width / min-height stripped — no
+        //    double margin. Belt: no `padding-left: 1in` remains inline
+        //    on any section; braces: the safety CSS !important would
+        //    override anything the strip missed (asserted elsewhere).
+        assertTrue(!shell.contains("padding-left: 1in;"),
+                "section inline padding-left not stripped — double-margin regression: " + shell);
+        assertTrue(!shell.contains("padding-right: 0.88in;"),
+                "section inline padding-right not stripped: " + shell);
+        assertTrue(!shell.contains("min-height: 29.7cm"),
+                "section inline min-height not stripped: " + shell);
+        assertTrue(!shell.contains("width: 21cm"),
+                "section inline width not stripped: " + shell);
+
+        // 3. Header / footer hoisted to running elements — generic names,
+        //    referenced from @page margin boxes.
+        assertTrue(shell.contains("@top-center { content: element(docHeader)"),
+                "@top-center generic docHeader reference missing: " + shell);
+        assertTrue(shell.contains("@bottom-center { content: element(docFooter)"),
+                "@bottom-center generic docFooter reference missing: " + shell);
+        assertTrue(shell.contains("position: running(docHeader)"),
+                "docHeader running-element style rule missing: " + shell);
+        assertTrue(shell.contains("position: running(docFooter)"),
+                "docFooter running-element style rule missing: " + shell);
+        assertTrue(shell.contains("class=\"pdf-doc-header\"") || shell.contains(" pdf-doc-header"),
+                "first <header> not marked with pdf-doc-header class: " + shell);
+        assertTrue(shell.contains("class=\"pdf-doc-footer\"") || shell.contains(" pdf-doc-footer"),
+                "first <footer> not marked with pdf-doc-footer class: " + shell);
+
+        // 4. Extra header/footer copies dropped — the second section
+        //    HAD its own header/footer nodes; they must be removed so
+        //    only one running element exists to hoist.
+        long headerCount = countOccurrences(shell, "<header");
+        long footerCount = countOccurrences(shell, "<footer");
+        assertTrue(headerCount == 1,
+                "expected exactly ONE <header> in the body after hoist, got "
+                        + headerCount + ": " + shell);
+        assertTrue(footerCount == 1,
+                "expected exactly ONE <footer> in the body after hoist, got "
+                        + footerCount + ": " + shell);
+
+        // 5. NO ANVI hardcoding leftover from commit c4f568d.
+        assertTrue(!shell.contains("anviHeader"),
+                "hardcoded anviHeader reference must be removed: " + shell);
+        assertTrue(!shell.contains("anviFooter"),
+                "hardcoded anviFooter reference must be removed: " + shell);
+        assertTrue(!shell.contains("pdf-anvi-header"),
+                "hardcoded pdf-anvi-header class must be removed: " + shell);
+        assertTrue(!shell.contains("pdf-anvi-footer"),
+                "hardcoded pdf-anvi-footer class must be removed: " + shell);
+        assertTrue(!shell.contains("7950 Legacy Dr"),
+                "hardcoded ANVI address footer must be removed: " + shell);
+        assertTrue(!shell.contains("info@anvicorp.com"),
+                "hardcoded ANVI email footer must be removed: " + shell);
+    }
+
+    /** Document with NO header or footer at all (a hand-authored template,
+     *  or an uploaded DOCX with a plain layout) — the shell must NOT
+     *  reference {@code element(docHeader)} or {@code element(docFooter)},
+     *  so openhtmltopdf doesn't reserve empty margin-box space and push
+     *  the body down. Confirms genericity across doc types. */
+    @Test
+    void no_header_no_footer_document_produces_no_margin_box_references() {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        String shell = renderer.toXhtmlForTest("Plain Doc",
+                "<p>Just body content, no header, no footer.</p>");
+        // Empty running-element references would consume vertical space
+        // in the margin box for no reason.
+        assertTrue(!shell.contains("element(docHeader)"),
+                "empty document must NOT reference @top-center element(docHeader): " + shell);
+        assertTrue(!shell.contains("element(docFooter)"),
+                "empty document must NOT reference @bottom-center element(docFooter): " + shell);
+        // The default @page is still there — just size + margin, no
+        // margin boxes.
+        assertTrue(shell.contains("size: A4"),
+                "default page size missing: " + shell);
+        assertTrue(shell.contains("margin: 1in 0.88in 1in 1in"),
+                "default page margin missing: " + shell);
+    }
+
+    /** {@link DocumentInstancePdfRenderer#extractInlineLength(String, String)}
+     *  edge cases — the scrape must accept simple lengths only, reject
+     *  anything else so a template with a pathological inline value
+     *  falls back to the default @page rather than piping garbage
+     *  through to openhtmltopdf. */
+    @Test
+    void extract_inline_length_accepts_simple_lengths_only() {
+        // Simple lengths in the units docx-preview emits.
+        org.junit.jupiter.api.Assertions.assertEquals("1in",
+                DocumentInstancePdfRenderer.extractInlineLength(
+                        "padding-left: 1in;", "padding-left"));
+        org.junit.jupiter.api.Assertions.assertEquals("0.88in",
+                DocumentInstancePdfRenderer.extractInlineLength(
+                        "padding-right: 0.88in;", "padding-right"));
+        org.junit.jupiter.api.Assertions.assertEquals("21cm",
+                DocumentInstancePdfRenderer.extractInlineLength(
+                        "width: 21cm;", "width"));
+        // Missing property = null (caller falls back to default).
+        assertTrue(null == DocumentInstancePdfRenderer.extractInlineLength(
+                        "font-family: sans-serif;", "padding-left"),
+                "absent property must yield null");
+        // Non-length value = null (calc(...), keyword, url()).
+        assertTrue(null == DocumentInstancePdfRenderer.extractInlineLength(
+                        "padding-left: auto;", "padding-left"),
+                "keyword 'auto' must NOT parse as a length");
+        assertTrue(null == DocumentInstancePdfRenderer.extractInlineLength(
+                        "padding-left: calc(1in - 0.5in);", "padding-left"),
+                "calc() must NOT parse as a simple length");
+        assertTrue(null == DocumentInstancePdfRenderer.extractInlineLength(
+                        "background: url(javascript:x);", "background"),
+                "URL value must NOT parse as a length");
+    }
+
+    /** {@link DocumentInstancePdfRenderer#stripInlineProperties(String, String...)}
+     *  — remove named declarations, keep the rest, clean up trailing
+     *  semicolons. Guards the section-padding strip that fixes the
+     *  double-margin bug. */
+    @Test
+    void strip_inline_properties_removes_named_leaves_rest() {
+        // All three padding declarations removed; font-family kept.
+        String out = DocumentInstancePdfRenderer.stripInlineProperties(
+                "padding-left: 1in; padding-top: 1in; font-family: Arial;",
+                "padding-left", "padding-top");
+        assertTrue(!out.contains("padding-left"),
+                "padding-left not stripped: " + out);
+        assertTrue(!out.contains("padding-top"),
+                "padding-top not stripped: " + out);
+        assertTrue(out.contains("font-family: Arial"),
+                "unrelated declaration was lost: " + out);
+        // Strip everything → empty string.
+        String empty = DocumentInstancePdfRenderer.stripInlineProperties(
+                "padding-left: 1in; padding-top: 1in;",
+                "padding-left", "padding-top");
+        assertTrue(empty.isEmpty(),
+                "expected empty string when every property is stripped, got '" + empty + "'");
     }
 
     /** BUG 4 — bulleted lists in the source DOCX rendered as cramped
