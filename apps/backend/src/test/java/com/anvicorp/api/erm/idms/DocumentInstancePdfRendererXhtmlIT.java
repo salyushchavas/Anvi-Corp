@@ -291,15 +291,25 @@ class DocumentInstancePdfRendererXhtmlIT {
                 "section inline width not stripped: " + shell);
 
         // 3. Header / footer hoisted to running elements — generic names,
-        //    referenced from @page margin boxes.
-        assertTrue(shell.contains("@top-center { content: element(docHeader)"),
-                "@top-center generic docHeader reference missing: " + shell);
+        //    referenced from @page margin boxes. Header uses @top-LEFT
+        //    (not @top-center) so it anchors to the left of the top
+        //    margin band; combined with the negative margin-left below
+        //    the logo extends flush with the physical page left edge —
+        //    matching the source DOCX's negative paragraph indent.
+        assertTrue(shell.contains("@top-left { content: element(docHeader)"),
+                "@top-left generic docHeader reference missing: " + shell);
         assertTrue(shell.contains("@bottom-center { content: element(docFooter)"),
                 "@bottom-center generic docFooter reference missing: " + shell);
         assertTrue(shell.contains("position: running(docHeader)"),
                 "docHeader running-element style rule missing: " + shell);
         assertTrue(shell.contains("position: running(docFooter)"),
                 "docFooter running-element style rule missing: " + shell);
+        // Negative margin-left = -(scraped left @page margin, here 1in)
+        // — pulls the header content out of the @top-left box's left
+        // boundary to the physical page edge (x=0).
+        assertTrue(shell.contains("margin-left: -1in"),
+                "header negative margin-left offset missing "
+                        + "(would leave logo inset by 1in): " + shell);
         assertTrue(shell.contains("class=\"pdf-doc-header\"") || shell.contains(" pdf-doc-header"),
                 "first <header> not marked with pdf-doc-header class: " + shell);
         assertTrue(shell.contains("class=\"pdf-doc-footer\"") || shell.contains(" pdf-doc-footer"),
@@ -345,9 +355,12 @@ class DocumentInstancePdfRendererXhtmlIT {
         // Empty running-element references would consume vertical space
         // in the margin box for no reason.
         assertTrue(!shell.contains("element(docHeader)"),
-                "empty document must NOT reference @top-center element(docHeader): " + shell);
+                "empty document must NOT reference @top-left element(docHeader): " + shell);
         assertTrue(!shell.contains("element(docFooter)"),
                 "empty document must NOT reference @bottom-center element(docFooter): " + shell);
+        // Header negative-margin rule likewise absent — nothing to offset.
+        assertTrue(!shell.contains("margin-left: -1in"),
+                "empty document must NOT emit the header offset rule: " + shell);
         // The default @page is still there — just size + margin, no
         // margin boxes.
         assertTrue(shell.contains("size: A4"),

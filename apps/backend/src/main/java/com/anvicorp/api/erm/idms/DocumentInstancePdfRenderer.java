@@ -82,6 +82,7 @@ public class DocumentInstancePdfRenderer {
      *  or a docx-preview variant that emits a different wrapper shape). */
     private static final String DEFAULT_PAGE_SIZE = "A4";
     private static final String DEFAULT_PAGE_MARGIN = "1in 0.88in 1in 1in";
+    private static final String DEFAULT_PAGE_MARGIN_LEFT = "1in";
 
     /** Simple CSS length shape — number + unit. Accept only what a docx-
      *  preview render actually produces (in / cm / mm / pt / px). We
@@ -225,13 +226,19 @@ public class DocumentInstancePdfRenderer {
         final String bodyHtml;
         final String pageSize;
         final String pageMargin;
+        /** Left @page margin as a bare CSS length (e.g. "1in") — kept
+         *  separate from the concatenated {@link #pageMargin} so the
+         *  header running element can offset itself by exactly this
+         *  amount and extend to the physical page left edge. */
+        final String pageMarginLeft;
         final boolean hasHeader;
         final boolean hasFooter;
         PreparedDoc(String bodyHtml, String pageSize, String pageMargin,
-                    boolean hasHeader, boolean hasFooter) {
+                    String pageMarginLeft, boolean hasHeader, boolean hasFooter) {
             this.bodyHtml = bodyHtml;
             this.pageSize = pageSize;
             this.pageMargin = pageMargin;
+            this.pageMarginLeft = pageMarginLeft;
             this.hasHeader = hasHeader;
             this.hasFooter = hasFooter;
         }
@@ -273,7 +280,8 @@ public class DocumentInstancePdfRenderer {
      */
     PreparedDoc preparePageGeometry(String bodyHtml) {
         if (bodyHtml == null || bodyHtml.isEmpty()) {
-            return new PreparedDoc("", DEFAULT_PAGE_SIZE, DEFAULT_PAGE_MARGIN, false, false);
+            return new PreparedDoc("", DEFAULT_PAGE_SIZE, DEFAULT_PAGE_MARGIN,
+                    DEFAULT_PAGE_MARGIN_LEFT, false, false);
         }
         Document doc = Jsoup.parseBodyFragment(bodyHtml);
         doc.outputSettings()
@@ -287,6 +295,7 @@ public class DocumentInstancePdfRenderer {
         // source of page geometry.
         String pageSize = DEFAULT_PAGE_SIZE;
         String pageMargin = DEFAULT_PAGE_MARGIN;
+        String pageMarginLeft = DEFAULT_PAGE_MARGIN_LEFT;
         Elements sections = doc.select("section.docx");
         if (!sections.isEmpty()) {
             Element first = sections.first();
@@ -297,6 +306,7 @@ public class DocumentInstancePdfRenderer {
             String pl = extractInlineLength(style, "padding-left");
             if (pt != null && pr != null && pb != null && pl != null) {
                 pageMargin = pt + " " + pr + " " + pb + " " + pl;
+                pageMarginLeft = pl;
             }
             String w = extractInlineLength(style, "width");
             String h = extractInlineLength(style, "min-height");
@@ -346,7 +356,8 @@ public class DocumentInstancePdfRenderer {
             }
         }
 
-        return new PreparedDoc(doc.body().html(), pageSize, pageMargin, hasHeader, hasFooter);
+        return new PreparedDoc(doc.body().html(), pageSize, pageMargin,
+                pageMarginLeft, hasHeader, hasFooter);
     }
 
     /**
@@ -391,13 +402,21 @@ public class DocumentInstancePdfRenderer {
      *  {@link #preparePageGeometry(String)} — no per-template hardcoding. */
     private String wrapInHtmlDoc(String title, String bodyHtml) {
         PreparedDoc prep = preparePageGeometry(bodyHtml);
-        // Only emit an @top-center / @bottom-center margin box when the
+        // Only emit an @top-left / @bottom-center margin box when the
         // document actually carries a header / footer — an empty
         // element() reference on openhtmltopdf still consumes vertical
         // space in the margin, which would push the body down for
         // no reason on a template with no header at all.
+        //
+        // Header uses @top-left (not @top-center) so the box anchors
+        // to the LEFT part of the top margin band. Combined with the
+        // negative margin-left on .pdf-doc-header (below) this pulls
+        // the header's left edge past the page-margin boundary and
+        // out to the physical page left edge — matching the source
+        // DOCX's <w:ind w:left="-1587"/> (~-1.1in) negative paragraph
+        // indent, which does the same thing in Word.
         String topBox = prep.hasHeader
-                ? "@top-center { content: element(docHeader);"
+                ? "@top-left { content: element(docHeader);"
                         + " vertical-align: top; }"
                 : "";
         String bottomBox = prep.hasFooter
@@ -521,8 +540,24 @@ public class DocumentInstancePdfRenderer {
                 // marked element OUT of body flow and INTO the @page
                 // margin-box that references it via element(name). See
                 // the openhtmltopdf CSS3 Paged Media docs.
-                + "  .pdf-doc-header { position: running(docHeader); }"
-                + "  .pdf-doc-footer { position: running(docFooter); }"
+                //
+                // Header {@code margin-left: -{pageMarginLeft}} pulls
+                // the content out of the @top-left box's left boundary
+                // (which sits at x = pageMarginLeft from the physical
+                // page edge) back to x = 0, so a wide logo starts flush
+                // with the paper's left edge instead of the body's left
+                // margin. Peer of Word's negative paragraph indent that
+                // authors reach for when they want a masthead to escape
+                // the body inset. Only emitted when the document actually
+                // has a header, so a plain no-header template keeps a
+                // clean stylesheet.
+                + (prep.hasHeader
+                        ? "  .pdf-doc-header { position: running(docHeader);"
+                                + "    margin-left: -" + prep.pageMarginLeft + "; }"
+                        : "")
+                + (prep.hasFooter
+                        ? "  .pdf-doc-footer { position: running(docFooter); }"
+                        : "")
                 + "</style>"
                 + "</head>"
                 + "<body>"
