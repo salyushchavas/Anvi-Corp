@@ -269,13 +269,42 @@ public class AuthService {
             applicantId = applicantIdGenerator.nextApplicantId();
             user.setApplicantId(applicantId);
             user.setApplicantIdCreatedAt(Instant.now());
-            // Best-effort — the ID assignment is the source of truth; an email
-            // hiccup must not block the verification flow.
-            try {
-                notificationStub.sendApplicantIdIssued(user.getEmail(), applicantId);
-            } catch (EmailDeliveryException e) {
-                log.warn("Applicant ID email failed (non-fatal) for {}: {}",
-                        user.getEmail(), e.getMessage());
+            // Only send the "Your Applicant ID" email on the true
+            // applicant-first-verify path. After the advance() above
+            // the in-memory user status is EMAIL_VERIFIED; we allow
+            // either REGISTERED or EMAIL_VERIFIED so both the
+            // pre-advance and post-advance states resolve to "yes,
+            // fire the email." Anyone whose lifecycle is further along
+            // — a direct-onboarded intern who somehow ends up in this
+            // branch, an ERM-hired intern re-verifying after an email
+            // change, or any legacy user whose applicantId row got
+            // wiped — must NOT receive this email; the copy ("Keep
+            // this for your records — recruiters reference it on every
+            // application") is pitched at first-time applicants and
+            // reads as noise / confusing branding to anyone past that
+            // stage. Same guard also short-circuits the edge case
+            // where a hired intern's applicantId is briefly null
+            // (mid-migration, admin manual reset) — the ID is still
+            // stamped, the email is just skipped.
+            boolean firstApplicantVerify = user.getLifecycleStatus() == null
+                    || user.getLifecycleStatus()
+                            == com.anvicorp.api.enums.InternLifecycleStatus.REGISTERED
+                    || user.getLifecycleStatus()
+                            == com.anvicorp.api.enums.InternLifecycleStatus.EMAIL_VERIFIED;
+            if (firstApplicantVerify) {
+                // Best-effort — the ID assignment is the source of truth; an email
+                // hiccup must not block the verification flow.
+                try {
+                    notificationStub.sendApplicantIdIssued(user.getEmail(), applicantId);
+                } catch (EmailDeliveryException e) {
+                    log.warn("Applicant ID email failed (non-fatal) for {}: {}",
+                            user.getEmail(), e.getMessage());
+                }
+            } else {
+                log.info("[Applicant ID] issued {} for user {} but skipped the "
+                                + "\"Applicant ID\" email — lifecycle is {} (past REGISTERED), "
+                                + "the applicant-first-verify copy would read as noise.",
+                        applicantId, user.getId(), user.getLifecycleStatus());
             }
             writeAccountAudit(user.getId(), "APPLICANT_ID_CREATED");
         }

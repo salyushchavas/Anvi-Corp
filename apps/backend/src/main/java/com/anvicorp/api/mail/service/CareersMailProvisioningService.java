@@ -290,26 +290,38 @@ public class CareersMailProvisioningService {
         String safeName = (fullName == null || fullName.isBlank()) ? "there" : fullName;
         String subject = "Your " + brand.getName() + " company mailbox is ready";
 
+        String bn = brand.getName();
         String plain = ""
                 + "Hi " + safeName + ",\n\n"
-                + "A " + brand.getName() + " administrator has provisioned your company "
-                + "mailbox. These are your final credentials — use them to sign in to "
-                + "both your mailbox at /mail AND your " + brand.getName() + " dashboard.\n\n"
+                + "A " + bn + " administrator has provisioned your company "
+                + "mailbox. These are your final credentials.\n\n"
+                + "IMPORTANT — your " + bn + " careers-platform login "
+                + "credentials have CHANGED. From now on:\n"
+                + "  • Sign in to the " + bn + " careers platform with the "
+                + "email + password below (your previous careers-platform "
+                + "password no longer works).\n"
+                + "  • Sign in to your new company mailbox at /mail with the "
+                + "SAME email + password — one credential set, both surfaces.\n\n"
                 + "Login email: " + companyEmail + "\n"
                 + "Password:    " + rawPassword + "\n\n"
-                + "Sign in at: /mail\n\n"
-                + "— The " + brand.getName() + " team\n";
+                + "Sign in at: /mail (or the careers dashboard)\n\n"
+                + "— The " + bn + " team\n";
 
         String html = ""
                 + "<h2 style=\"margin:0 0 12px;font-size:20px;color:#0f172a;\">"
-                + "Your " + escapeHtml(brand.getName()) + " company mailbox is ready</h2>"
+                + "Your " + escapeHtml(bn) + " company mailbox is ready</h2>"
                 + "<p style=\"margin:0 0 12px;font-size:15px;color:#1f2937;\">"
                 + "Hi " + escapeHtml(safeName) + ",</p>"
                 + "<p style=\"margin:0 0 12px;font-size:15px;color:#1f2937;\">"
-                + "A " + escapeHtml(brand.getName()) + " administrator has provisioned your "
-                + "company mailbox. These are your <strong>final credentials</strong> — "
-                + "use them to sign in to both your mailbox at /mail AND your "
-                + escapeHtml(brand.getName()) + " dashboard.</p>"
+                + "A " + escapeHtml(bn) + " administrator has provisioned your "
+                + "company mailbox. These are your <strong>final credentials</strong>.</p>"
+                + "<p style=\"margin:0 0 8px;padding:10px 12px;background:#FEF3C7;"
+                + "border:1px solid #F59E0B;border-radius:6px;color:#78350F;font-size:14px;\">"
+                + "<strong>IMPORTANT — your " + escapeHtml(bn) + " careers-platform "
+                + "login credentials have CHANGED.</strong> From now on, the email + "
+                + "password below sign you into BOTH the " + escapeHtml(bn) + " careers "
+                + "dashboard AND your new company mailbox — one credential set for both "
+                + "surfaces. Any previous careers-platform password no longer works.</p>"
                 + "<div style=\"margin:16px 0;padding:14px 16px;background:#EFF7FD;"
                 + "border:1px solid #D8ECFA;border-radius:6px;font-family:monospace;"
                 + "font-size:14px;color:#0f172a;\">"
@@ -318,7 +330,8 @@ public class CareersMailProvisioningService {
                 + escapeHtml(rawPassword) + "</div>"
                 + "</div>"
                 + "<p style=\"color:#6b7280;font-size:13px;margin:0;\">"
-                + "Sign in at /mail to reach your inbox.</p>";
+                + "Sign in at /mail (mailbox) or the careers dashboard (both use the same "
+                + "credentials above).</p>";
 
         // Credential delivery is account-security mail — must reach the
         // recipient's external inbox even for an ACTIVATED user (they may
