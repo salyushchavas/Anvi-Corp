@@ -110,6 +110,36 @@ public class EditableTemplate {
     @JdbcTypeCode(SqlTypes.JSON)
     private String fidelityWarningsJson;
 
+    /**
+     * JSONB — structured formatting profile extracted from the source
+     * DOCX at upload time by {@link DocxFormattingExtractor}. Captures
+     * the authoritative source data ({@code sectPr} page geometry,
+     * {@code header{N}.xml} / {@code footer{N}.xml} paragraph
+     * properties INCLUDING negative indents that docx-preview drops,
+     * body-default typography, numbering definitions) so consumers
+     * (studio prep, PDF renderer) render data-driven off the source
+     * instead of scraping docx-preview's lossy HTML.
+     *
+     * <p>Serialised shape mirrors {@link FormattingProfile} (see that
+     * record's javadoc for the schema). Includes a top-level
+     * {@code "version"} field; consumers MUST tolerate a newer version
+     * defensively.</p>
+     *
+     * <p>Null when: extraction failed (upload succeeds regardless — the
+     * profile is strictly additive enrichment), OR the template pre-
+     * dates the metadata layer (legacy row) and hasn't had a new DOCX
+     * attached since. Consumers MUST fall back to the existing scrape-
+     * from-HTML path when this is null.</p>
+     *
+     * <p>Overwritten on every source attach — the profile is tied to
+     * the currently-attached DOCX. Not part of the anchor-drift reset
+     * (fields cleared on re-upload); the extractor runs fresh on the
+     * new bytes and stores whatever it captures.</p>
+     */
+    @Column(name = "source_formatting_profile", columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    private String sourceFormattingProfileJson;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

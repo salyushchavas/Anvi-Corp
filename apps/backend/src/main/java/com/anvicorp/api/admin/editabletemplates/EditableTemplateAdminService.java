@@ -78,6 +78,7 @@ public class EditableTemplateAdminService {
     private final AuditLogRepository auditLogRepository;
     private final ObjectMapper objectMapper;
     private final DocumentInstancePdfRenderer pdfRenderer;
+    private final DocxFormattingExtractor docxFormattingExtractor;
 
     // ── List + get ───────────────────────────────────────────────────
 
@@ -334,6 +335,10 @@ public class EditableTemplateAdminService {
         // (2) zip-bomb guard walks the archive and caps entry count /
         //     ratio / total uncompressed size so a malicious template
         //     can't OOM docx-preview or the extract pipeline.
+        // Download once, validate + extract off the same in-memory bytes.
+        // extractedProfile stays null when extraction fails so upload
+        // continues — the metadata layer is strictly additive.
+        String extractedProfile = null;
         try {
             byte[] docxBytes = s3.getObject(doc.getStorageKey());
             com.anvicorp.api.security.FileContentValidator.requireOneOf(
@@ -342,6 +347,13 @@ public class EditableTemplateAdminService {
                     "editable template DOCX");
             com.anvicorp.api.security.DocxSafetyValidator.assertSafe(
                     docxBytes, "editable template DOCX");
+            // IDMS metadata layer (Stage 1) — extract the structured
+            // formatting profile from the DOCX's XML via Apache POI.
+            // Fail-open: extractor returns null on any parse blow-up
+            // and logs a WARN internally so upload always succeeds.
+            // Consumers (Stage 2 — studio prep, PDF renderer) tolerate
+            // null and fall back to the current scrape-from-HTML path.
+            extractedProfile = docxFormattingExtractor.extract(docxBytes);
         } catch (com.anvicorp.api.exception.BadRequestException validationErr) {
             // Best-effort delete of the just-uploaded S3 object so a rejected
             // upload doesn't linger in storage.
@@ -359,6 +371,12 @@ public class EditableTemplateAdminService {
             t.setFieldSchemaJson(null);
             t.setFidelityWarningsJson(null);
         }
+        // Overwrite the formatting profile with whatever the extractor
+        // captured for the fresh bytes — including {@code null} on
+        // extraction failure (better to have no profile than a stale
+        // one tied to a prior source). Not part of anchor-drift because
+        // it's OWNED by the source, not by the fields.
+        t.setSourceFormattingProfileJson(extractedProfile);
         repo.save(t);
         // Soft-delete the prior source so the vault list stays lean; bytes
         // remain in S3 for audit.

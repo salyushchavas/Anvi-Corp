@@ -4702,6 +4702,7 @@ public class SchemaFixupRunner implements CommandLineRunner {
                             + "  canonical_html TEXT,"
                             + "  field_schema JSONB,"
                             + "  fidelity_warnings JSONB,"
+                            + "  source_formatting_profile JSONB,"
                             + "  created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
                             + "  updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
                             + ")");
@@ -4719,6 +4720,11 @@ public class SchemaFixupRunner implements CommandLineRunner {
                 "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS canonical_html TEXT",
                 "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS field_schema JSONB",
                 "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS fidelity_warnings JSONB",
+                // IDMS metadata layer — DocxFormattingExtractor populates
+                // this JSONB on every source-DOCX attach. Nullable so
+                // pre-existing templates + extraction failures don't
+                // break; consumers must tolerate null.
+                "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS source_formatting_profile JSONB",
                 "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE",
                 "ALTER TABLE editable_templates ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 500"
         };
