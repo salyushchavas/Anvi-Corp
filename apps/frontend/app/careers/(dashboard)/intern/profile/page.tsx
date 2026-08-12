@@ -15,7 +15,20 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import { CheckCircle2, Plus, Save, Star, StarOff, Trash2 } from 'lucide-react';
+import {
+  Briefcase,
+  CheckCircle2,
+  FileText,
+  GraduationCap,
+  MapPin,
+  Plus,
+  Save,
+  Sparkles,
+  Star,
+  StarOff,
+  Trash2,
+  User as UserIcon,
+} from 'lucide-react';
 import { api } from '@/lib/careers/api';
 import { Button } from '@/components/ui/Button';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -186,8 +199,11 @@ export default function InternProfilePage() {
   }
 
   // W4 #18 — completion computation drives the hero progress meter.
-  // Same criteria the backend meetsStricterSubmissionBar enforces +
-  // work-auth track (W4 #7), so the % here matches what ERM sees.
+  // Same criteria the backend {@code ProfileNotificationService
+  // .meetsStricterSubmissionBar} enforces + a work-auth track (W4 #7),
+  // so the % here matches what ERM sees. Kept the simpler shape from
+  // main (booleans instead of {key,done} objects) since the completion
+  // fields aren't consumed by name anywhere yet.
   const completion = useMemo(() => {
     const checks = [
       !!profile.fullName?.trim() && !!profile.phone?.trim(),
@@ -245,6 +261,9 @@ function ProfileHero({
   const pct = completionTotal > 0
     ? Math.round((completionDone / completionTotal) * 100)
     : 0;
+  // Initials fallback for the avatar tile — no photo storage in the
+  // profile shape yet; the tile carries brand accent + first-letter
+  // affordance instead so the hero doesn't sit hollow.
   const initials = (profile.fullName ?? profile.email ?? '?')
     .split(/\s+/)
     .filter(Boolean)
@@ -319,18 +338,47 @@ function ProfileHero({
 
 // ── Section components ────────────────────────────────────────────────
 
+/**
+ * W4 #18 — Redesigned section card. Adds an icon + optional subtitle to
+ * make the profile feel like a real profile (not a form dump) and give
+ * the intern a scannable line of context under each header. The visual
+ * upgrade is entirely additive — any legacy call site that passes only
+ * {@code title} still renders correctly (icon + subtitle default null).
+ */
 function SectionCard({
   title,
+  subtitle,
+  icon,
   children,
 }: {
   title: string;
+  subtitle?: string;
+  icon?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-ds-sm">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-        {title}
-      </h2>
+    <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-ds-sm">
+      <header className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
+        <div className="flex items-start gap-3">
+          {icon && (
+            <span
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg
+                         bg-brand-50 text-brand-700"
+              aria-hidden
+            >
+              {icon}
+            </span>
+          )}
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">
+              {title}
+            </h2>
+            {subtitle && (
+              <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
+            )}
+          </div>
+        </div>
+      </header>
       {children}
     </section>
   );
@@ -348,7 +396,11 @@ function ContactSection({
   }
 
   return (
-    <SectionCard title="Contact">
+    <SectionCard
+      title="Personal contact"
+      subtitle="Name + phone for the recruiter to reach you"
+      icon={<UserIcon className="h-4 w-4" />}
+    >
       <form className="space-y-4" onSubmit={submit}>
         <FormField label="Full name" htmlFor="p_fullName">
           <input
@@ -436,7 +488,11 @@ function EducationSection({
   }
 
   return (
-    <SectionCard title="Education">
+    <SectionCard
+      title="Education"
+      subtitle="Your degrees + graduation dates"
+      icon={<GraduationCap className="h-4 w-4" />}
+    >
       <ul className="space-y-2">
         {educations.length === 0 && (
           <li className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-3 text-xs text-slate-600">
@@ -580,7 +636,11 @@ function AddressSection({
   }
 
   return (
-    <SectionCard title="Address (US)">
+    <SectionCard
+      title="Address (US)"
+      subtitle="Mailing address the ERM uses on your forms"
+      icon={<MapPin className="h-4 w-4" />}
+    >
       <form className="space-y-4" onSubmit={submit}>
         <FormField label="Street" htmlFor="p_street">
           <input
@@ -689,7 +749,11 @@ function WorkAuthSection({
   }
 
   return (
-    <SectionCard title="Work authorization">
+    <SectionCard
+      title="Work authorization"
+      subtitle="Employment authorization + validity window"
+      icon={<Briefcase className="h-4 w-4" />}
+    >
       <form className="space-y-4" onSubmit={submit}>
         <FormField label="Expected authorization track" htmlFor="p_track" required>
           <select
@@ -756,7 +820,11 @@ function SkillsSection({
     onSave({ skillset });
   }
   return (
-    <SectionCard title="Skillset">
+    <SectionCard
+      title="Skillset"
+      subtitle="Technical skills + tools the recruiter matches on"
+      icon={<Sparkles className="h-4 w-4" />}
+    >
       <form className="space-y-4" onSubmit={submit}>
         <FormField
           label="Skills" htmlFor="p_skills"
@@ -782,7 +850,11 @@ function ResumeSection({
   resume, onUpload, onRemove,
 }: { resume: ResumeRow | null; onUpload: (file: File) => Promise<void>; onRemove: () => Promise<void> }) {
   return (
-    <SectionCard title="Resume">
+    <SectionCard
+      title="Resume"
+      subtitle="Current PDF on file — replace any time"
+      icon={<FileText className="h-4 w-4" />}
+    >
       <FormField label="Current resume" htmlFor="p_resume">
         <FileUpload
           current={resume ? { name: resume.fileName, size: resume.fileSize } : null}
