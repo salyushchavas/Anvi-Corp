@@ -7,16 +7,15 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Entities;
 import org.jsoup.nodes.TextNode;
-import org.springframework.core.io.ClassPathResource;
+import org.jsoup.select.Elements;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -25,6 +24,8 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * IDMS Phase 2 — turns a filled canonical HTML + field-value map into a
@@ -46,6 +47,29 @@ import java.util.concurrent.atomic.AtomicLong;
  * a bare {@code <img src="data:image/png;base64,…" />} inside the anchor
  * span — openhtmltopdf's PDFBox backend renders base64 image sources
  * natively.
+ *
+ * <h2>Generic per-document page geometry + header/footer</h2>
+ * docx-preview emits each source-DOCX page as a {@code <section class="docx"
+ * style="padding:…; width:…; min-height:…;">} with the DOCX's OWN page
+ * margins baked into the inline padding, AND emits the DOCX's own header
+ * and footer as inline {@code <header>} / {@code <footer>} elements
+ * (N copies for N pages). If we naively add {@code @page margin} on top,
+ * the effective inset doubles (@page margin + section padding both apply);
+ * if we hardcode a running header, it double-renders on top of the docx-
+ * preview inline header AND overrides the source document's own branding.
+ *
+ * <p>{@link #preparePageGeometry(String)} handles both — it scrapes the
+ * first {@code section.docx}'s padding + width + min-height into an
+ * effective {@code @page} size + margin, strips those inline properties
+ * so the section becomes a plain container, extracts the first
+ * {@code <header>} / {@code <footer>} and marks them
+ * {@code position: running(docHeader / docFooter)} so openhtmltopdf hoists
+ * them into the {@code @top-center / @bottom-center} margin boxes on every
+ * page. Extra header/footer copies are removed so nothing stacks. The
+ * outer {@code @page} then references {@code element(docHeader)} +
+ * {@code element(docFooter)} by GENERIC names — no per-document hardcoding,
+ * works for any uploaded template (offer letter, NDA, W-4, empty header,
+ * etc.).</p>
  */
 @Component
 @Slf4j
@@ -53,16 +77,18 @@ public class DocumentInstancePdfRenderer {
 
     private static final int RENDER_TIMEOUT_SECONDS = 45;
 
-    /**
-     * ANVI header logo — loaded once at construction time from
-     * {@code /idms/anvi-header-logo.png} on the classpath and embedded as
-     * a base64 data URL in the PDF's running header. The source template
-     * (ANVI_OPT unpaid) carries this exact asset in {@code header2.xml};
-     * hardcoding it here (rather than round-tripping through the DOCX
-     * import) keeps the header uniform across every generated PDF
-     * regardless of which template variant an admin uploads.
-     */
-    private final String anviHeaderLogoDataUrl = loadLogoDataUrl();
+    /** Fallbacks when the canonical HTML has no {@code section.docx} to
+     *  scrape geometry from (small hand-authored templates, unit tests,
+     *  or a docx-preview variant that emits a different wrapper shape). */
+    private static final String DEFAULT_PAGE_SIZE = "A4";
+    private static final String DEFAULT_PAGE_MARGIN = "1in 0.88in 1in 1in";
+
+    /** Simple CSS length shape — number + unit. Accept only what a docx-
+     *  preview render actually produces (in / cm / mm / pt / px). We
+     *  never pass through arbitrary CSS to {@code @page} because the
+     *  scraped value ends up in the rendered stylesheet unquoted. */
+    private static final Pattern SIMPLE_LENGTH = Pattern.compile(
+            "^-?\\d+(?:\\.\\d+)?(?:in|cm|mm|pt|px)$");
 
     /** Single-thread executor with a named factory so heap dumps are legible. */
     private final ExecutorService executor = Executors.newSingleThreadExecutor(new ThreadFactory() {
@@ -74,25 +100,6 @@ public class DocumentInstancePdfRenderer {
             return t;
         }
     });
-
-    private static String loadLogoDataUrl() {
-        try (InputStream in = new ClassPathResource("idms/anvi-header-logo.png").getInputStream()) {
-            byte[] bytes = in.readAllBytes();
-            return "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes);
-        } catch (IOException e) {
-            // Non-fatal — the PDF still renders body + footer without
-            // the logo. A missing classpath resource is a packaging bug,
-            // not a per-render failure; log once at load and continue.
-            LoggerHolder.LOG.warn("[IDMS] anvi header logo missing from classpath: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /** Static-init logger holder — avoids @Slf4j field access from a static method. */
-    private static final class LoggerHolder {
-        private static final org.slf4j.Logger LOG =
-                org.slf4j.LoggerFactory.getLogger(DocumentInstancePdfRenderer.class);
-    }
 
     /**
      * Interpolate the anchor spans with their filled values (or signature
@@ -210,14 +217,193 @@ public class DocumentInstancePdfRenderer {
         return doc.body().html();
     }
 
-    /** Wraps the filled body HTML in a minimal XHTML doc with print CSS
-     *  matching the docx-preview canvas — same font-family + margins so the
-     *  executed PDF reads visually equivalent to the studio preview. */
+    /**
+     * Result of {@link #preparePageGeometry(String)} — the transformed
+     * body plus the effective page geometry pulled from the source doc.
+     */
+    static final class PreparedDoc {
+        final String bodyHtml;
+        final String pageSize;
+        final String pageMargin;
+        final boolean hasHeader;
+        final boolean hasFooter;
+        PreparedDoc(String bodyHtml, String pageSize, String pageMargin,
+                    boolean hasHeader, boolean hasFooter) {
+            this.bodyHtml = bodyHtml;
+            this.pageSize = pageSize;
+            this.pageMargin = pageMargin;
+            this.hasHeader = hasHeader;
+            this.hasFooter = hasFooter;
+        }
+    }
+
+    /**
+     * Package-visible for unit tests. Walks the body HTML and:
+     *
+     * <ol>
+     *   <li>Scrapes {@code padding-top/right/bottom/left} + {@code width} +
+     *       {@code min-height} off the first {@code section.docx} —
+     *       docx-preview bakes the source DOCX's page geometry there. If
+     *       present + all four margins parse cleanly as a simple CSS
+     *       length ({@link #SIMPLE_LENGTH}), those become the effective
+     *       {@code @page} size + margin. Otherwise we fall back to the
+     *       {@link #DEFAULT_PAGE_SIZE} / {@link #DEFAULT_PAGE_MARGIN} —
+     *       sensible defaults for a hand-authored template that has no
+     *       docx-preview wrapper at all.</li>
+     *   <li>Strips those same length properties off EVERY {@code section.docx}
+     *       (there are N of them for N source pages, all with the same
+     *       geometry). Without this the effective margin was
+     *       {@code @page margin + section padding} — the double-margin
+     *       bug the survey traced.</li>
+     *   <li>Marks the FIRST {@code <header>} with
+     *       {@code position: running(docHeader)} and deletes any additional
+     *       copies. Same for {@code <footer>} → {@code running(docFooter)}.
+     *       openhtmltopdf lifts those elements out of body flow and paints
+     *       them into the {@code @top-center / @bottom-center} margin boxes
+     *       on every generated page. Because we take the DOCUMENT's own
+     *       header/footer (whatever it contains — logo, address text, page
+     *       number, nothing), the result is GENERIC across any uploaded
+     *       template with no hardcoded branding.</li>
+     * </ol>
+     *
+     * <p>Also strips the inline {@code margin-top} / {@code min-height} the
+     * docx-preview render pass added to the header/footer — those values
+     * only made sense inside the section's padding area and would render
+     * weirdly inside a page-margin box.</p>
+     */
+    PreparedDoc preparePageGeometry(String bodyHtml) {
+        if (bodyHtml == null || bodyHtml.isEmpty()) {
+            return new PreparedDoc("", DEFAULT_PAGE_SIZE, DEFAULT_PAGE_MARGIN, false, false);
+        }
+        Document doc = Jsoup.parseBodyFragment(bodyHtml);
+        doc.outputSettings()
+                .syntax(Document.OutputSettings.Syntax.xml)
+                .escapeMode(Entities.EscapeMode.xhtml)
+                .prettyPrint(false)
+                .charset("UTF-8");
+
+        // Scrape geometry from the first section.docx; strip padding /
+        // width / min-height off every section so @page is the single
+        // source of page geometry.
+        String pageSize = DEFAULT_PAGE_SIZE;
+        String pageMargin = DEFAULT_PAGE_MARGIN;
+        Elements sections = doc.select("section.docx");
+        if (!sections.isEmpty()) {
+            Element first = sections.first();
+            String style = first.attr("style");
+            String pt = extractInlineLength(style, "padding-top");
+            String pr = extractInlineLength(style, "padding-right");
+            String pb = extractInlineLength(style, "padding-bottom");
+            String pl = extractInlineLength(style, "padding-left");
+            if (pt != null && pr != null && pb != null && pl != null) {
+                pageMargin = pt + " " + pr + " " + pb + " " + pl;
+            }
+            String w = extractInlineLength(style, "width");
+            String h = extractInlineLength(style, "min-height");
+            if (w != null && h != null) {
+                pageSize = w + " " + h;
+            }
+            for (Element s : sections) {
+                String cleaned = stripInlineProperties(s.attr("style"),
+                        "padding-left", "padding-right", "padding-top",
+                        "padding-bottom", "width", "min-height");
+                if (cleaned.isEmpty()) s.removeAttr("style");
+                else s.attr("style", cleaned);
+            }
+        }
+
+        // Hoist first <header> to a running element, drop the rest.
+        Elements headers = doc.select("header");
+        boolean hasHeader = !headers.isEmpty();
+        if (hasHeader) {
+            Element first = headers.first();
+            first.addClass("pdf-doc-header");
+            // Also strip the docx-preview inline margin-top / min-height —
+            // those anchored the header inside the section padding
+            // (which no longer exists) and would render as dead space
+            // inside the page margin box.
+            String cleaned = stripInlineProperties(first.attr("style"),
+                    "margin-top", "min-height");
+            if (cleaned.isEmpty()) first.removeAttr("style");
+            else first.attr("style", cleaned);
+            for (int i = 1; i < headers.size(); i++) {
+                headers.get(i).remove();
+            }
+        }
+
+        // Same for <footer>.
+        Elements footers = doc.select("footer");
+        boolean hasFooter = !footers.isEmpty();
+        if (hasFooter) {
+            Element first = footers.first();
+            first.addClass("pdf-doc-footer");
+            String cleaned = stripInlineProperties(first.attr("style"),
+                    "margin-bottom", "min-height");
+            if (cleaned.isEmpty()) first.removeAttr("style");
+            else first.attr("style", cleaned);
+            for (int i = 1; i < footers.size(); i++) {
+                footers.get(i).remove();
+            }
+        }
+
+        return new PreparedDoc(doc.body().html(), pageSize, pageMargin, hasHeader, hasFooter);
+    }
+
+    /**
+     * Match a single inline CSS declaration by property name and return
+     * its value (trimmed) iff it parses as {@link #SIMPLE_LENGTH}.
+     * Returns null when absent, empty, or not a simple length — the
+     * caller falls back to defaults rather than piping arbitrary CSS
+     * into the {@code @page} rule.
+     */
+    static String extractInlineLength(String styleAttr, String prop) {
+        if (styleAttr == null || styleAttr.isEmpty()) return null;
+        Pattern p = Pattern.compile(
+                "(?i)(?:^|;)\\s*" + Pattern.quote(prop) + "\\s*:\\s*([^;]+?)\\s*(?:;|$)");
+        Matcher m = p.matcher(styleAttr);
+        if (!m.find()) return null;
+        String v = m.group(1).trim().toLowerCase(Locale.ROOT);
+        return SIMPLE_LENGTH.matcher(v).matches() ? v : null;
+    }
+
+    /**
+     * Return the style attribute with the named declarations removed.
+     * Case-insensitive. Preserves all other declarations. Cleans up any
+     * doubled or trailing {@code ;} that removal leaves behind.
+     */
+    static String stripInlineProperties(String styleAttr, String... props) {
+        if (styleAttr == null || styleAttr.isEmpty()) return "";
+        String out = styleAttr;
+        for (String prop : props) {
+            Pattern p = Pattern.compile(
+                    "(?i)(?:^|;)\\s*" + Pattern.quote(prop) + "\\s*:[^;]*(?:;|$)");
+            out = p.matcher(out).replaceAll(";");
+        }
+        return out.replaceAll(";+", ";")
+                .replaceAll("^\\s*;\\s*", "")
+                .replaceAll("\\s*;\\s*$", "")
+                .trim();
+    }
+
+    /** Wraps the filled body HTML in a minimal XHTML doc with print CSS.
+     *  Page geometry (size + margins) + running header / footer are all
+     *  sourced from the uploaded document's own docx-preview output via
+     *  {@link #preparePageGeometry(String)} — no per-template hardcoding. */
     private String wrapInHtmlDoc(String title, String bodyHtml) {
-        String logoImg = anviHeaderLogoDataUrl == null
-                ? ""
-                : "<img src=\"" + anviHeaderLogoDataUrl
-                        + "\" alt=\"ANVI\" style=\"width:287px;height:75px;\" />";
+        PreparedDoc prep = preparePageGeometry(bodyHtml);
+        // Only emit an @top-center / @bottom-center margin box when the
+        // document actually carries a header / footer — an empty
+        // element() reference on openhtmltopdf still consumes vertical
+        // space in the margin, which would push the body down for
+        // no reason on a template with no header at all.
+        String topBox = prep.hasHeader
+                ? "@top-center { content: element(docHeader);"
+                        + " vertical-align: top; }"
+                : "";
+        String bottomBox = prep.hasFooter
+                ? "@bottom-center { content: element(docFooter);"
+                        + " vertical-align: bottom; }"
+                : "";
         return ""
                 + "<!DOCTYPE html>"
                 + "<html xmlns=\"http://www.w3.org/1999/xhtml\">"
@@ -225,24 +411,15 @@ public class DocumentInstancePdfRenderer {
                 + "<meta charset=\"UTF-8\" />"
                 + "<title>" + escapeHtml(title == null ? "Document" : title) + "</title>"
                 + "<style>"
-                // Source of truth — ANVI_OPT unpaid template DOCX:
-                //   Page: A4 (8.27in × 11.69in)
-                //   Margins: LEFT 1.0in, RIGHT 0.88in, TOP 1.0in, BOTTOM 1.0in
-                //   Header: ANVI logo at 0.08in from page top
-                //   Footer: address block at 0.12in from page bottom
-                // Prior config was `letter, 20mm` which over-inset the
-                // body ~0.21in on top/bottom + 0.12in on right (Letter is
-                // narrower than A4). The mismatch made the finalized PDF
-                // read visibly cramped vs the source template.
-                + "  @page { size: A4; margin: 1in 0.88in 1in 1in;"
-                + "          @top-center { content: element(anviHeader);"
-                + "                        vertical-align: top;"
-                + "                        padding-top: 0.08in; }"
-                + "          @bottom-center { content: element(anviFooter);"
-                + "                        vertical-align: bottom;"
-                + "                        padding-bottom: 0.12in; } }"
+                // Page geometry — sourced from the uploaded document's
+                // own docx-preview page section. Fallback A4 +
+                // 1in/0.88in/1in/1in when the input has no section
+                // wrapper (hand-authored template, unit tests).
+                + "  @page { size: " + prep.pageSize + ";"
+                + "          margin: " + prep.pageMargin + ";"
+                + "          " + topBox + " " + bottomBox + " }"
                 // WIDTH SAFETY — docx-preview emits an outer
-                // <article class=\"docx\"> and per-page <section> wrappers
+                // <article class="docx"> and per-page <section> wrappers
                 // that carry an explicit fixed width matching the source
                 // document's page (e.g. width:21cm for A4 originals, or
                 // width:8.5in for Letter). When that fixed width exceeds
@@ -266,17 +443,25 @@ public class DocumentInstancePdfRenderer {
                 // none) or as a last-resort fallback when a template's
                 // stylesheet doesn't declare a font at all.
                 //
-                // Source template (ANVI_OPT unpaid) uses Times New Roman
-                // 12pt for body; the fallback matches so a legacy
-                // template without an explicit stylesheet still lands on
-                // the same face the author intended.
+                // Times New Roman 12pt is the modal fallback across the
+                // legacy offer templates in play; a docx-preview stylesheet
+                // (when present) still wins per class rules.
                 + "  body { font-family: 'Times New Roman', Times, serif;"
                 + "         font-size: 12pt; color: #111;"
                 + "         word-wrap: break-word;"
                 + "         overflow-wrap: break-word; }"
+                // Defence-in-depth for the double-margin bug —
+                // preparePageGeometry strips inline padding / width /
+                // min-height off every section.docx, but a future docx-
+                // preview variant that emits the same rules via a
+                // different attribute shape would slip past the string
+                // strip. The !important CSS override catches whatever
+                // the strip missed.
                 + "  article, section, div, article.docx, section.docx {"
                 + "    width: auto !important; max-width: 100% !important;"
                 + "    box-sizing: border-box; }"
+                + "  article.docx, section.docx {"
+                + "    padding: 0 !important; min-height: 0 !important; }"
                 + "  p, li { margin: 0 0 8pt; line-height: 1.4;"
                 + "          word-wrap: break-word; overflow-wrap: break-word; }"
                 // Real <ul>/<ol>/<li> lists — a template that doesn't route
@@ -326,52 +511,24 @@ public class DocumentInstancePdfRenderer {
                 + "  .doc-field img { max-height: 1.6em; max-width: 100%;"
                 + "                   vertical-align: baseline;"
                 + "                   display: inline-block; }"
+                // Base header/footer typography — openhtmltopdf strips
+                // these from body flow via the running-element rules
+                // below, but keep the default text style just in case a
+                // fallback path renders them inline (e.g. a preview that
+                // doesn't paginate).
                 + "  header, footer { display: block; color: #555; font-size: 9pt; }"
-                // openhtmltopdf running elements — hoisted OUT of the
-                // body flow and INTO the @page's @top-center / @bottom-
-                // center margin boxes above. The elements below live at
-                // the top of the body but never render there; the
-                // renderer clones them into each page's margin. `running(x)`
-                // is CSS3 Paged Media (see openhtmltopdf docs).
-                + "  .pdf-anvi-header { position: running(anviHeader);"
-                + "    text-align: center; margin: 0; padding: 0; }"
-                + "  .pdf-anvi-header img { display: inline-block;"
-                + "    vertical-align: top; }"
-                + "  .pdf-anvi-footer { position: running(anviFooter);"
-                + "    text-align: center; font-size: 9pt; color: #333;"
-                + "    line-height: 1.3; margin: 0; padding: 0; }"
+                // Running-element hoist — openhtmltopdf lifts each
+                // marked element OUT of body flow and INTO the @page
+                // margin-box that references it via element(name). See
+                // the openhtmltopdf CSS3 Paged Media docs.
+                + "  .pdf-doc-header { position: running(docHeader); }"
+                + "  .pdf-doc-footer { position: running(docFooter); }"
                 + "</style>"
                 + "</head>"
                 + "<body>"
-                + "<div class=\"pdf-anvi-header\">" + logoImg + "</div>"
-                + "<div class=\"pdf-anvi-footer\">"
-                + "Address: 7950 Legacy Dr, Suite 400, Plano, TX, 75024"
-                + "<br />"
-                + "Phone # 913-297-7493, Email: info@anvicorp.com"
-                + "</div>"
-                + sanitiseForXhtml(bodyHtml)
+                + prep.bodyHtml
                 + "</body>"
                 + "</html>";
-    }
-
-    /**
-     * openhtmltopdf's XHTML SAX parser is stricter than a browser: any
-     * unclosed block tag (e.g. a bare {@code <p>...} the docx-preview
-     * canvas emitted) crashes the render with SAXParseException. The
-     * old regex-based sanitiser could self-close void tags but could
-     * not repair mis-nested / unclosed block structure — that's what
-     * this instance was hitting.
-     *
-     * <p>Delegates to {@link XhtmlNormalizer#toXhtmlFragment(String)},
-     * which parses the fragment with jsoup's HTML5-lenient parser
-     * (auto-closes tags per the tag-closing rules) and re-emits as
-     * XML syntax so every void self-closes and every open tag has a
-     * matching end tag. Applied to the FULLY interpolated body —
-     * signature {@code <img>} elements and field-text spans go in raw
-     * and come out well-formed on the way to openhtmltopdf.</p>
-     */
-    private String sanitiseForXhtml(String html) {
-        return XhtmlNormalizer.toXhtmlFragment(html);
     }
 
     /** For fully-controlled substitution — the studio's raw text passes
