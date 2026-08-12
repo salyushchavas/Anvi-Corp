@@ -58,7 +58,13 @@ public class OfferLifecycleListener {
      * causing the reminder to silently fall back to hard-coded copy with
      * NO link at all — a broken external-email scenario.</p>
      */
-    @Value("${app.frontend.base-url:https://anvicorp.com}")
+    // Wave-1 email-refinement — the baked-in default URL was a tenant-
+    // specific literal (blocks white-label deployments where the frontend
+    // is on a different domain). Now REQUIRES app.frontend.base-url to be
+    // set via config; an empty value logs at WARN so misconfig surfaces
+    // rather than silently producing an anvicorp.com link on a
+    // different-brand deploy.
+    @Value("${app.frontend.base-url:}")
     private String frontendBaseUrl;
 
     // ── Reminder ──────────────────────────────────────────────────────────
@@ -225,13 +231,22 @@ public class OfferLifecycleListener {
     }
 
     private String ermName(java.util.UUID actorId) {
-        if (actorId == null) return "Anvi Corp ERM";
+        // Wave-1 email-refinement — the four fallback strings used to be
+        // the literal "Anvi Corp ERM", which meant a per-brand deploy
+        // wrote the wrong company's ERM into every reminder / voided /
+        // start-date-updated email whenever the actor lookup missed
+        // (null id, missing fullName, user not found, or repo exception).
+        // Route through BrandConfig.signoffErm() so the fallback reflects
+        // the configured brand — same pattern the rest of the codebase
+        // already uses in the ERM-owned lifecycle listeners.
+        String fallback = brand.signoffErm().replace("— ", "");
+        if (actorId == null) return fallback;
         try {
             return userRepository.findById(actorId)
-                    .map(u -> u.getFullName() != null ? u.getFullName() : "Anvi Corp ERM")
-                    .orElse("Anvi Corp ERM");
+                    .map(u -> u.getFullName() != null ? u.getFullName() : fallback)
+                    .orElse(fallback);
         } catch (Exception e) {
-            return "Anvi Corp ERM";
+            return fallback;
         }
     }
 

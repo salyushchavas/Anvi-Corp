@@ -41,12 +41,25 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
     }
 
     /**
-     * Rewrite the hardcoded {@code "Anvi Corp"} / {@code "Anvi Corp"} /
-     * {@code "Skyzen ERM"} tokens in a seed's subject + body with the
-     * configured {@link BrandConfig#getName()}. The order matters — the
-     * longest tokens go first so we don't double-rewrite the bare word.
-     * Legacy Anvi Corp deploys (no brand env vars) round-trip identically
-     * because the tokens replace to themselves.
+     * Wave-1 email-refinement — rewrite hardcoded brand/signoff tokens
+     * in the source seed strings into template PLACEHOLDERS
+     * ({@code {{brandName}}}, {@code {{signoffBlock}}}, etc.) so the
+     * DB rows are white-label-ready and every render at runtime picks
+     * up the current {@link BrandConfig} values via
+     * {@link CommunicationTemplateService#render} auto-injection.
+     *
+     * <p>Order matters — the longest / most-specific tokens go first so
+     * the shorter tokens don't accidentally match the longer ones'
+     * prefixes. Signoff patterns run before the bare {@code Anvi Corp}
+     * substitution so the three signoff shapes collapse to a single
+     * {@code {{signoffBlock}}} placeholder.</p>
+     *
+     * <p>Legacy "Skyzen ERM" is legacy pre-rebrand text that a fresh
+     * DB will never see; kept for defence-in-depth. The
+     * {@code {{ermName}}} in the offer-family templates collapses to
+     * {@code {{signoffBlock}}} too (the render-time resolver detects
+     * {@code vars.ermName} and prefers the personalised line —
+     * behaviour is preserved).</p>
      */
     private Seed brandify(Seed s) {
         return new Seed(
@@ -58,11 +71,24 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
 
     private String rewrite(String v) {
         if (v == null) return null;
-        String name = brand.getName();
         return v
-                .replace("Anvi Corp", name)
-                .replace("Skyzen ERM", name + " ERM")
-                .replace("Anvi Corp", name);
+                // ── SIGNOFF PATTERNS (longest first) ──────────────────
+                // Three co-existing shapes collapse to a single
+                // {{signoffBlock}} placeholder. The render-time resolver
+                // computes the actual line using ermName-if-present or
+                // brand.getName() otherwise (see BrandConfig.signoffBlock).
+                .replace("— Anvi Corp ERM", "{{signoffBlock}}")
+                .replace("— Skyzen ERM", "{{signoffBlock}}")
+                .replace("— {{ermName}}", "{{signoffBlock}}")
+                .replace("— Anvi Corp", "{{signoffBlock}}")
+                // ── INLINE BRAND REFERENCES ───────────────────────────
+                // "Anvi Corp ERM" inside a sentence (not a signoff)
+                // rewrites to the ERM composite form so a per-brand
+                // deploy renders correctly. Longer-first ordering.
+                .replace("Anvi Corp ERM", "{{brandName}} ERM")
+                .replace("Skyzen ERM", "{{brandName}} ERM")
+                // Bare "Anvi Corp" (subject lines + body copy).
+                .replace("Anvi Corp", "{{brandName}}");
     }
 
     private static final List<Seed> SEEDS = List.of(
@@ -73,6 +99,10 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Thank you for applying to {{jobTitle}} at Anvi Corp. After careful "
                             + "review, we have decided not to proceed with your application at "
                             + "this time. We appreciate your interest and wish you the best.\n\n"
+                            + "If you'd like feedback or have questions, reach out to "
+                            + "{{supportEmail}}. We keep candidate records for 6 months and "
+                            + "welcome a fresh application after that window — new roles are "
+                            + "posted regularly, so watch our openings page.\n\n"
                             + "— Anvi Corp ERM",
                     "firstName,jobTitle"),
             new Seed(
@@ -97,14 +127,21 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                     "Great news from your Anvi Corp interview",
                     "Hello {{firstName}},\n\n"
                             + "We enjoyed speaking with you and would like to move forward. "
-                            + "Watch for your offer letter shortly.\n\n— Anvi Corp ERM",
-                    "firstName"),
+                            + "Your offer letter will land in your Anvi Corp dashboard within "
+                            + "the next 2 business days — you'll get a separate email the "
+                            + "moment it's ready with a direct link to review and sign.\n\n"
+                            + "In the meantime, sign in to see your candidate timeline: "
+                            + "{{dashboardUrl}}\n\n"
+                            + "Questions? Reach out to {{supportEmail}}.\n\n— Anvi Corp ERM",
+                    "firstName,dashboardUrl"),
             new Seed(
                     "INTERVIEW_HOLD", "EMAIL",
                     "Anvi Corp interview — under consideration",
                     "Hello {{firstName}},\n\n"
                             + "Thank you for interviewing with us. We are still in the decision "
-                            + "phase and will update you soon.\n\n— Anvi Corp ERM",
+                            + "phase — expect to hear back within the next 5 business days. If "
+                            + "you don't hear from us by then, reach out to {{supportEmail}} "
+                            + "and we'll follow up.\n\n— Anvi Corp ERM",
                     "firstName"),
             new Seed(
                     "INTERVIEW_REJECTED", "EMAIL",
@@ -112,7 +149,10 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                     "Hello {{firstName}},\n\n"
                             + "Thank you for interviewing for {{jobTitle}}. After careful "
                             + "consideration, we have decided not to proceed at this time. We "
-                            + "appreciate your time and interest.\n\n— Anvi Corp ERM",
+                            + "appreciate your time and interest.\n\n"
+                            + "If you'd like specific feedback on the interview or have any "
+                            + "questions, please email {{supportEmail}} — we're happy to share "
+                            + "what we can.\n\n— Anvi Corp ERM",
                     "firstName,jobTitle"),
             new Seed(
                     "OFFER_DOC_REJECTED", "EMAIL",
@@ -542,7 +582,62 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "signature section in your dashboard so we can complete the DSO "
                             + "submission.\n\n"
                             + "Open evaluation: {{deepLink}}\n\n— Anvi Corp",
-                    "firstName,evaluatorName,evaluationType,deepLink")
+                    "firstName,evaluatorName,evaluationType,deepLink"),
+            // ── Wave-1 email-refinement — two new high-value receipts ─────
+            // APPLICATION_RECEIVED — applicant-facing confirmation on apply.
+            // Historically the applicant only got the hardcoded shape from
+            // SmtpEmailProvider.sendApplicationReceived and no ERM-editable
+            // template. Seeding a proper template lets the settings page
+            // customise the copy and adds the "what happens next" +
+            // timeline every ATS provides. NotificationService.
+            // sendApplicationReceived now renders this template with a
+            // fallback to the hard-coded method when the template is
+            // absent (Wave-2 will remove the fallback once every deploy
+            // has re-seeded).
+            new Seed(
+                    "APPLICATION_RECEIVED", "EMAIL",
+                    "We received your Anvi Corp application — {{jobTitle}}",
+                    "Hello {{firstName}},\n\n"
+                            + "Thanks for applying to {{jobTitle}} at Anvi Corp — we've "
+                            + "received your application and it's now with our recruiting "
+                            + "team.\n\n"
+                            + "What happens next:\n"
+                            + "  · A recruiter reviews your application within 3-5 business "
+                            + "days.\n"
+                            + "  · If your background looks like a fit, we'll invite you to "
+                            + "an initial interview.\n"
+                            + "  · If it's not a match, we'll let you know via email — we "
+                            + "close the loop either way.\n\n"
+                            + "You can track the status any time in your Anvi Corp "
+                            + "dashboard. Reach out to {{supportEmail}} with any "
+                            + "questions.\n\n— Anvi Corp ERM",
+                    "firstName,jobTitle"),
+            // OFFER_ACCEPTED — applicant-facing confirmation when they
+            // sign the offer through IDMS. Previously only ERM got an
+            // in-app notice and the applicant got the hardcoded body
+            // from SmtpEmailProvider.sendOfferAccepted with no editable
+            // template. Seeding gives the ERM settings page control over
+            // the copy and provides the applicant with a durable record
+            // of what they signed + the onboarding next steps.
+            new Seed(
+                    "OFFER_ACCEPTED", "EMAIL",
+                    "Welcome to Anvi Corp — offer for {{jobTitle}} accepted",
+                    "Hello {{firstName}},\n\n"
+                            + "Congratulations — we've received your signed offer for "
+                            + "{{jobTitle}} at Anvi Corp. This email is your record; a copy "
+                            + "of the executed PDF is available any time in your Anvi Corp "
+                            + "dashboard.\n\n"
+                            + "What happens next:\n"
+                            + "  · Your ERM will reach out within 2 business days to kick "
+                            + "off onboarding.\n"
+                            + "  · You'll receive a document packet to complete before your "
+                            + "start date on {{tentativeStartDate}}.\n"
+                            + "  · Your reporting team (trainer, evaluator, manager) will be "
+                            + "assigned and you'll get an intro email from each.\n\n"
+                            + "Save the entity name for your records: {{brandLegalEntity}}. "
+                            + "Reach out to {{supportEmail}} with any questions.\n\n"
+                            + "— Anvi Corp ERM",
+                    "firstName,jobTitle,tentativeStartDate")
     );
 
     @Override
@@ -576,6 +671,57 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
         deactivateLegacyTemplates();
         refreshPhase8_2DocumentTemplates();
         refreshOfferTemplatesIfStale();
+        rebrandifyExistingRowsIfLiteralBrandLeaks();
+    }
+
+    /**
+     * Wave-1 email-refinement migration — walk every persisted template
+     * row and, if the stored subject or body still carries the pre-Wave-1
+     * literal {@code "Anvi Corp"} (or the pre-rebrand {@code "Skyzen ERM"})
+     * tokens, rewrite them to the new placeholder shape via
+     * {@link #rewrite(String)}. Guarantees an upgrade from any prior seed
+     * moves to the white-label form without operators having to hand-edit
+     * every row through the Communication Templates Settings page.
+     *
+     * <p>Preserves ERM-customised copy: only touches rows that STILL
+     * contain the literal tokens (the marker for "never edited"). A row
+     * an ERM has re-worded to use their brand or their own phrasing
+     * won't match the literals and stays untouched.</p>
+     */
+    private void rebrandifyExistingRowsIfLiteralBrandLeaks() {
+        int rewritten = 0;
+        try {
+            for (CommunicationTemplate t : repository.findAll()) {
+                String subj = t.getSubjectTemplate();
+                String body = t.getBodyTemplate();
+                if (!containsLegacyBrandToken(subj) && !containsLegacyBrandToken(body)) {
+                    continue;
+                }
+                String newSubj = rewrite(subj);
+                String newBody = rewrite(body);
+                boolean changed = (subj == null ? newSubj != null : !subj.equals(newSubj))
+                        || (body == null ? newBody != null : !body.equals(newBody));
+                if (!changed) continue;
+                t.setSubjectTemplate(newSubj);
+                t.setBodyTemplate(newBody);
+                repository.save(t);
+                rewritten++;
+            }
+        } catch (Exception e) {
+            log.warn("[CommunicationTemplateSeeder] Wave-1 brandify-migration skipped: {}",
+                    e.getMessage());
+            return;
+        }
+        if (rewritten > 0) {
+            log.info("[CommunicationTemplateSeeder] Wave-1 rewrote {} DB row(s) — literal "
+                    + "brand tokens migrated to placeholders (brand={})",
+                    rewritten, brand.getName());
+        }
+    }
+
+    private static boolean containsLegacyBrandToken(String s) {
+        if (s == null) return false;
+        return s.contains("Anvi Corp") || s.contains("Skyzen ERM");
     }
 
     /**

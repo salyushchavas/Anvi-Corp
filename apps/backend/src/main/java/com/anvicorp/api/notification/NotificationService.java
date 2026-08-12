@@ -79,6 +79,12 @@ public class NotificationService {
     private final InternLifecycleRepository internLifecycleRepository;
     private final InternNotificationService internNotifications;
     private final com.anvicorp.api.config.BrandConfig brand;
+    /** Wave-1 email-refinement — try seeded EMAIL templates BEFORE the
+     *  historical typed EmailProvider methods so a template edited via
+     *  the ERM Settings page overrides the hard-coded body. Currently
+     *  wired for APPLICATION_RECEIVED and OFFER_ACCEPTED; more will
+     *  migrate as Wave-2 lands. */
+    private final com.anvicorp.api.erm.CommunicationTemplateService templateService;
 
     /**
      * Operations recipient for "offer accepted" notifications. Configure as a
@@ -124,8 +130,26 @@ public class NotificationService {
 
         String jobTitle = jobTitle(application);
         String entityName = entityName(application);
+        // Wave-1 email-refinement — prefer the seeded APPLICATION_RECEIVED
+        // template so the ERM Settings > Communication Templates page can
+        // customise the body. Falls back to the hard-coded typed method if
+        // the template is absent (fresh DB pre-seed, or an operator has
+        // manually deleted the row).
         deliver(NotificationEventType.APPLICATION_RECEIVED, targetId, email,
-                () -> emailProvider.sendApplicationReceived(email, name, jobTitle, entityName));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("jobTitle", nz(jobTitle));
+                    var rendered = templateService.render(
+                            "APPLICATION_RECEIVED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendApplicationReceived(
+                                email, name, jobTitle, entityName);
+                    }
+                });
 
         dispatchInApp(applicantUserId(application),
                 NotificationEventType.APPLICATION_RECEIVED,
@@ -310,9 +334,29 @@ public class NotificationService {
         // 1) Applicant confirmation.
         if (email != null) {
             if (!alreadySent(NotificationEventType.OFFER_ACCEPTED, targetId)) {
+                // Wave-1 email-refinement — prefer the seeded
+                // OFFER_ACCEPTED template so the ERM Settings page can
+                // customise the body. Falls back to the historical typed
+                // method if the template is absent.
                 deliver(NotificationEventType.OFFER_ACCEPTED, targetId, email,
-                        () -> emailProvider.sendOfferAccepted(
-                                email, name, jobTitle, entityName, offer.getStartDate()));
+                        () -> {
+                            Map<String, Object> vars = new LinkedHashMap<>();
+                            vars.put("firstName", nz(name).split(" ")[0]);
+                            vars.put("jobTitle", nz(jobTitle));
+                            vars.put("tentativeStartDate", offer.getStartDate() != null
+                                    ? offer.getStartDate().toString() : "TBD");
+                            var rendered = templateService.render(
+                                    "OFFER_ACCEPTED", "EMAIL", vars);
+                            if (rendered.isPresent()) {
+                                emailProvider.sendRendered(
+                                        email, rendered.get().subject(),
+                                        rendered.get().body());
+                            } else {
+                                emailProvider.sendOfferAccepted(
+                                        email, name, jobTitle, entityName,
+                                        offer.getStartDate());
+                            }
+                        });
             }
         } else {
             log.warn("OFFER_ACCEPTED (applicant) skipped — no candidate email on offer {}", targetId);

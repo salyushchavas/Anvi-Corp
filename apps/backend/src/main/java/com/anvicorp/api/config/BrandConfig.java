@@ -63,4 +63,23 @@ public class BrandConfig {
     public String signoffErm() {
         return "— " + name + " ERM";
     }
+
+    /**
+     * Wave-1 unified signoff. Personalises to the specific ERM when a
+     * name is supplied (offer-family and any listener that already knows
+     * who's sending); otherwise falls back to the brand-level line. Kept
+     * as ONE shape rather than the three that used to co-exist
+     * ({@code "— Anvi Corp ERM"} / {@code "— {{ermName}}"} /
+     * {@code "— Anvi Corp"}) so every template signs off consistently.
+     *
+     * <p>Resolution rule: {@code ermName} present + non-blank →
+     * {@code "— {ermName}"}. Otherwise → {@code "— {name}"} (the
+     * brand-level line — same shape as {@link #signoff()}).</p>
+     */
+    public String signoffBlock(String ermName) {
+        if (ermName != null && !ermName.isBlank()) {
+            return "— " + ermName.trim();
+        }
+        return "— " + name;
+    }
 }
