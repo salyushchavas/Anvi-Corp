@@ -13,9 +13,9 @@
  * CRUD for the multi-degree table.</p>
  */
 
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Save, Star, StarOff, Trash2 } from 'lucide-react';
+import { CheckCircle2, Plus, Save, Star, StarOff, Trash2 } from 'lucide-react';
 import { api } from '@/lib/careers/api';
 import { Button } from '@/components/ui/Button';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -185,29 +185,33 @@ export default function InternProfilePage() {
     toast.success('Resume removed');
   }
 
+  // W4 #18 — completion computation drives the hero progress meter.
+  // Same criteria the backend meetsStricterSubmissionBar enforces +
+  // work-auth track (W4 #7), so the % here matches what ERM sees.
+  const completion = useMemo(() => {
+    const checks = [
+      !!profile.fullName?.trim() && !!profile.phone?.trim(),
+      educations.length > 0,
+      !!profile.addressStreet && !!profile.addressCity
+        && !!profile.addressState && !!profile.addressZip,
+      !!profile.expectedTrack,
+      !!profile.skillset?.trim(),
+      resume != null,
+    ];
+    const done = checks.filter(Boolean).length;
+    return { done, total: checks.length };
+  }, [profile, educations, resume]);
+
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
-      <header>
-        <h1 className="text-xl font-semibold text-slate-900">My Profile</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Everything ERM sees — update anything here.{' '}
-          {profile.profileSubmittedAt ? (
-            <span className="text-emerald-700">
-              Submitted {new Date(profile.profileSubmittedAt).toLocaleDateString()}.
-            </span>
-          ) : (
-            <span className="text-amber-700">
-              Not yet submitted — complete every section to finalize.
-            </span>
-          )}
-        </p>
-      </header>
+    <div className="mx-auto max-w-4xl space-y-6 px-4 py-8">
+      <ProfileHero
+        profile={profile}
+        completionDone={completion.done}
+        completionTotal={completion.total}
+      />
 
       <ContactSection profile={profile} saving={saving} onSave={saveProfile} />
-      <EducationSection
-        educations={educations}
-        onReload={loadAll}
-      />
+      <EducationSection educations={educations} onReload={loadAll} />
       <AddressSection profile={profile} saving={saving} onSave={saveProfile} />
       <WorkAuthSection profile={profile} saving={saving} onSave={saveProfile} />
       <SkillsSection profile={profile} saving={saving} onSave={saveProfile} />
@@ -217,6 +221,99 @@ export default function InternProfilePage() {
         onRemove={handleResumeRemove}
       />
     </div>
+  );
+}
+
+/**
+ * W4 #18 — Redesigned hero for the intern profile. Replaces the prior
+ * bare h1 + subtitle with a real profile "card" — avatar tile with
+ * initials, name in display size, contact line, submission-state pill,
+ * and a completion meter that mirrors the backend
+ * meetsStricterSubmissionBar bar (+ #7's work-auth requirement). All
+ * existing fields + functionality preserved — this is visual only.
+ */
+function ProfileHero({
+  profile,
+  completionDone,
+  completionTotal,
+}: {
+  profile: ProfileResponse;
+  completionDone: number;
+  completionTotal: number;
+}) {
+  const submitted = !!profile.profileSubmittedAt;
+  const pct = completionTotal > 0
+    ? Math.round((completionDone / completionTotal) * 100)
+    : 0;
+  const initials = (profile.fullName ?? profile.email ?? '?')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('') || '?';
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-ds-sm">
+      <div className="flex flex-wrap items-start gap-5">
+        <div
+          className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-brand-100 text-2xl font-semibold text-brand-800"
+          aria-hidden
+        >
+          {initials}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+            {profile.fullName || 'Your profile'}
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
+            {profile.email}
+            {profile.phone && <span className="text-slate-400"> · </span>}
+            {profile.phone && <span>{profile.phone}</span>}
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {submitted ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 ring-1 ring-inset ring-emerald-200">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Submitted {new Date(profile.profileSubmittedAt!).toLocaleDateString()}
+              </span>
+            ) : (
+              <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-200">
+                Draft — complete every section to submit
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="mt-6">
+        <div className="flex items-center justify-between text-xs font-medium text-slate-600">
+          <span>Profile completion</span>
+          <span className="tabular-nums">
+            {completionDone} of {completionTotal} sections
+            <span className="ml-2 text-slate-400">({pct}%)</span>
+          </span>
+        </div>
+        <div
+          className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100"
+          role="progressbar"
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Profile completion"
+        >
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${
+              pct === 100 ? 'bg-emerald-500' : 'bg-brand-500'
+            }`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <p className="mt-2 text-xs text-slate-500">
+          Every section counts toward your profile completion. Once every
+          section is filled, your profile is submitted automatically and
+          your ERM is notified — you don&apos;t need to click anything to
+          finalize.
+        </p>
+      </div>
+    </section>
   );
 }
 
@@ -546,32 +643,57 @@ function WorkAuthSection({
   profile, saving, onSave,
 }: { profile: ProfileResponse; saving: boolean; onSave: (p: Partial<ProfileResponse>) => void }) {
   const [track, setTrack] = useState<WorkAuthTrack | ''>(profile.expectedTrack ?? '');
+  // W4 #6 — collapsed the prior three-field (validityStartDate,
+  // validityDate, authorizedFrom+authorizedUntil) rendering into the
+  // single authorizedFrom / authorizedUntil range. The self-declared
+  // dates were the same values under different labels — the direct-
+  // onboarding wizard already collapsed to this shape after the same
+  // "duplicate dates" bug there. Every auth type (CPT, OPT, STEM_OPT,
+  // OTHER, CITIZEN) now uses the same two fields; visa-date-requirement
+  // helper only guides whether END is required (CPT/OPT/STEM_OPT) or
+  // both START + END (OTHER). CITIZEN skips both.
   const [authorizedFrom, setAuthorizedFrom] = useState(profile.authorizedFrom ?? '');
   const [authorizedUntil, setAuthorizedUntil] = useState(profile.authorizedUntil ?? '');
-  const [validityDate, setValidityDate] = useState(profile.validityDate ?? '');
-  const [validityStartDate, setValidityStartDate] = useState(profile.validityStartDate ?? '');
-
   const req = visaDateRequirementFor(track || undefined);
-  const showEnd = req !== 'NONE';
-  const showStart = req === 'BOTH';
+  const showDates = req !== 'NONE';
+  const requireFrom = req === 'BOTH';
+  const requireUntil = req !== 'NONE';
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    // W4 #7 — work-auth track is now REQUIRED. Blocks submit
+    // rather than silently dropping the field so the intern sees
+    // exactly what's missing.
+    if (!track) {
+      toast.error('Please select your expected authorization track.');
+      return;
+    }
+    if (requireFrom && !authorizedFrom) {
+      toast.error('Please enter your authorization start date.');
+      return;
+    }
+    if (requireUntil && !authorizedUntil) {
+      toast.error('Please enter your authorization end date.');
+      return;
+    }
     onSave({
-      expectedTrack: (track || undefined) as WorkAuthTrack | undefined,
-      validityDate: showEnd && validityDate ? validityDate : undefined,
-      validityStartDate: showStart && validityStartDate ? validityStartDate : undefined,
+      expectedTrack: track as WorkAuthTrack,
       authorizedFrom: authorizedFrom || undefined,
       authorizedUntil: authorizedUntil || undefined,
+      // W4 #6 — never send the deprecated self-declared date fields;
+      // the backend still accepts them for legacy rows but the intern
+      // profile surface no longer emits them.
+      validityDate: undefined,
+      validityStartDate: undefined,
     });
   }
 
   return (
     <SectionCard title="Work authorization">
       <form className="space-y-4" onSubmit={submit}>
-        <FormField label="Expected authorization track" htmlFor="p_track">
+        <FormField label="Expected authorization track" htmlFor="p_track" required>
           <select
-            id="p_track" value={track}
+            id="p_track" value={track} required
             onChange={(e) => setTrack(e.target.value as WorkAuthTrack | '')}
             className={inputClass()}
           >
@@ -581,46 +703,40 @@ function WorkAuthSection({
             ))}
           </select>
         </FormField>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {showStart && (
-            <FormField label="Self-declared start" htmlFor="p_vs">
+        {showDates && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField
+              label="Authorized from"
+              htmlFor="p_af"
+              required={requireFrom}
+            >
               <input
-                id="p_vs" type="date" value={validityStartDate}
-                onChange={(e) => setValidityStartDate(e.target.value)}
+                id="p_af" type="date" value={authorizedFrom}
+                onChange={(e) => setAuthorizedFrom(e.target.value)}
                 className={inputClass()}
+                required={requireFrom}
               />
             </FormField>
-          )}
-          {showEnd && (
-            <FormField label="Self-declared end" htmlFor="p_ve">
+            <FormField
+              label="Authorized until"
+              htmlFor="p_au"
+              required={requireUntil}
+            >
               <input
-                id="p_ve" type="date" value={validityDate}
-                onChange={(e) => setValidityDate(e.target.value)}
+                id="p_au" type="date" value={authorizedUntil}
+                onChange={(e) => setAuthorizedUntil(e.target.value)}
                 className={inputClass()}
+                required={requireUntil}
               />
             </FormField>
-          )}
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Authorized from" htmlFor="p_af">
-            <input
-              id="p_af" type="date" value={authorizedFrom}
-              onChange={(e) => setAuthorizedFrom(e.target.value)}
-              className={inputClass()}
-            />
-          </FormField>
-          <FormField label="Authorized until" htmlFor="p_au">
-            <input
-              id="p_au" type="date" value={authorizedUntil}
-              onChange={(e) => setAuthorizedUntil(e.target.value)}
-              className={inputClass()}
-            />
-          </FormField>
-        </div>
-        <p className="text-xs text-slate-500">
-          {'"Authorized from" and "Authorized until" post to the same work-authorization '
-            + 'record ERM uses for the Compliance tracker.'}
-        </p>
+          </div>
+        )}
+        {/* W4 #7 — the "Optional. Once ERM sets up your Compliance
+            record these dates carry over..." helper was noise for the
+            intern (an internal implementation detail) and read as
+            "you don't have to fill this in". Removed. Track is now
+            required (marked above); dates are required whenever the
+            track needs them per visaDateRequirementFor. */}
         <div className="flex justify-end">
           <Button type="submit" loading={saving} leftIcon={<Save className="h-4 w-4" />}>
             Save work authorization

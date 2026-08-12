@@ -93,6 +93,17 @@ public class ProfileNotificationService {
                 || isBlank(c.getAddressZip())) {
             return false;
         }
+        // W4 #7 — work-auth track is now REQUIRED to consider the
+        // profile "complete" (previously optional). This gate is what
+        // the intern-side wizard's Finish button + the main profile
+        // page's WorkAuthSection now enforce on the client; adding it
+        // to the server-side bar is the belt-and-braces guarantee that
+        // the submission-ack + the downstream Wave-1 ERM notify email
+        // (#8) do NOT fire on a profile whose intern hasn't picked a
+        // work-auth track — the ERM would receive a profile-completed
+        // notification with the compliance field still blank, which is
+        // exactly the confusion Wave-4 is closing out.
+        if (c.getExpectedTrack() == null) return false;
         // Education — at least one row.
         return educationRepository.countByCandidateId(c.getId()) > 0;
     }

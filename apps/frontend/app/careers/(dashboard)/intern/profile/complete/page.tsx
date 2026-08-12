@@ -41,9 +41,9 @@ interface ProfileResponse {
   authorizedToWork?: boolean;
   sponsorshipNeeded?: boolean;
   expectedTrack?: WorkAuthTrack;
-  validityDate?: string;
-  validityStartDate?: string;
-  // B2 additions — WAR-side authorization dates surfaced through the profile.
+  // W4 #6 — validityDate / validityStartDate removed from the wizard;
+  // the WAR-side authorizedFrom / authorizedUntil range is the single
+  // source of truth for the intern surface.
   authorizedFrom?: string;
   authorizedUntil?: string;
 }
@@ -81,10 +81,10 @@ export default function CompleteProfilePage() {
   const [authorizedToWork, setAuthorizedToWork] = useState<'' | 'yes' | 'no'>('');
   const [sponsorshipNeeded, setSponsorshipNeeded] = useState<'' | 'yes' | 'no'>('');
   const [expectedTrack, setExpectedTrack] = useState<WorkAuthTrack | ''>('');
-  const [validityDate, setValidityDate] = useState('');
-  const [validityStartDate, setValidityStartDate] = useState('');
-  // B2 — WorkAuthorizationRecord authorizedFrom / authorizedUntil, disclosed
-  // by the intern pre-hire via this same profile step.
+  // W4 — WorkAuthorizationRecord authorizedFrom / authorizedUntil, disclosed
+  // by the intern pre-hire via this same profile step. The prior self-
+  // declared validityDate / validityStartDate fields were the same
+  // values under different labels and have been removed.
   const [authorizedFrom, setAuthorizedFrom] = useState('');
   const [authorizedUntil, setAuthorizedUntil] = useState('');
 
@@ -122,8 +122,8 @@ export default function CompleteProfilePage() {
           p.sponsorshipNeeded === true ? 'yes' : p.sponsorshipNeeded === false ? 'no' : '',
         );
         setExpectedTrack(p.expectedTrack ?? '');
-        setValidityDate(p.validityDate ?? '');
-        setValidityStartDate(p.validityStartDate ?? '');
+        // W4 #6 — validityDate / validityStartDate no longer prefill;
+        // authorizedFrom / authorizedUntil are the single source.
         setAuthorizedFrom(p.authorizedFrom ?? '');
         setAuthorizedUntil(p.authorizedUntil ?? '');
 
@@ -152,8 +152,13 @@ export default function CompleteProfilePage() {
   }, []);
 
   const visaDateReq = visaDateRequirementFor(expectedTrack || undefined);
-  const showEndDate = visaDateReq !== 'NONE';
-  const showStartDate = visaDateReq === 'BOTH';
+  // W4 #6/#7 — single truthy flag drives whether the collapsed
+  // authorizedFrom/authorizedUntil row renders. Per-visa dates row is
+  // now a SINGLE surface with type-driven required-ness (mirrors the
+  // main profile page's WorkAuthSection contract exactly).
+  const showDates = visaDateReq !== 'NONE';
+  const requireStartDate = visaDateReq === 'BOTH';
+  const requireEndDate = visaDateReq !== 'NONE';
 
   const stepValid = useMemo(() => {
     switch (stepIdx) {
@@ -168,12 +173,19 @@ export default function CompleteProfilePage() {
       case 2:
         return skillset.trim().length > 0 && resume != null;
       case 3:
-        // Work prefs are optional — always allow Finish.
+        // W4 #7 — work-auth track is now REQUIRED to finish the
+        // profile. Dates required by track type per visaDateReq.
+        if (!expectedTrack) return false;
+        if (requireStartDate && !authorizedFrom.trim()) return false;
+        if (requireEndDate && !authorizedUntil.trim()) return false;
         return true;
       default:
         return false;
     }
-  }, [stepIdx, phone, school, degreeLevel, graduationYear, skillset, resume]);
+  }, [
+    stepIdx, phone, school, degreeLevel, graduationYear, skillset, resume,
+    expectedTrack, requireStartDate, authorizedFrom, requireEndDate, authorizedUntil,
+  ]);
 
   async function persistAll(): Promise<boolean> {
     setError(null);
@@ -197,8 +209,11 @@ export default function CompleteProfilePage() {
       authorizedToWork: triStateToBool(authorizedToWork),
       sponsorshipNeeded: triStateToBool(sponsorshipNeeded),
       expectedTrack: expectedTrack || undefined,
-      validityDate: showEndDate && validityDate ? validityDate : undefined,
-      validityStartDate: showStartDate && validityStartDate ? validityStartDate : undefined,
+      // W4 #6 — deprecated self-declared dates dropped from the
+      // wizard payload; the authorizedFrom/authorizedUntil pair is
+      // the single source of truth. Backend keeps accepting the old
+      // fields for legacy rows but the intern surface no longer
+      // emits them.
       authorizedFrom: authorizedFrom || undefined,
       authorizedUntil: authorizedUntil || undefined,
     };
@@ -395,8 +410,8 @@ export default function CompleteProfilePage() {
         {stepIdx === 3 && (
           <>
             <p className="text-sm text-slate-600">
-              Optional — you can fill these in later from your profile. They help us
-              match you to roles with the right work-authorization fit.
+              Tell us your work-authorization status so we can match you to
+              roles with the right fit.
             </p>
             <div className="grid gap-4 sm:grid-cols-2">
               <FormField label="Authorized to work in the US?">
@@ -414,12 +429,17 @@ export default function CompleteProfilePage() {
                 />
               </FormField>
             </div>
-            <FormField label="Expected authorization track" htmlFor="expectedTrack">
+            {/* W4 #7 — work-auth track is now REQUIRED to finish the
+                profile. The stepValid gate on step 3 (below) blocks
+                Finish until a track is selected AND dates are complete
+                per the type's visa-date-requirement. */}
+            <FormField label="Expected authorization track" htmlFor="expectedTrack" required>
               <select
                 id="expectedTrack"
                 value={expectedTrack}
                 onChange={(e) => setExpectedTrack(e.target.value as WorkAuthTrack | '')}
                 className={inputClass()}
+                required
               >
                 <option value="">Select…</option>
                 {(Object.keys(VISA_TRACK_LABEL) as WorkAuthTrack[]).map((t) => (
@@ -429,54 +449,44 @@ export default function CompleteProfilePage() {
                 ))}
               </select>
             </FormField>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {showStartDate && (
-                <FormField label="Authorization start date" htmlFor="validityStartDate">
+            {/* W4 #6 — collapsed the prior three-field rendering
+                (self-declared start/end PLUS authorized from/until)
+                into the single authorized from/until range. The two
+                were the same values under different labels; the
+                direct-onboarding wizard already went through this same
+                deduplication. */}
+            {showDates && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  label="Authorized from"
+                  htmlFor="authorizedFrom"
+                  required={requireStartDate}
+                >
                   <input
-                    id="validityStartDate"
+                    id="authorizedFrom"
                     type="date"
-                    value={validityStartDate}
-                    onChange={(e) => setValidityStartDate(e.target.value)}
+                    value={authorizedFrom}
+                    onChange={(e) => setAuthorizedFrom(e.target.value)}
                     className={inputClass()}
+                    required={requireStartDate}
                   />
                 </FormField>
-              )}
-              {showEndDate && (
-                <FormField label="Authorization end date" htmlFor="validityDate">
+                <FormField
+                  label="Authorized until"
+                  htmlFor="authorizedUntil"
+                  required={requireEndDate}
+                >
                   <input
-                    id="validityDate"
+                    id="authorizedUntil"
                     type="date"
-                    value={validityDate}
-                    onChange={(e) => setValidityDate(e.target.value)}
+                    value={authorizedUntil}
+                    onChange={(e) => setAuthorizedUntil(e.target.value)}
                     className={inputClass()}
+                    required={requireEndDate}
                   />
                 </FormField>
-              )}
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Authorized from" htmlFor="authorizedFrom">
-                <input
-                  id="authorizedFrom"
-                  type="date"
-                  value={authorizedFrom}
-                  onChange={(e) => setAuthorizedFrom(e.target.value)}
-                  className={inputClass()}
-                />
-              </FormField>
-              <FormField label="Authorized until" htmlFor="authorizedUntil">
-                <input
-                  id="authorizedUntil"
-                  type="date"
-                  value={authorizedUntil}
-                  onChange={(e) => setAuthorizedUntil(e.target.value)}
-                  className={inputClass()}
-                />
-              </FormField>
-            </div>
-            <p className="text-xs text-slate-500">
-              Optional. Once ERM sets up your Compliance record these dates
-              carry over to the work-authorization record they see.
-            </p>
+              </div>
+            )}
           </>
         )}
 
