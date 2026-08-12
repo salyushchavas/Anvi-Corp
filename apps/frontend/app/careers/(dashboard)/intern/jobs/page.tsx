@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Search } from 'lucide-react';
 import api from '@/lib/careers/api';
 import InternPageShell from '@/components/intern/InternPageShell';
@@ -63,6 +64,16 @@ export default function InternJobsPage() {
   const lifecycle = dashboard?.lifecycleStatus;
   const canApply = emailVerified
     && (lifecycle === 'EMAIL_VERIFIED' || lifecycle === 'APPLICATION_SUBMITTED');
+  // Wave-2 #5 — page-level lock banner shown when the intern's profile
+  // isn't yet complete. The per-card Apply button also carries its own
+  // hint, but the banner puts the fix one click away at the top of the
+  // page so it's the first thing a fresh intern sees on /jobs.
+  const readiness = dashboard?.applyReadiness;
+  const profileLocked = readiness != null && !readiness.complete;
+  const missing = readiness?.missing ?? [];
+  const focusHref = missing[0]
+    ? `/careers/intern/profile/complete?focus=${encodeURIComponent(missing[0])}`
+    : '/careers/intern/profile/complete';
 
   function handleApplied(jobPostingId: string) {
     // Optimistic local flip; then re-fetch + refresh dashboard for the
@@ -109,6 +120,28 @@ export default function InternJobsPage() {
       {emailVerified && !canApply && (
         <div className="mb-4 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
           Browsing only — your journey has moved past the application phase.
+        </div>
+      )}
+      {emailVerified && canApply && profileLocked && (
+        <div className="mb-4 flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Complete your profile to apply for any role
+            {missing.length > 0 && (
+              <span className="text-amber-800/80">
+                {' '}
+                ({readiness?.percent ?? 0}% done — missing:{' '}
+                {missing.slice(0, 3).join(', ')}
+                {missing.length > 3 ? '…' : ''})
+              </span>
+            )}
+            .
+          </span>
+          <Link
+            href={focusHref}
+            className="inline-flex shrink-0 items-center rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+          >
+            Complete profile
+          </Link>
         </div>
       )}
 

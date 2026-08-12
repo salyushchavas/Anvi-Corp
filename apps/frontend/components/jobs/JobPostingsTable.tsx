@@ -250,16 +250,43 @@ function JobActions({
     onApply();
   }
 
+  // Wave-2 #5 — visible apply-lock. When the intern's profile is
+  // incomplete, the button relabels + disables and a click-through hint
+  // renders alongside; the click still routes to /profile/complete so the
+  // intern can act without hunting for the fix.
+  const applyLabel = applied
+    ? 'Applied'
+    : isPostApplicant
+      ? 'Staff view'
+      : profileLocked
+        ? 'Complete profile to apply'
+        : 'Apply Now';
+
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
       <button
         type="button"
         onClick={apply}
         disabled={applied || isPostApplicant}
-        className="rounded-full bg-brand-700 px-4 py-1.5 text-sm font-semibold text-white shadow-ds-sm transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+        title={profileLocked ? 'Finish your profile to enable Apply.' : undefined}
+        aria-describedby={profileLocked ? `apply-lock-${posting.id}` : undefined}
+        className={
+          'rounded-full px-4 py-1.5 text-sm font-semibold shadow-ds-sm transition-colors disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 '
+          + (profileLocked && !applied && !isPostApplicant
+            ? 'bg-amber-500 text-white hover:bg-amber-600'
+            : 'bg-brand-700 text-white hover:bg-brand-800')
+        }
       >
-        {applied ? 'Applied' : isPostApplicant ? 'Staff view' : 'Apply Now'}
+        {applyLabel}
       </button>
+      {profileLocked && !applied && !isPostApplicant && (
+        <span
+          id={`apply-lock-${posting.id}`}
+          className="text-xs text-amber-800"
+        >
+          Complete your profile to apply
+        </span>
+      )}
       <Link
         href={`/careers/openings/${posting.slug}`}
         className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-semibold text-slate-700 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"

@@ -3,13 +3,14 @@
 import type { ReactNode } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import { InternDashboardProvider } from '@/components/intern/InternDashboardContext';
-import InternModuleRouteGuard from '@/components/intern/InternModuleRouteGuard';
 
 /**
  * Intern segment layout. Every intern page lives inside:
- *   ProtectedRoute (INTERN gate)
- *     InternDashboardProvider (single /api/v1/intern/dashboard fetch + 30s poll)
+ *   (dashboard) layout — mounts InternDashboardBoundary (provider + route
+ *                        guard) once for every dashboard route, gated on
+ *                        the caller having the INTERN role. See Wave-2 #10.
+ *     ProtectedRoute (INTERN role gate — belt-and-suspenders vs. the
+ *                    boundary's role check)
  *       DashboardLayout (sidebar + topbar + main column)
  *         {page content — wrapped in InternPageShell for PageHeader + Stepper}
  *
@@ -23,10 +24,7 @@ export default function InternSegmentLayout({
 }) {
   return (
     <ProtectedRoute requiredRoles={['INTERN']}>
-      <InternDashboardProvider>
-        <InternModuleRouteGuard />
-        <DashboardLayout>{children}</DashboardLayout>
-      </InternDashboardProvider>
+      <DashboardLayout>{children}</DashboardLayout>
     </ProtectedRoute>
   );
 }

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/careers/auth-context';
 import { formatRelative } from '@/lib/careers/format-date';
+import { useInternDashboardOptional } from '@/components/intern/InternDashboardContext';
 import type { JobPostingResponse } from '@/types';
 import { Button, Card, StatusPill } from '@/components/ui';
 import ApplyNowModal from './ApplyNowModal';
@@ -55,6 +56,7 @@ function partitionRequirements(req?: string | null) {
 export default function JobCard({ posting, onApplied }: Props) {
   const router = useRouter();
   const { user } = useAuth();
+  const dashboard = useInternDashboardOptional();
   const [showApply, setShowApply] = useState(false);
   const [showAllReq, setShowAllReq] = useState(false);
   const [showAllQual, setShowAllQual] = useState(false);
@@ -69,6 +71,12 @@ export default function JobCard({ posting, onApplied }: Props) {
   const isApplicant = !!user?.roles?.includes('INTERN');
   const isPostApplicant =
     isAuthed && !isApplicant && (user?.roles?.length ?? 0) > 0;
+  // Wave-2 #5 — mirrors the JobPostingsTable lock. Only kicks in for
+  // interns; unauthenticated visitors on /careers/openings/* still see
+  // the vanilla "Apply now" (they'll hit the login → profile-complete
+  // funnel post-signup).
+  const readiness = dashboard?.data?.applyReadiness;
+  const profileLocked = isApplicant && readiness != null && !readiness.complete;
 
   const reqShown = showAllReq ? requirements : requirements.slice(0, MAX_BULLET_LINES);
   const qualShown = showAllQual ? qualifications : qualifications.slice(0, MAX_BULLET_LINES);
@@ -80,6 +88,14 @@ export default function JobCard({ posting, onApplied }: Props) {
       return;
     }
     if (!isApplicant || applied) return;
+    if (profileLocked) {
+      const focus = readiness!.missing[0];
+      const href = focus
+        ? `/careers/intern/profile/complete?focus=${encodeURIComponent(focus)}`
+        : '/careers/intern/profile/complete';
+      router.push(href);
+      return;
+    }
     setShowApply(true);
   }
 
@@ -186,6 +202,15 @@ export default function JobCard({ posting, onApplied }: Props) {
               icon={CheckCircle2}
               size="md"
             />
+          ) : profileLocked ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handleApplyClick}
+              title="Finish your profile to enable Apply."
+            >
+              Complete profile to apply
+            </Button>
           ) : (
             <Button size="sm" onClick={handleApplyClick}>
               Apply now
