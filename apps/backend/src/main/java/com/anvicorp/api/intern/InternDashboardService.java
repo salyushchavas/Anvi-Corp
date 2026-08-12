@@ -285,7 +285,9 @@ public class InternDashboardService {
 
     // ── Mode derivation ─────────────────────────────────────────────────────
 
-    private String deriveMode(InternLifecycleStatus s) {
+    // Package-private + static so the buildModules matrix test can drive
+    // it directly without wiring the full @Service.
+    static String deriveMode(InternLifecycleStatus s) {
         return switch (s) {
             case REGISTERED, EMAIL_VERIFIED, APPLICATION_SUBMITTED -> "APPLICANT";
             case SHORTLISTED, INTERVIEW_SCHEDULED, INTERVIEW_COMPLETED -> "INTERVIEW";
@@ -378,7 +380,8 @@ public class InternDashboardService {
         }
     }
 
-    private boolean atLeast(InternLifecycleStatus current, InternLifecycleStatus floor) {
+    // Package-private + static so the buildModules test can call it too.
+    static boolean atLeast(InternLifecycleStatus current, InternLifecycleStatus floor) {
         return current.ordinal() >= floor.ordinal();
     }
 
@@ -415,7 +418,10 @@ public class InternDashboardService {
      * redirects any hidden-or-locked route to /careers/intern, so a stale
      * bookmark can't bypass the reveal.</p>
      */
-    private Modules buildModules(InternLifecycleStatus status, String mode) {
+    // Package-private + static — pure function of status + mode with no
+    // dependence on injected beans. Exposed to the test for the module
+    // matrix drill.
+    static Modules buildModules(InternLifecycleStatus status, String mode) {
         boolean inactive = "INACTIVE".equals(mode);
         // "Post-application-phase" — the intern has moved past the pre-hire
         // pipeline into work/exit. Used to hide the application-family
@@ -510,7 +516,7 @@ public class InternDashboardService {
         return new ModuleState(false, false, false);
     }
 
-    private ModuleState workModuleState(String mode) {
+    private static ModuleState workModuleState(String mode) {
         // My Projects / Timesheets / Evaluations / Doubts are gated on
         // ACTIVE_INTERN. Pre-active interns are hidden entirely (visible
         // = false) — greyed-out links confused new hires into thinking
