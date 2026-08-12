@@ -79,6 +79,11 @@ public class EditableTemplateAdminService {
     private final ObjectMapper objectMapper;
     private final DocumentInstancePdfRenderer pdfRenderer;
     private final DocxFormattingExtractor docxFormattingExtractor;
+    /** IDMS metadata Stage 2 — applies the source-DOCX formatting
+     *  profile to the docx-preview canonical HTML at save-time,
+     *  BEFORE the sanitizer runs. Fail-open on null / legacy /
+     *  malformed profile. See CanonicalHtmlProfileCorrector docstring. */
+    private final CanonicalHtmlProfileCorrector profileCorrector;
 
     // ── List + get ───────────────────────────────────────────────────
 
@@ -467,13 +472,25 @@ public class EditableTemplateAdminService {
         // re-runs the same normaliser as a last-mile guard.
         String normalizedHtml =
                 com.anvicorp.api.erm.idms.XhtmlNormalizer.toXhtmlFragment(html);
+        // IDMS metadata Stage 2 — data-driven correction pass. Reads the
+        // source DOCX's authoritative formatting profile (Stage 1 output,
+        // persisted on t.sourceFormattingProfileJson) and folds it back
+        // into the normalized HTML: real header/footer alignment + indent
+        // (INCLUDING negative values docx-preview drops), real page
+        // margins from sectPr, list-item font from body default. Fail-
+        // open — null profile (legacy template) or malformed JSON
+        // returns the input unchanged, so backward compat is total.
+        // Rendering code (DocumentInstancePdfRenderer) stays untouched;
+        // the corrected HTML flows through the existing pipeline.
+        String correctedHtml = profileCorrector.correct(
+                normalizedHtml, t.getSourceFormattingProfileJson());
         // Security Wave 2 (M) — sanitize the canonical HTML before persist.
         // Strips <script>, on* handlers, javascript: URLs, and any tag /
         // attribute / protocol not on the safelist. Preserves formatting,
         // <span data-field-id="…"> field anchors, and data: URLs on
         // signature <img> tags. See CanonicalHtmlSanitizer for the policy.
         String sanitizedHtml =
-                com.anvicorp.api.security.CanonicalHtmlSanitizer.sanitize(normalizedHtml);
+                com.anvicorp.api.security.CanonicalHtmlSanitizer.sanitize(correctedHtml);
         // ── DIAGNOSTIC LOGGING — save-time font-strip investigation ──
         // Logs the incoming payload (canvas.innerHTML) side-by-side with
         // the stored canonical_html after both XhtmlNormalizer and
@@ -499,6 +516,8 @@ public class EditableTemplateAdminService {
                     id, html);
             log.info("[IdmsSaveSchemaTrace] template={} NORMALIZED(XhtmlNormalizer)=\n{}",
                     id, normalizedHtml);
+            log.info("[IdmsSaveSchemaTrace] template={} CORRECTED(profileCorrector, profileNull={})=\n{}",
+                    id, t.getSourceFormattingProfileJson() == null, correctedHtml);
             log.info("[IdmsSaveSchemaTrace] template={} STORED(sanitizer)=\n{}",
                     id, sanitizedHtml);
         }
