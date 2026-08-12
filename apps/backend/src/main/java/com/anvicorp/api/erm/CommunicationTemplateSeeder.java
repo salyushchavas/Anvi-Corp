@@ -168,23 +168,17 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Your onboarding lead will reach out with next steps.\n\n"
                             + "— Anvi Corp ERM",
                     "firstName,jobTitle,pdfDownloadUrl"),
-            // Intern Email Wave 1 — #8. ERM-facing notification when
-            // the intern's profile hits 100% completion. Lets the ERM
-            // start assignments / project matching without polling the
-            // dashboard for the profile-complete flip. Sent TO the
-            // owning ERM (not the intern — the intern already sees the
-            // completion banner in-dashboard).
-            new Seed(
-                    "INTERN_PROFILE_COMPLETED", "EMAIL",
-                    "{{internName}} completed their Anvi Corp profile",
-                    "Hi,\n\n"
-                            + "{{internName}} ({{internEmail}}) just completed their "
-                            + "Anvi Corp profile. Their applicant tracking id is "
-                            + "{{applicantId}}.\n\n"
-                            + "Review the profile in your ERM dashboard:\n"
-                            + "{{profileUrl}}\n\n"
-                            + "— Anvi Corp",
-                    "internName,internEmail,applicantId,profileUrl"),
+            // Intern Email Wave 1 — #8 is already fully implemented by
+            // ProfileNotificationService.maybeFireSubmissionAck, called
+            // from UserProfileService.updateProfile after every save.
+            // That path fires exactly once per intern (guarded by
+            // Candidate.profileSubmittedAt), emails every active ERM
+            // with the full intern details (Name, Email, Contact,
+            // Work Auth, Skillset, Submission date, Full Address) via
+            // ProfileNotificationService.buildSubmissionBody, AND drops
+            // an in-app row per ERM via UserNotificationDispatcher.
+            // Brand-neutral copy — no rebrand risk. No new template
+            // needed; documented here so the audit trail is obvious.
             new Seed(
                     "INTERVIEW_SELECTED", "EMAIL",
                     "Great news from your Anvi Corp interview",
