@@ -122,6 +122,63 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Please update your application in your Anvi Corp dashboard.\n\n"
                             + "— Anvi Corp ERM",
                     "firstName,jobTitle,infoRequested"),
+            // Intern Email Wave 1 — #11. ERM shortlists an application →
+            // the applicant gets both an in-app dispatch AND this email so
+            // they know their application progressed. Previously ONLY
+            // managers were notified (in-app); the applicant heard nothing.
+            new Seed(
+                    "APPLICATION_SHORTLIST", "EMAIL",
+                    "Your Anvi Corp application has been shortlisted",
+                    "Hello {{firstName}},\n\n"
+                            + "Great news — your application for {{jobTitle}} has been "
+                            + "shortlisted for the next stage. A recruiter will reach out to "
+                            + "schedule your interview shortly.\n\n"
+                            + "You can track the status of your application at any time in "
+                            + "your Anvi Corp dashboard: {{dashboardUrl}}\n\n"
+                            + "Questions in the meantime? Reach out to {{supportEmail}}.\n\n"
+                            + "— Anvi Corp ERM",
+                    "firstName,jobTitle,dashboardUrl"),
+            // Intern Email Wave 1 — #13 is already covered by the
+            // existing INTERVIEW_SELECTED template below, which
+            // InterviewEmailListener.onManagerHireDecision → sendDecision
+            // fires the moment ManagerHireApprovalService.decide flips
+            // iv.decision = "SELECTED" (APPROVED path). The current
+            // copy already prompts the intern to "click Receive my offer
+            // letter", satisfying the ack-to-receive-letter intent. No
+            // new template needed — see the report for the exact path.
+            // Intern Email Wave 1 — #19. Once an offer is finalized
+            // (ERM executes the countersigned PDF), the intern gets
+            // this "your executed offer letter is ready" email with a
+            // secure dashboard link to download the PDF. The download
+            // route goes through the same authenticated + decrypting
+            // endpoint the in-dashboard button uses; a bare S3 link
+            // would leak the encrypted envelope (see
+            // DocumentInstanceService.readFinalPdfBytes).
+            new Seed(
+                    "OFFER_LETTER_EXECUTED", "EMAIL",
+                    "Your Anvi Corp offer letter has been executed",
+                    "Hello {{firstName}},\n\n"
+                            + "Your Anvi Corp offer letter for {{jobTitle}} has been "
+                            + "countersigned and executed. Welcome aboard!\n\n"
+                            + "Download the fully-signed PDF from your dashboard:\n"
+                            + "{{pdfDownloadUrl}}\n\n"
+                            + "Keep a copy for your records — the same PDF is stored in "
+                            + "your Anvi Corp dashboard and can be re-downloaded any time "
+                            + "under Documents.\n\n"
+                            + "Your onboarding lead will reach out with next steps.\n\n"
+                            + "— Anvi Corp ERM",
+                    "firstName,jobTitle,pdfDownloadUrl"),
+            // Intern Email Wave 1 — #8 is already fully implemented by
+            // ProfileNotificationService.maybeFireSubmissionAck, called
+            // from UserProfileService.updateProfile after every save.
+            // That path fires exactly once per intern (guarded by
+            // Candidate.profileSubmittedAt), emails every active ERM
+            // with the full intern details (Name, Email, Contact,
+            // Work Auth, Skillset, Submission date, Full Address) via
+            // ProfileNotificationService.buildSubmissionBody, AND drops
+            // an in-app row per ERM via UserNotificationDispatcher.
+            // Brand-neutral copy — no rebrand risk. No new template
+            // needed; documented here so the audit trail is obvious.
             new Seed(
                     "INTERVIEW_SELECTED", "EMAIL",
                     "Great news from your Anvi Corp interview",

@@ -106,6 +106,25 @@ public class DocumentInstanceService {
     // click on their dashboard. Same policy component both surfaces read.
     private final com.anvicorp.api.erm.offer.SelectionAckPolicy selectionAckPolicy;
 
+    // Intern Email Wave 1 (#19) — email the intern their finalized
+    // (executed) offer letter with a secure download link. Uses the
+    // shared CommunicationTemplateService + EmailProvider so the copy
+    // stays rebrand-safe (brand vars from Wave 1) and edit-able from
+    // the ERM settings UI at runtime. finalize() calls
+    // {@link #sendFinalizedPdfEmail} inline after the notifyIntern
+    // in-app dispatch — no new event bus / listener, contained here.
+    private final com.anvicorp.api.erm.CommunicationTemplateService templateService;
+    private final com.anvicorp.api.notification.EmailProvider emailProvider;
+    private final com.anvicorp.api.config.BrandConfig brand;
+
+    /** Same {@code app.frontend.base-url} key used by every other
+     *  outbound email that embeds a dashboard deep link
+     *  (ApplicationDecisionListener, EvaluationNotificationFanout,
+     *  OfferIdmsSigningService). */
+    @org.springframework.beans.factory.annotation.Value(
+            "${app.frontend.base-url:https://www.anvicorp.com}")
+    private String frontendBaseUrl;
+
     // ── Create + supersede + list ────────────────────────────────────
 
     /**
@@ -668,8 +687,70 @@ public class DocumentInstanceService {
                 "Your document has been executed",
                 "\"" + instance.getTemplateTitle() + "\" is complete. Download the executed copy from your Agreements.",
                 internDocPath(instance));
+        // Intern Email Wave 1 (#19) — email the intern their executed
+        // offer letter with a secure dashboard link. Best-effort; a
+        // mail failure never rolls back the FINALIZE state change (the
+        // in-app dispatch above + the finalPdfDocumentId row are the
+        // sources of truth). Only fires for offer-family instances —
+        // other IDMS docs land on the generic "your document has been
+        // executed" in-app notify without the offer-letter framing.
+        try {
+            sendFinalizedPdfEmail(instance);
+        } catch (Exception e) {
+            log.warn("[IDMS] finalized-pdf email failed (non-fatal) for instance={}: {}",
+                    instance.getId(), e.getMessage());
+        }
         log.info("[IDMS] finalized instance={} pdfDoc={}", instance.getId(), pdfDoc.getId());
         return toDetail(instance, caller);
+    }
+
+    /**
+     * Send the intern an email announcing the executed offer letter
+     * with a link to their dashboard where the PDF can be downloaded
+     * from the authenticated + decrypting endpoint. The PDF is NOT
+     * attached to the email itself — signed offer letters carry PII
+     * that shouldn't ride the SMTP hop, and the vault endpoint already
+     * gates by ownership so the download requires a real intern login.
+     */
+    private void sendFinalizedPdfEmail(DocumentInstance instance) {
+        if (!isOfferFamily(instance)) return;
+        User intern = userRepo.findById(instance.getInternUserId()).orElse(null);
+        if (intern == null || intern.getEmail() == null || intern.getEmail().isBlank()) return;
+        String firstName = intern.getFullName() != null && !intern.getFullName().isBlank()
+                ? intern.getFullName().trim().split("\\s+", 2)[0]
+                : "there";
+        String jobTitle = instance.getTemplateTitle() != null
+                ? instance.getTemplateTitle() : "your role";
+        String pdfDownloadUrl = frontendBaseUrl + internDocPath(instance);
+        Map<String, Object> vars = new LinkedHashMap<>();
+        vars.put("firstName", firstName);
+        vars.put("jobTitle", jobTitle);
+        vars.put("pdfDownloadUrl", pdfDownloadUrl);
+        vars.put("supportEmail", brand.getSupportEmail());
+        String fallbackSubject = "Your " + brand.getName()
+                + " offer letter has been executed";
+        String fallbackBody = "Hello " + firstName + ",\n\n"
+                + "Your " + brand.getName() + " offer letter for " + jobTitle
+                + " has been countersigned and executed. Welcome aboard!\n\n"
+                + "Download the fully-signed PDF from your dashboard:\n"
+                + pdfDownloadUrl + "\n\n"
+                + brand.signoffErm();
+        String subject = fallbackSubject;
+        String body = fallbackBody;
+        try {
+            var rendered = templateService.render(
+                    "OFFER_LETTER_EXECUTED", "EMAIL", vars).orElse(null);
+            if (rendered != null) {
+                subject = rendered.subject() != null ? rendered.subject() : fallbackSubject;
+                body = rendered.body() != null ? rendered.body() : fallbackBody;
+            } else {
+                log.info("[IDMS] template OFFER_LETTER_EXECUTED missing — using hard-coded copy");
+            }
+        } catch (Exception e) {
+            log.warn("[IDMS] render OFFER_LETTER_EXECUTED failed (non-fatal): {}",
+                    e.getMessage());
+        }
+        emailProvider.sendRendered(intern.getEmail(), subject, body);
     }
 
     @Transactional

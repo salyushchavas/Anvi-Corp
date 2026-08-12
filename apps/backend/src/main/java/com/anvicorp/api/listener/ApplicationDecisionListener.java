@@ -90,7 +90,29 @@ public class ApplicationDecisionListener {
                 ? ermActor.getFullName() : brand.getName() + " ERM";
 
         switch (e.getDecision()) {
-            case "SHORTLIST" -> dispatchManagerOnShortlist(applicant, jobTitle, e.getApplicationId());
+            case "SHORTLIST" -> {
+                dispatchManagerOnShortlist(applicant, jobTitle, e.getApplicationId());
+                // Intern Email Wave 1 — #11. The applicant used to hear
+                // NOTHING when their application moved from NEW to
+                // SHORTLISTED (only the managers got an in-app row).
+                // Same renderAndSend path the HOLD / REJECT / REQUEST_INFO
+                // cases use so the applicant gets an in-app + email pair
+                // consistent with the rest of the decision fan-out.
+                Map<String, Object> shortlistVars = new LinkedHashMap<>();
+                shortlistVars.put("firstName", firstName);
+                shortlistVars.put("jobTitle", jobTitle);
+                shortlistVars.put("ermName", ermName);
+                shortlistVars.put("supportEmail", brand.getSupportEmail());
+                shortlistVars.put("dashboardUrl",
+                        frontendBaseUrl + "/careers/intern/applications/" + e.getApplicationId());
+                renderAndSend("APPLICATION_SHORTLIST", shortlistVars,
+                        email, applicant, e,
+                        "Your " + brand.getName() + " application has been shortlisted",
+                        "Hello " + firstName + ",\n\nGreat news — your application for "
+                                + jobTitle + " has been shortlisted for the next stage. "
+                                + "A recruiter will reach out to schedule your interview.\n\n"
+                                + brand.signoffErm());
+            }
             case "HOLD" -> renderAndSend("APPLICATION_HOLD",
                     Map.of("firstName", firstName, "jobTitle", jobTitle,
                             "ermName", ermName,

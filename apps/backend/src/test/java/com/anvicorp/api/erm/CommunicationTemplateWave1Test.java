@@ -217,6 +217,87 @@ class CommunicationTemplateWave1Test {
         assertFalse(r.get().body().contains("Anvi"));
     }
 
+    // ── Wave-1 parity: #11 APPLICATION_SHORTLIST + #19 OFFER_LETTER_EXECUTED ──
+
+    /** #11 — the applicant used to get NOTHING on shortlist (only
+     *  MANAGER got an in-app row via
+     *  ApplicationDecisionListener.dispatchManagerOnShortlist). Wave 1
+     *  added an applicant-facing email via the same renderAndSend hook
+     *  the HOLD / REJECT / REQUEST_INFO decisions use, backed by this
+     *  seed. Test asserts the seed exists AND renders with its vars. */
+    @Test
+    void application_shortlist_seed_renders_with_declared_vars() {
+        boolean seedExists = allSeeds().stream()
+                .anyMatch(s -> "APPLICATION_SHORTLIST".equals(s.key())
+                        && "EMAIL".equals(s.channel()));
+        assertTrue(seedExists, "APPLICATION_SHORTLIST seed must be in the list");
+        CommunicationTemplateSeeder.Seed raw = allSeeds().stream()
+                .filter(s -> "APPLICATION_SHORTLIST".equals(s.key()))
+                .findFirst().orElseThrow();
+        CommunicationTemplateSeeder.Seed b = brandifyReflect(newSeeder(), raw);
+        var svc = new CommunicationTemplateService(new StubRepo(Map.of(
+                "APPLICATION_SHORTLIST|EMAIL",
+                new StubTemplate("APPLICATION_SHORTLIST", "EMAIL",
+                        b.subject(), b.body()))),
+                BRAND);
+        Optional<CommunicationTemplateService.Rendered> r = svc.render(
+                "APPLICATION_SHORTLIST", "EMAIL",
+                Map.of("firstName", "Alice",
+                        "jobTitle", "Backend Intern",
+                        "dashboardUrl",
+                        "https://careers.acme.example/careers/intern/applications/x"));
+        assertTrue(r.isPresent(), "APPLICATION_SHORTLIST should render");
+        assertTrue(r.get().subject().contains("Acme Tech"),
+                "brandName should be injected in subject");
+        assertTrue(r.get().body().contains("Alice"));
+        assertTrue(r.get().body().contains("Backend Intern"));
+        assertTrue(r.get().body().contains(
+                "https://careers.acme.example/careers/intern/applications/x"),
+                "dashboardUrl should be embedded in the body");
+        assertTrue(r.get().body().contains("hello@acme.example"),
+                "supportEmail should be auto-injected");
+        assertFalse(r.get().body().contains("Anvi"),
+                "no literal Anvi should appear in rendered output");
+    }
+
+    /** #19 — after DocumentInstanceService.finalize renders the executed
+     *  PDF and persists finalPdfDocumentId, the intern gets this email
+     *  with a link to their dashboard's offer-letter page (where the
+     *  Download button hits the authenticated /final-pdf endpoint —
+     *  raw PDF is NOT attached, per the encrypted-vault contract). */
+    @Test
+    void offer_letter_executed_seed_renders_with_declared_vars() {
+        boolean seedExists = allSeeds().stream()
+                .anyMatch(s -> "OFFER_LETTER_EXECUTED".equals(s.key())
+                        && "EMAIL".equals(s.channel()));
+        assertTrue(seedExists, "OFFER_LETTER_EXECUTED seed must be in the list");
+        CommunicationTemplateSeeder.Seed raw = allSeeds().stream()
+                .filter(s -> "OFFER_LETTER_EXECUTED".equals(s.key()))
+                .findFirst().orElseThrow();
+        CommunicationTemplateSeeder.Seed b = brandifyReflect(newSeeder(), raw);
+        var svc = new CommunicationTemplateService(new StubRepo(Map.of(
+                "OFFER_LETTER_EXECUTED|EMAIL",
+                new StubTemplate("OFFER_LETTER_EXECUTED", "EMAIL",
+                        b.subject(), b.body()))),
+                BRAND);
+        String pdfLink =
+                "https://careers.acme.example/careers/intern/offer-letter/instance-1";
+        Optional<CommunicationTemplateService.Rendered> r = svc.render(
+                "OFFER_LETTER_EXECUTED", "EMAIL",
+                Map.of("firstName", "Alice",
+                        "jobTitle", "Software Engineer",
+                        "pdfDownloadUrl", pdfLink));
+        assertTrue(r.isPresent(), "OFFER_LETTER_EXECUTED should render");
+        assertTrue(r.get().subject().contains("Acme Tech"),
+                "brandName should be injected in subject");
+        assertTrue(r.get().body().contains("Alice"));
+        assertTrue(r.get().body().contains("Software Engineer"));
+        assertTrue(r.get().body().contains(pdfLink),
+                "pdfDownloadUrl should be embedded in the body");
+        assertFalse(r.get().body().contains("Anvi"),
+                "no literal Anvi should appear in rendered output");
+    }
+
     // ── helpers ────────────────────────────────────────────────────────
 
     /** Invoke the seeder's package-private {@code rewrite} via reflection
