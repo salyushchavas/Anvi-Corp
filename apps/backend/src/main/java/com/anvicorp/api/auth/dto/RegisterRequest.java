@@ -28,7 +28,16 @@ import jakarta.validation.constraints.Size;
  */
 public record RegisterRequest(
         @Email @NotBlank String email,
-        @NotBlank @Size(min = 8) String password,
+        /**
+         * Wave-3-latent alignment — the admin-side {@code CreateUserRequest}
+         * has always capped passwords at 128 chars; the intern-facing auth
+         * DTOs (register, reset, change) had no upper bound, so a paste of
+         * a 500-char string succeeded on {@code /register} but 400'd on
+         * {@code /admin/users/{id}/credentials} for the same account. Bcrypt
+         * itself truncates past ~72 bytes so nothing above that is
+         * cryptographically meaningful anyway. Cap matches admin DTOs.
+         */
+        @NotBlank @Size(min = 8, max = 128) String password,
         @NotBlank String fullName,
         /** Same string as fullName at signup; the profile editor can split
          *  legal vs. preferred later if needed. Null tolerated for back-

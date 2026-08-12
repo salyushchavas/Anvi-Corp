@@ -14,5 +14,10 @@ import jakarta.validation.constraints.Size;
 public record ResetPasswordRequest(
         @Email @NotBlank String email,
         @NotBlank @Pattern(regexp = "\\d{6}", message = "Code must be 6 digits") String code,
-        @NotBlank @Size(min = 8) String newPassword
+        /** Wave-3-latent alignment — cap at 128 to match the admin
+         *  {@code CreateUserRequest} + {@code UpdateUserCredentialsRequest}
+         *  DTOs so the same account can't be created with a 500-char
+         *  password on one endpoint and rejected on another. Bcrypt
+         *  truncates past ~72 bytes; the cap costs nothing. */
+        @NotBlank @Size(min = 8, max = 128) String newPassword
 ) {}

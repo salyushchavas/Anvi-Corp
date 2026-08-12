@@ -880,6 +880,11 @@ function WorkAuthStep(props: {
               value={props.workAuthNotes}
               onChange={(e) => props.setWorkAuthNotes(e.target.value)}
               rows={3}
+              // Matches the backend DirectOnboardingRequest.workAuthNotes
+              // @Size(max=2000) so a paste over the cap fails at the
+              // input level with the native browser hint rather than
+              // going through the submit + 400 round-trip.
+              maxLength={2000}
               className={inputClass}
             />
           </Field>
@@ -1197,6 +1202,12 @@ function ReviewStep(props: {
               <input
                 value={props.mailboxPassword}
                 onChange={(e) => props.setMailboxPassword(e.target.value)}
+                // Matches the backend DirectOnboardingRequest
+                // .mailboxStartingPassword @Size(min=8, max=128) so a
+                // paste over the cap fails at the input level with the
+                // native browser hint instead of an opaque 400 mid-wizard.
+                maxLength={128}
+                minLength={8}
                 className={inputClass}
                 autoComplete="off"
               />
