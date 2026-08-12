@@ -108,7 +108,7 @@ public class InternDashboardService {
                 mode,
                 emailVerified,
                 buildStepper(caller, status, hasPublishedEval),
-                buildModules(mode),
+                buildModules(status, mode),
                 buildNextAction(caller, status, mode, emailVerified,
                         exitSummary, feedbackSubmitted, selection),
                 buildContacts(caller),
@@ -384,81 +384,120 @@ public class InternDashboardService {
 
     // ── Modules ─────────────────────────────────────────────────────────────
 
-    private Modules buildModules(String mode) {
+    /**
+     * Wave-2 #4 — progressive reveal. Every module that isn't yet relevant
+     * for the caller's lifecycle stage is HIDDEN, not "greyed-out locked".
+     * A fresh intern at EMAIL_VERIFIED therefore sees only Home / Job
+     * Postings / Messages / Help (+ Profile, which has no moduleKey and is
+     * always visible in the sidebar). Modules appear as the intern reaches
+     * the stage that needs them:
+     *
+     * <ul>
+     *   <li>{@code myApplications} — from APPLICATION_SUBMITTED (they have
+     *       something to view); read-only once past OFFER_SENT.</li>
+     *   <li>{@code interviewCenter} — from SHORTLISTED; read-only past
+     *       OFFER_SENT.</li>
+     *   <li>{@code offerLetter} — from OFFER_SENT; read-only past
+     *       OFFER_SIGNED (they can still view the executed copy).</li>
+     *   <li>{@code onboarding} — from OFFER_SIGNED / EMPLOYEE_ID_CREATED /
+     *       ONBOARDING_ASSIGNED (NEW_HIRE mode).</li>
+     *   <li>{@code documents} — from OFFER_SIGNED onward (nothing to store
+     *       before then); read-only when INACTIVE.</li>
+     *   <li>{@code myProjects / timesheets / evaluations / doubts} — only
+     *       ACTIVE_INTERN; INACTIVE keeps them visible read-only.</li>
+     *   <li>{@code jobPostings} — always visible in the application phase
+     *       so an intern with a slow-moving first application can still
+     *       apply to more; hidden once ACTIVE/INACTIVE.</li>
+     *   <li>{@code messages / help / home} — always visible.</li>
+     * </ul>
+     *
+     * <p>Belt-and-suspenders: the frontend {@code InternModuleRouteGuard}
+     * redirects any hidden-or-locked route to /careers/intern, so a stale
+     * bookmark can't bypass the reveal.</p>
+     */
+    private Modules buildModules(InternLifecycleStatus status, String mode) {
         boolean inactive = "INACTIVE".equals(mode);
-        // Application-phase modules (jobs / apps / interview / offer /
-        // onboarding) are HIDDEN once the intern reaches ACTIVE_INTERN.
-        // The brief is "clean swap at the active boundary" — pre-active
-        // interns see application items only; active/inactive interns see
-        // the work workspace only (no overlap, no read-only ghost nav).
-        boolean preActive = !(inactive || "ACTIVE_INTERN".equals(mode));
+        // "Post-application-phase" — the intern has moved past the pre-hire
+        // pipeline into work/exit. Used to hide the application-family
+        // modules (jobs / apps / interview / offer / onboarding).
+        boolean workOrLater = inactive || "ACTIVE_INTERN".equals(mode);
 
         ModuleState home = new ModuleState(true, false, inactive);
 
-        // Job Postings — application-phase only.
-        ModuleState jobs = preActive
-                ? switch (mode) {
-                    case "APPLICANT" -> new ModuleState(true, false, false);
-                    case "INTERVIEW" -> new ModuleState(true, false, true);
-                    default          -> new ModuleState(true, true, false);
-                }
-                : new ModuleState(false, false, false);
+        // Job Postings — visible for the whole application phase; hidden
+        // once the intern has been hired (there is no jobs page for
+        // ACTIVE / INACTIVE interns to hit).
+        ModuleState jobs = workOrLater
+                ? hidden()
+                : new ModuleState(true, false, false);
 
-        // My Applications — application-phase only; read-only past OFFER.
+        // My Applications — appears when the intern has actually applied
+        // to at least one job. Read-only once they've been sent an offer
+        // (the record freezes; further actions happen on Offer Letter).
         ModuleState apps;
-        if (!preActive) {
-            apps = new ModuleState(false, false, false);
-        } else {
+        if (workOrLater) {
+            apps = hidden();
+        } else if (atLeast(status, InternLifecycleStatus.APPLICATION_SUBMITTED)) {
             boolean appsReadOnly = !(mode.equals("APPLICANT") || mode.equals("INTERVIEW"));
             apps = new ModuleState(true, false, appsReadOnly);
+        } else {
+            apps = hidden();
         }
 
-        // Interview Center — application-phase only.
-        ModuleState interview = preActive
-                ? switch (mode) {
-                    case "APPLICANT" -> new ModuleState(true, true, false);
-                    case "INTERVIEW" -> new ModuleState(true, false, false);
-                    default          -> new ModuleState(true, false, true);
-                }
-                : new ModuleState(false, false, false);
+        // Interview Center — appears when the intern has been SHORTLISTED
+        // (they have an interview to prepare for). Read-only past OFFER_SENT.
+        ModuleState interview;
+        if (workOrLater) {
+            interview = hidden();
+        } else if (atLeast(status, InternLifecycleStatus.SHORTLISTED)) {
+            boolean ro = !"INTERVIEW".equals(mode);
+            interview = new ModuleState(true, false, ro);
+        } else {
+            interview = hidden();
+        }
 
-        // Offer Letter — application-phase only.
-        ModuleState offer = preActive
-                ? switch (mode) {
-                    case "APPLICANT", "INTERVIEW" -> new ModuleState(true, true, false);
-                    case "OFFER"                  -> new ModuleState(true, false, false);
-                    default                       -> new ModuleState(true, false, true);
-                }
-                : new ModuleState(false, false, false);
+        // Offer Letter — appears when the offer has been sent. Read-only
+        // past OFFER_SIGNED so the intern can still view the executed copy.
+        ModuleState offer;
+        if (workOrLater) {
+            offer = hidden();
+        } else if (atLeast(status, InternLifecycleStatus.OFFER_SENT)) {
+            boolean ro = !"OFFER".equals(mode);
+            offer = new ModuleState(true, false, ro);
+        } else {
+            offer = hidden();
+        }
 
-        // Onboarding — application-phase only (locked pre-NEW_HIRE; active
-        // in NEW_HIRE). At ACTIVE_INTERN the onboarding flow is finished;
-        // the tracker on the ERM side captures it, and the intern no
-        // longer needs an "Onboarding" item.
-        ModuleState onboarding = preActive
-                ? switch (mode) {
-                    case "APPLICANT", "INTERVIEW", "OFFER" -> new ModuleState(true, true, false);
-                    case "NEW_HIRE"                        -> new ModuleState(true, false, false);
-                    default                                -> new ModuleState(true, false, true);
-                }
-                : new ModuleState(false, false, false);
+        // Onboarding — appears from OFFER_SIGNED (NEW_HIRE mode); the
+        // sidebar doesn't render an onboarding link today (the flow uses
+        // Documents), but this stays as the canonical gate for any future
+        // sidebar entry and for the route guard.
+        ModuleState onboarding = "NEW_HIRE".equals(mode)
+                ? new ModuleState(true, false, false)
+                : hidden();
 
-        // My Projects / Timesheets / Evaluations — locked until ACTIVE_INTERN
+        // My Projects / Timesheets / Evaluations / Doubts — only appear once
+        // the intern is ACTIVE (INACTIVE keeps historical read-only access).
         ModuleState projects = workModuleState(mode);
         ModuleState timesheets = workModuleState(mode);
         ModuleState evaluations = workModuleState(mode);
+        ModuleState doubts = workModuleState(mode);
 
-        // Documents — always visible; read-only when inactive
-        ModuleState documents = new ModuleState(true, false, inactive);
+        // Documents — appears from OFFER_SIGNED onward. Pre-offer interns
+        // have no documents in the system yet, so hiding it keeps the
+        // starter sidebar to the five items the Wave-2 spec calls for.
+        ModuleState documents;
+        if (atLeast(status, InternLifecycleStatus.OFFER_SIGNED)) {
+            documents = new ModuleState(true, false, inactive);
+        } else {
+            documents = hidden();
+        }
 
-        // Messages — visible for everyone except INACTIVE (locked)
+        // Messages — visible for everyone; locked when INACTIVE (they can
+        // still read history but can't compose new threads).
         ModuleState messages = inactive
                 ? new ModuleState(true, true, false)
                 : new ModuleState(true, false, false);
-
-        // Doubts — same gating as work modules: only ACTIVE_INTERN can
-        // raise doubts; INACTIVE keeps read-only visibility for history.
-        ModuleState doubts = workModuleState(mode);
 
         // Help — always visible
         ModuleState help = new ModuleState(true, false, false);
@@ -467,20 +506,20 @@ public class InternDashboardService {
                 projects, timesheets, evaluations, documents, messages, doubts, help);
     }
 
+    private static ModuleState hidden() {
+        return new ModuleState(false, false, false);
+    }
+
     private ModuleState workModuleState(String mode) {
-        // My Projects / Timesheets / Evaluations are gated on ACTIVE_INTERN.
-        // Pre-active interns are hidden from these modules entirely (visible
-        // = false) — the prior behaviour (visible=true, locked=true) put
-        // greyed-out links in the sidebar that confused new hires into
-        // thinking timesheets were already required. The sidebar
-        // (DashboardSidebar.tsx) hides any link whose moduleState.visible
-        // is false. INACTIVE keeps visibility for historical read-only
-        // access; ACTIVE_INTERN is the only mode where these modules are
-        // fully interactive.
+        // My Projects / Timesheets / Evaluations / Doubts are gated on
+        // ACTIVE_INTERN. Pre-active interns are hidden entirely (visible
+        // = false) — greyed-out links confused new hires into thinking
+        // timesheets were already required. INACTIVE keeps visibility for
+        // historical read-only access.
         return switch (mode) {
             case "ACTIVE_INTERN" -> new ModuleState(true, false, false);
             case "INACTIVE"      -> new ModuleState(true, false, true);
-            default              -> new ModuleState(false, true, false);
+            default              -> hidden();
         };
     }
 

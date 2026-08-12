@@ -23,6 +23,17 @@ import {
 
 // Path prefix → module key. Order matters when prefixes nest — longer
 // prefixes win because the loop checks them in declared order.
+//
+// Wave-2 #10 — includes /careers/messages (shared cross-role route). The
+// intern sidebar's Messages link points there; before this row was added,
+// the sidebar could still hide the link but the route itself accepted the
+// intern (they'd land on a working mail shell even though Messages was
+// meant to be locked for their stage). The guard now redirects them home
+// consistently with every /careers/intern/* module. The intern-family
+// prefixes cover both the {@code /offer} and {@code /offer-letter} pages
+// under the same {@code offerLetter} key because the sidebar exposes
+// {@code /careers/intern/offer-letter} — prefix-matching on {@code
+// /careers/intern/offer} catches both.
 const PATH_TO_MODULE: { prefix: string; key: keyof InternModulesMap }[] = [
   { prefix: '/careers/intern/jobs',         key: 'jobPostings' },
   { prefix: '/careers/intern/applications', key: 'myApplications' },
@@ -34,6 +45,7 @@ const PATH_TO_MODULE: { prefix: string; key: keyof InternModulesMap }[] = [
   { prefix: '/careers/intern/evaluations',  key: 'evaluations' },
   { prefix: '/careers/intern/documents',    key: 'documents' },
   { prefix: '/careers/intern/doubts',       key: 'doubts' },
+  { prefix: '/careers/messages',            key: 'messages' },
 ];
 
 function moduleForPath(pathname: string): keyof InternModulesMap | null {
@@ -54,7 +66,13 @@ export default function InternModuleRouteGuard() {
     const moduleKey = moduleForPath(pathname);
     if (!moduleKey) return; // /careers/intern home + help + unguarded paths
     const state = modules[moduleKey];
-    if (state && state.visible === false) {
+    // Wave-2 #10 — reject BOTH hidden AND locked routes. The sidebar
+    // renders a locked link as a greyed-out non-Link so a click won't
+    // navigate, but a bookmark or a stale tab can still land the intern
+    // on the underlying page. Sending them home matches the intent of
+    // the lock (module is not yet available at this stage) and stays
+    // consistent with the hidden-module redirect.
+    if (state && (state.visible === false || state.locked === true)) {
       router.replace('/careers/intern');
     }
   }, [modules, pathname, router]);

@@ -7,8 +7,15 @@
 // The popup component itself gates on hasNewSinceLastSeen from the
 // server + a sessionStorage flag, so this layout doesn't need to
 // per-route-check anything.
+//
+// Wave-2 #10 — InternDashboardBoundary lives here so every dashboard
+// route (including the shared /careers/messages route) sees the intern
+// module map when the caller is an intern. Previously the provider was
+// scoped to /careers/intern/* only, which meant the shared sidebar
+// silently rendered ungated links on Messages.
 
 import LoginTodoPopup from '@/components/todos/LoginTodoPopup';
+import InternDashboardBoundary from '@/components/intern/InternDashboardBoundary';
 
 export default function DashboardSegmentLayout({
   children,
@@ -16,9 +23,9 @@ export default function DashboardSegmentLayout({
   children: React.ReactNode;
 }) {
   return (
-    <>
+    <InternDashboardBoundary>
       {children}
       <LoginTodoPopup />
-    </>
+    </InternDashboardBoundary>
   );
 }

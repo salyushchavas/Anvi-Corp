@@ -137,8 +137,11 @@ const STAFF_ROLE_LINKS: Record<UserRole, StaffLink[]> = {
   ],
 };
 
-// Mode that "unlocks" each module — used for the lock-tooltip copy. Falls
-// back to a generic message for keys that have no single unlocking mode.
+// Mode that "unlocks" each module — used for the lock-tooltip copy on the
+// rare modules that still render as locked-visible. After Wave-2 #4 most
+// modules progressively HIDE rather than lock, so this map is now only
+// relevant for the INACTIVE terminal state (messages locks then). Keys not
+// in the map fall back to a generic "Locked" tooltip.
 const MODULE_UNLOCK_MODE: Partial<Record<keyof InternModulesMap, string>> = {
   jobPostings: 'Applicant',
   interviewCenter: 'Interview',
@@ -148,7 +151,6 @@ const MODULE_UNLOCK_MODE: Partial<Record<keyof InternModulesMap, string>> = {
   timesheets: 'Active Intern',
   evaluations: 'Active Intern',
   doubts: 'Active Intern',
-  messages: 'Applicant',
 };
 
 function pickActiveByRoute(pathname: string, routes: string[]): string | null {
