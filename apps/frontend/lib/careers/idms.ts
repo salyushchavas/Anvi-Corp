@@ -140,13 +140,52 @@ export function parseFieldSchema(json: string | null | undefined): FieldSchemaEn
     return parsed.map((f) => ({
       id: String(f.id ?? ''),
       name: String(f.name ?? ''),
-      type: (f.type as FieldSchemaEntry['type']) ?? 'text',
-      assignee: (f.assignee as FieldSchemaEntry['assignee']) ?? 'ERM',
+      // Normalise the discriminants to their canonical case ONCE at
+      // the schema-parse boundary. Every consumer in the codebase
+      // compares strictly (schema.type === 'date', assignee === 'ERM'),
+      // so a legacy template stored with uppercase "DATE" or "INTERN"
+      // would fall through to the wrong branch — e.g. InstanceRenderer's
+      // date-formatting branch is skipped, the raw ISO YYYY-MM-DD leaks
+      // into the document preview instead of the MM/DD/YYYY that the
+      // editor + PDF show. Normalising once here fixes every downstream
+      // consumer by construction and removes the need for defensive
+      // per-consumer .toLowerCase() checks (FieldForm's local defense
+      // stays but becomes redundant + harmless).
+      type: normaliseFieldType(f.type),
+      assignee: normaliseAssignee(f.assignee),
       required: Boolean(f.required),
       defaultSource: f.defaultSource ?? null,
     }));
   } catch {
     return [];
+  }
+}
+
+/** Normalise a raw stored field type to the canonical lowercase form
+ *  the {@link FieldSchemaEntry} type union expects. Unknown values fall
+ *  back to {@code 'text'} — the safe default that renders a plain
+ *  text input rather than swallowing the field. */
+function normaliseFieldType(raw: unknown): FieldSchemaEntry['type'] {
+  if (typeof raw !== 'string') return 'text';
+  switch (raw.trim().toLowerCase()) {
+    case 'date':          return 'date';
+    case 'signature':     return 'signature';
+    case 'content_block': return 'content_block';
+    case 'text':          return 'text';
+    default:              return 'text';
+  }
+}
+
+/** Normalise a raw stored assignee to the canonical uppercase form
+ *  the {@link FieldSchemaEntry} type union expects. Unknown values
+ *  fall back to {@code 'ERM'} to match the pre-normalisation default. */
+function normaliseAssignee(raw: unknown): FieldSchemaEntry['assignee'] {
+  if (typeof raw !== 'string') return 'ERM';
+  switch (raw.trim().toUpperCase()) {
+    case 'INTERN': return 'INTERN';
+    case 'AUTO':   return 'AUTO';
+    case 'ERM':    return 'ERM';
+    default:       return 'ERM';
   }
 }
 
