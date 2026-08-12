@@ -546,32 +546,57 @@ function WorkAuthSection({
   profile, saving, onSave,
 }: { profile: ProfileResponse; saving: boolean; onSave: (p: Partial<ProfileResponse>) => void }) {
   const [track, setTrack] = useState<WorkAuthTrack | ''>(profile.expectedTrack ?? '');
+  // W4 #6 — collapsed the prior three-field (validityStartDate,
+  // validityDate, authorizedFrom+authorizedUntil) rendering into the
+  // single authorizedFrom / authorizedUntil range. The self-declared
+  // dates were the same values under different labels — the direct-
+  // onboarding wizard already collapsed to this shape after the same
+  // "duplicate dates" bug there. Every auth type (CPT, OPT, STEM_OPT,
+  // OTHER, CITIZEN) now uses the same two fields; visa-date-requirement
+  // helper only guides whether END is required (CPT/OPT/STEM_OPT) or
+  // both START + END (OTHER). CITIZEN skips both.
   const [authorizedFrom, setAuthorizedFrom] = useState(profile.authorizedFrom ?? '');
   const [authorizedUntil, setAuthorizedUntil] = useState(profile.authorizedUntil ?? '');
-  const [validityDate, setValidityDate] = useState(profile.validityDate ?? '');
-  const [validityStartDate, setValidityStartDate] = useState(profile.validityStartDate ?? '');
-
   const req = visaDateRequirementFor(track || undefined);
-  const showEnd = req !== 'NONE';
-  const showStart = req === 'BOTH';
+  const showDates = req !== 'NONE';
+  const requireFrom = req === 'BOTH';
+  const requireUntil = req !== 'NONE';
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    // W4 #7 — work-auth track is now REQUIRED. Blocks submit
+    // rather than silently dropping the field so the intern sees
+    // exactly what's missing.
+    if (!track) {
+      toast.error('Please select your expected authorization track.');
+      return;
+    }
+    if (requireFrom && !authorizedFrom) {
+      toast.error('Please enter your authorization start date.');
+      return;
+    }
+    if (requireUntil && !authorizedUntil) {
+      toast.error('Please enter your authorization end date.');
+      return;
+    }
     onSave({
-      expectedTrack: (track || undefined) as WorkAuthTrack | undefined,
-      validityDate: showEnd && validityDate ? validityDate : undefined,
-      validityStartDate: showStart && validityStartDate ? validityStartDate : undefined,
+      expectedTrack: track as WorkAuthTrack,
       authorizedFrom: authorizedFrom || undefined,
       authorizedUntil: authorizedUntil || undefined,
+      // W4 #6 — never send the deprecated self-declared date fields;
+      // the backend still accepts them for legacy rows but the intern
+      // profile surface no longer emits them.
+      validityDate: undefined,
+      validityStartDate: undefined,
     });
   }
 
   return (
     <SectionCard title="Work authorization">
       <form className="space-y-4" onSubmit={submit}>
-        <FormField label="Expected authorization track" htmlFor="p_track">
+        <FormField label="Expected authorization track" htmlFor="p_track" required>
           <select
-            id="p_track" value={track}
+            id="p_track" value={track} required
             onChange={(e) => setTrack(e.target.value as WorkAuthTrack | '')}
             className={inputClass()}
           >
@@ -581,46 +606,40 @@ function WorkAuthSection({
             ))}
           </select>
         </FormField>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {showStart && (
-            <FormField label="Self-declared start" htmlFor="p_vs">
+        {showDates && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField
+              label="Authorized from"
+              htmlFor="p_af"
+              required={requireFrom}
+            >
               <input
-                id="p_vs" type="date" value={validityStartDate}
-                onChange={(e) => setValidityStartDate(e.target.value)}
+                id="p_af" type="date" value={authorizedFrom}
+                onChange={(e) => setAuthorizedFrom(e.target.value)}
                 className={inputClass()}
+                required={requireFrom}
               />
             </FormField>
-          )}
-          {showEnd && (
-            <FormField label="Self-declared end" htmlFor="p_ve">
+            <FormField
+              label="Authorized until"
+              htmlFor="p_au"
+              required={requireUntil}
+            >
               <input
-                id="p_ve" type="date" value={validityDate}
-                onChange={(e) => setValidityDate(e.target.value)}
+                id="p_au" type="date" value={authorizedUntil}
+                onChange={(e) => setAuthorizedUntil(e.target.value)}
                 className={inputClass()}
+                required={requireUntil}
               />
             </FormField>
-          )}
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Authorized from" htmlFor="p_af">
-            <input
-              id="p_af" type="date" value={authorizedFrom}
-              onChange={(e) => setAuthorizedFrom(e.target.value)}
-              className={inputClass()}
-            />
-          </FormField>
-          <FormField label="Authorized until" htmlFor="p_au">
-            <input
-              id="p_au" type="date" value={authorizedUntil}
-              onChange={(e) => setAuthorizedUntil(e.target.value)}
-              className={inputClass()}
-            />
-          </FormField>
-        </div>
-        <p className="text-xs text-slate-500">
-          {'"Authorized from" and "Authorized until" post to the same work-authorization '
-            + 'record ERM uses for the Compliance tracker.'}
-        </p>
+          </div>
+        )}
+        {/* W4 #7 — the "Optional. Once ERM sets up your Compliance
+            record these dates carry over..." helper was noise for the
+            intern (an internal implementation detail) and read as
+            "you don't have to fill this in". Removed. Track is now
+            required (marked above); dates are required whenever the
+            track needs them per visaDateRequirementFor. */}
         <div className="flex justify-end">
           <Button type="submit" loading={saving} leftIcon={<Save className="h-4 w-4" />}>
             Save work authorization
