@@ -920,7 +920,86 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "halves sign the same federal STEM-OPT record.\n\n"
                             + "Open your evaluations dashboard:\n{{deepLink}}\n\n"
                             + "— Anvi Corp",
-                    "firstName,evaluationType,deepLink")
+                    "firstName,evaluationType,deepLink"),
+            // ── Slice-6b Category A migration — template-first-with-typed-
+            // fallback for high-priority NotificationService legacy methods.
+            // Each maps 1:1 to an existing emailProvider.sendXxx() typed
+            // hardcoded body in SmtpEmailProvider that stays as fallback.
+            //
+            // ONBOARDING_WELCOME — Engagement flipped ACTIVE, first email
+            // to the new hire. Vars mirror sendOnboardingWelcome's args.
+            new Seed(
+                    "ONBOARDING_WELCOME", "EMAIL",
+                    "Welcome to {{brandName}} — {{jobTitle}} onboarding starts now",
+                    "Hello {{firstName}},\n\n"
+                            + "Congratulations — your engagement with "
+                            + "{{entityName}} for the {{jobTitle}} role is now active. "
+                            + "Your onboarding checklist is waiting for you in your "
+                            + "dashboard.\n\n"
+                            + "  · Start date: {{startDate}}\n\n"
+                            + "Head to your dashboard to complete the required "
+                            + "onboarding items so we can lock in your start:\n"
+                            + "{{deepLink}}\n\n"
+                            + "Reach out to {{supportEmail}} with any questions.\n\n"
+                            + "— Anvi Corp ERM",
+                    "firstName,jobTitle,entityName,startDate,deepLink"),
+            // INTERVIEW_REMINDER — 24h-before scheduler reminder.
+            new Seed(
+                    "INTERVIEW_REMINDER", "EMAIL",
+                    "Reminder: your {{jobTitle}} interview is tomorrow",
+                    "Hello {{firstName}},\n\n"
+                            + "This is a friendly reminder that your interview for "
+                            + "{{jobTitle}} at {{entityName}} is scheduled within the "
+                            + "next 24 hours.\n\n"
+                            + "  · When: {{scheduledAtLocal}}\n"
+                            + "  · Duration: {{durationMinutes}} minutes\n"
+                            + "  · Type: {{interviewType}}\n"
+                            + "  · Interviewer: {{interviewerName}}\n"
+                            + "  · Join link: {{meetingUrl}}\n\n"
+                            + "Please be online 2-3 minutes early so any connection "
+                            + "issues don't eat into your interview time.\n\n"
+                            + "— Anvi Corp",
+                    "firstName,jobTitle,entityName,scheduledAtLocal,"
+                            + "durationMinutes,interviewType,interviewerName,meetingUrl"),
+            // COMPLIANCE_TASK_REMINDER — one row per overdue task, fired by
+            // the daily scheduler. {{overdueLine}} is empty when the task is
+            // not yet overdue (just due today), else "Overdue by N day(s)".
+            new Seed(
+                    "COMPLIANCE_TASK_REMINDER", "EMAIL",
+                    "Action needed: {{taskTitle}}",
+                    "Hello {{firstName}},\n\n"
+                            + "An onboarding task is waiting for you:\n\n"
+                            + "  · Task: {{taskTitle}}\n"
+                            + "  · Due: {{dueDate}}\n"
+                            + "{{overdueLine}}\n\n"
+                            + "Open your onboarding dashboard to complete it:\n"
+                            + "{{deepLink}}\n\n"
+                            + "— Anvi Corp",
+                    "firstName,taskTitle,dueDate,overdueLine,deepLink"),
+            // TIMESHEET_DUE — weekly-scheduler reminder to intern to submit
+            // their timesheet for {{weekStart}}.
+            new Seed(
+                    "TIMESHEET_DUE", "EMAIL",
+                    "Weekly timesheet due — week of {{weekStart}}",
+                    "Hello {{firstName}},\n\n"
+                            + "Your weekly timesheet for the week of {{weekStart}} is "
+                            + "due. Head to your dashboard to log your hours before "
+                            + "your Manager's review cycle closes.\n\n"
+                            + "Open your dashboard:\n{{deepLink}}\n\n"
+                            + "— Anvi Corp",
+                    "firstName,weekStart,deepLink"),
+            // WEEKLY_REPORT_DUE — weekly-scheduler reminder to intern to
+            // submit their weekly report for {{weekStart}}.
+            new Seed(
+                    "WEEKLY_REPORT_DUE", "EMAIL",
+                    "Weekly report due — week of {{weekStart}}",
+                    "Hello {{firstName}},\n\n"
+                            + "Your weekly report for the week of {{weekStart}} is "
+                            + "due. Share the wins, blockers, and progress from the "
+                            + "past week so your Manager and ERM stay aligned.\n\n"
+                            + "Open your dashboard:\n{{deepLink}}\n\n"
+                            + "— Anvi Corp",
+                    "firstName,weekStart,deepLink")
     );
 
     @Override

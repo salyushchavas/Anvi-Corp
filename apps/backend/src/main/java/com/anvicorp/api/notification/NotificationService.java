@@ -269,12 +269,35 @@ public class NotificationService {
         String interviewType = interview.getType() != null ? interview.getType().name() : null;
         String interviewerName = interview.getInterviewer() != null
                 ? interview.getInterviewer().getFullName() : null;
+        // Slice-6b Category A fold-in — template-first with typed fallback.
         deliver(NotificationEventType.INTERVIEW_REMINDER, targetId, email,
-                () -> emailProvider.sendInterviewReminder(
-                        email, name, jobTitle, entityName,
-                        interview.getScheduledAt(), interview.getDurationMinutes(),
-                        interviewType, interviewerName,
-                        interview.getMeetingUrl()));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("jobTitle", nz(jobTitle));
+                    vars.put("entityName", nz(entityName));
+                    vars.put("scheduledAtLocal", interview.getScheduledAt() != null
+                            ? interview.getScheduledAt().toString() : "your scheduled time");
+                    vars.put("durationMinutes", interview.getDurationMinutes() != null
+                            ? interview.getDurationMinutes() : 30);
+                    vars.put("interviewType", interviewType != null ? interviewType : "interview");
+                    vars.put("interviewerName", interviewerName != null
+                            ? interviewerName : "your interviewer");
+                    vars.put("meetingUrl", interview.getMeetingUrl() != null
+                            ? interview.getMeetingUrl() : "(link will be shared)");
+                    var rendered = templateService.render(
+                            "INTERVIEW_REMINDER", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendInterviewReminder(
+                                email, name, jobTitle, entityName,
+                                interview.getScheduledAt(), interview.getDurationMinutes(),
+                                interviewType, interviewerName,
+                                interview.getMeetingUrl());
+                    }
+                });
 
         dispatchInApp(applicantUserId(application),
                 NotificationEventType.INTERVIEW_REMINDER,
@@ -405,10 +428,29 @@ public class NotificationService {
         String jobTitle = jobTitle(application);
         StaffingEntity ent = engagement.getEntity();
         String entityName = ent != null ? ent.getName() : entityName(application);
+        // Slice-6b Category A fold-in — template-first with the typed
+        // emailProvider.sendOnboardingWelcome as the rebrand-safe fallback
+        // when the template row is absent (fresh DB, operator-deleted row).
+        LocalDate startDate = engagement.getActualStartDate();
         deliver(NotificationEventType.ONBOARDING_WELCOME, targetId, email,
-                () -> emailProvider.sendOnboardingWelcome(
-                        email, name, jobTitle, entityName,
-                        engagement.getActualStartDate(), dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("jobTitle", nz(jobTitle));
+                    vars.put("entityName", nz(entityName));
+                    vars.put("startDate", startDate != null
+                            ? startDate.toString() : "your scheduled start date");
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "ONBOARDING_WELCOME", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendOnboardingWelcome(
+                                email, name, jobTitle, entityName, startDate, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserId(application),
                 NotificationEventType.ONBOARDING_WELCOME,
@@ -625,9 +667,32 @@ public class NotificationService {
         }
         if (alreadySent(eventType, targetId)) return;
 
+        // Slice-6b Category A fold-in — template-first (reusing the
+        // existing WORK_AUTH_EXPIRING template that ComplianceLifecycleListener
+        // uses for its event-driven path) with the typed fallback. The
+        // ermName var isn't known at the scheduler layer — default to
+        // "your ERM" so the copy stays coherent.
         deliver(eventType, targetId, email,
-                () -> emailProvider.sendWorkAuthExpiryReminder(
-                        email, name, daysUntilExpiry, expirationDate, authType, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("workAuthType", nz(authType).isEmpty()
+                            ? "work authorization" : authType);
+                    vars.put("expirationDate", expirationDate != null
+                            ? expirationDate.toString() : "soon");
+                    vars.put("daysUntilExpiration", daysUntilExpiry);
+                    vars.put("ermName", "your ERM");
+                    var rendered = templateService.render(
+                            "WORK_AUTH_EXPIRING", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendWorkAuthExpiryReminder(
+                                email, name, daysUntilExpiry, expirationDate,
+                                authType, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserId(application),
                 eventType,
@@ -664,10 +729,32 @@ public class NotificationService {
             overdue = days > 0 ? (int) days : 0;
         }
         final Integer overdueFinal = overdue;
+        // Slice-6b Category A fold-in — template-first with typed fallback.
+        // overdueLine is empty when the task isn't yet overdue (no orphan
+        // "Overdue by …" line in that case).
         deliver(NotificationEventType.COMPLIANCE_TASK_REMINDER, targetId, email,
-                () -> emailProvider.sendComplianceTaskReminder(
-                        email, name, task.getTitle(), task.getDueDate(),
-                        overdueFinal, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("taskTitle", nz(task.getTitle()));
+                    vars.put("dueDate", task.getDueDate() != null
+                            ? task.getDueDate().toString() : "TBD");
+                    vars.put("overdueLine", overdueFinal != null && overdueFinal > 0
+                            ? "  · Overdue by " + overdueFinal + " day"
+                                    + (overdueFinal == 1 ? "" : "s")
+                            : "");
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "COMPLIANCE_TASK_REMINDER", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendComplianceTaskReminder(
+                                email, name, task.getTitle(), task.getDueDate(),
+                                overdueFinal, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(c),
                 NotificationEventType.COMPLIANCE_TASK_REMINDER,
@@ -701,8 +788,22 @@ public class NotificationService {
                 engagement.getId().toString(), weekStart.toString());
         if (alreadySent(NotificationEventType.WEEKLY_REPORT_DUE, targetId)) return;
 
+        // Slice-6b Category A fold-in — template-first with typed fallback.
         deliver(NotificationEventType.WEEKLY_REPORT_DUE, targetId, email,
-                () -> emailProvider.sendWeeklyReportDue(email, name, weekStart, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("weekStart", weekStart.toString());
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "WEEKLY_REPORT_DUE", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendWeeklyReportDue(email, name, weekStart, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(c),
                 NotificationEventType.WEEKLY_REPORT_DUE,
@@ -779,8 +880,22 @@ public class NotificationService {
                 engagement.getId().toString(), weekStart.toString());
         if (alreadySent(NotificationEventType.TIMESHEET_DUE, targetId)) return;
 
+        // Slice-6b Category A fold-in — template-first with typed fallback.
         deliver(NotificationEventType.TIMESHEET_DUE, targetId, email,
-                () -> emailProvider.sendTimesheetDue(email, name, weekStart, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("weekStart", weekStart.toString());
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "TIMESHEET_DUE", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendTimesheetDue(email, name, weekStart, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(c),
                 NotificationEventType.TIMESHEET_DUE,
