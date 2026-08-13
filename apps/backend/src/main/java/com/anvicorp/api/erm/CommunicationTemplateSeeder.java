@@ -694,7 +694,56 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Save the entity name for your records: {{brandLegalEntity}}. "
                             + "Reach out to {{supportEmail}} with any questions.\n\n"
                             + "— Anvi Corp ERM",
-                    "firstName,jobTitle,tentativeStartDate")
+                    "firstName,jobTitle,tentativeStartDate"),
+            // ── Slice-1 evaluation migration — templates the fanout was
+            // constructing inline. Rebrand-safe: literal "Anvi Corp" and
+            // the "— Anvi Corp" signoff are rewritten by brandify() to
+            // {{brandName}} / {{signoffBlock}} at seed time.
+            new Seed(
+                    "EVALUATION_ACK_REQUESTED", "EMAIL",
+                    "Action needed: acknowledge your evaluation",
+                    "Hello {{firstName}},\n\n"
+                            + "{{evaluatorName}}, your Evaluator, is waiting on your "
+                            + "acknowledgment of the monthly evaluation just published. "
+                            + "Two-click flow: open the evaluation, add an optional note, "
+                            + "and click Acknowledge — that confirms you've reviewed the "
+                            + "ratings and lets your Manager and ERM know you're aware.\n\n"
+                            + "Open it to acknowledge: {{deepLink}}\n\n"
+                            + "— Anvi Corp",
+                    "firstName,evaluatorName,deepLink"),
+            new Seed(
+                    "I983_EVALUATION_SCHEDULED", "EMAIL",
+                    "I-983 {{evaluationType}} evaluation scheduled by your Evaluator",
+                    "Hello {{firstName}},\n\n"
+                            + "{{evaluatorName}}, your Evaluator, has scheduled your "
+                            + "{{evaluationType}} I-983 evaluation.\n\n"
+                            + "Window: {{windowStartDate}}  →  Due: {{dueDate}}\n\n"
+                            + "Open your I-983 evaluations: {{deepLink}}\n\n"
+                            + "— Anvi Corp",
+                    "firstName,evaluatorName,evaluationType,windowStartDate,dueDate,deepLink"),
+            new Seed(
+                    "I983_DSO_SUBMITTED", "EMAIL",
+                    "Your I-983 was submitted to your DSO",
+                    "Hello {{firstName}},\n\n"
+                            + "{{actorName}}, your ERM, has submitted your I-983 evaluation "
+                            + "to your DSO.\n"
+                            + "Submission method: {{submissionMethod}}.\n\n"
+                            + "Keep this confirmation for your STEM-OPT records.\n"
+                            + "Open your I-983: {{deepLink}}\n\n"
+                            + "— Anvi Corp",
+                    "firstName,actorName,submissionMethod,deepLink"),
+            new Seed(
+                    "I983_EVALUATION_AMENDED", "EMAIL",
+                    "Your I-983 was updated — please re-sign",
+                    "Hello {{firstName}},\n\n"
+                            + "{{evaluatorName}}, your Evaluator, has updated your I-983 "
+                            + "evaluation. Your previous signature has been reset, so please "
+                            + "review the changes and re-sign before the DSO submission "
+                            + "window.\n\n"
+                            + "What changed: {{changeSummary}}\n\n"
+                            + "Open your I-983: {{deepLink}}\n\n"
+                            + "— Anvi Corp",
+                    "firstName,evaluatorName,changeSummary,deepLink")
     );
 
     @Override
