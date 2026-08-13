@@ -3,15 +3,23 @@
 import { FormEvent, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, UserCircle } from 'lucide-react';
-import AuthLayout from '@/components/dashboard/AuthLayout';
+import {
+  AlertCircle,
+  Briefcase,
+  CheckCircle2,
+  ClipboardList,
+  FileCheck,
+  UserCircle,
+} from 'lucide-react';
 import PasswordInput from '@/components/careers/PasswordInput';
+import SiteFooter from '@/components/careers/SiteFooter';
 import RegisterDebugPanel, {
   type RegisterDebugInfo,
 } from '@/components/dashboard/RegisterDebugPanel';
 import TurnstileWidget from '@/components/ui/TurnstileWidget';
 import { useAuth } from '@/lib/careers/auth-context';
 import { apiBaseURL } from '@/lib/careers/api';
+import { BRAND } from '@/lib/careers/brand';
 
 export default function RegisterPage() {
   return (
@@ -195,10 +203,86 @@ function RegisterPageInner() {
   }
 
   return (
-    <AuthLayout
-      title="Create your account"
-      subtitle="Sign up in seconds — you'll add the rest from your dashboard."
-    >
+    // W5 #1 — Bespoke two-column shell for /register only. The
+    // shared AuthLayout (login, forgot, reset, verify) stays
+    // untouched — this page opts out because the "start your career"
+    // signup benefits from a brand+value column that would look off
+    // on the shorter auth flows. Mobile collapses to the form only;
+    // desktop shows both sides. Every field + the honeypot + the
+    // TurnstileWidget + the submit gate below are 100% preserved.
+    <div className="flex min-h-screen flex-col bg-gradient-to-br from-gray-50 to-gray-100">
+      <main className="flex flex-1 items-stretch justify-center p-4 py-8">
+        <div className="mx-auto grid w-full max-w-6xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-lg lg:grid-cols-12">
+          {/* Left column — brand + value proposition. Desktop only. */}
+          <aside className="hidden bg-gradient-to-br from-primary-700 to-primary-800 p-10 text-white lg:col-span-5 lg:flex lg:flex-col lg:justify-between">
+            <div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={BRAND.logoUrl}
+                alt={BRAND.name}
+                className="h-9 w-auto brightness-0 invert"
+              />
+              <h2 className="mt-10 text-3xl font-semibold leading-tight">
+                Start your {BRAND.name} career
+              </h2>
+              <p className="mt-3 text-sm leading-relaxed text-white/80">
+                Create an account to apply to open internships, track your
+                application status live, and complete onboarding from one
+                dashboard.
+              </p>
+              <ul className="mt-8 space-y-4">
+                <ValueBullet
+                  icon={<Briefcase className="h-4 w-4" />}
+                  title="Apply to open internships"
+                  desc="Browse the openings and submit in a few clicks."
+                />
+                <ValueBullet
+                  icon={<ClipboardList className="h-4 w-4" />}
+                  title="Track your status live"
+                  desc="See where your application is in the pipeline."
+                />
+                <ValueBullet
+                  icon={<FileCheck className="h-4 w-4" />}
+                  title="Onboard from your dashboard"
+                  desc="Sign your offer, complete forms, all in one place."
+                />
+              </ul>
+            </div>
+            <p className="mt-10 text-sm text-white/70">
+              Already have an account?{' '}
+              <Link
+                href="/careers/login"
+                className="font-semibold text-white underline-offset-4 hover:underline"
+              >
+                Sign in
+              </Link>
+            </p>
+          </aside>
+
+          {/* Right column — the form. All fields, the honeypot, and the
+              Turnstile widget below are UNCHANGED from the pre-redesign
+              layout. Only the outer shell moved from AuthLayout to this
+              split. */}
+          <section className="p-6 sm:p-10 lg:col-span-7">
+            {/* Mobile-only brand — the aside is hidden below lg, so
+                the intern sees this at the top instead. */}
+            <div className="mb-6 flex flex-col items-center lg:hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={BRAND.logoUrl}
+                alt={BRAND.name}
+                className="h-10 w-auto"
+              />
+            </div>
+            <div className="mb-6">
+              <h1 className="text-2xl font-semibold text-gray-900 sm:text-3xl">
+                Create your account
+              </h1>
+              <p className="mt-1 text-sm text-gray-500">
+                Sign up in seconds — you&apos;ll add the rest from your
+                dashboard.
+              </p>
+            </div>
       <form onSubmit={onSubmit} className="space-y-6">
         <section className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-5">
           <header className="flex items-start gap-3">
@@ -369,7 +453,42 @@ function RegisterPageInner() {
           }}
         />
       )}
-    </AuthLayout>
+          </section>
+        </div>
+      </main>
+      <SiteFooter />
+    </div>
+  );
+}
+
+/**
+ * W5 #1 — Bullet used in the left brand column of the split shell.
+ * Icon tile + short title + one-line description. Kept co-located
+ * with the page so this is self-contained; the split is only used
+ * here, no other auth flow adopts it.
+ */
+function ValueBullet({
+  icon,
+  title,
+  desc,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+}) {
+  return (
+    <li className="flex items-start gap-3">
+      <span
+        className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-white"
+        aria-hidden
+      >
+        {icon}
+      </span>
+      <div>
+        <p className="text-sm font-semibold text-white">{title}</p>
+        <p className="mt-0.5 text-xs text-white/70">{desc}</p>
+      </div>
+    </li>
   );
 }
 
