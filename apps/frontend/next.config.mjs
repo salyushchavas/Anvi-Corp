@@ -14,7 +14,12 @@ const nextConfig = {
       { source: "/mobile-application-development.html", destination: "/services/mobile-application-development",     permanent: true },
       { source: "/it-consulting.html",                  destination: "/services/it-consulting",                      permanent: true },
       { source: "/contact-us.php",                      destination: "/contact",                                     permanent: true },
-      { source: "/privacy-policy.html",                 destination: "/privacy-policy",                              permanent: true },
+      // Phase-0 batch 1 collapsed the /privacy vs /privacy-policy
+      // duplication; /privacy is now canonical. Both the legacy PHP-
+      // era .html URL AND the retired /privacy-policy route 301 to
+      // /privacy so existing bookmarks + external links still resolve.
+      { source: "/privacy-policy.html",                 destination: "/privacy",                                     permanent: true },
+      { source: "/privacy-policy",                      destination: "/privacy",                                     permanent: true },
       // Messages/notifications page was promoted from an intern-only
       // route to a shared role-agnostic route. Persisted notification
       // action_url values that pointed at the old path stay valid.

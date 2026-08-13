@@ -15,7 +15,7 @@ const company = [
   { href: "/#industries", label: "Industries" },
   { href: "/careers", label: "Careers" },
   { href: "/contact", label: "Contact" },
-  { href: "/privacy-policy", label: "Privacy Policy" },
+  { href: "/privacy", label: "Privacy Policy" },
 ];
 
 const social = [
@@ -97,7 +97,7 @@ export function SiteFooter() {
         <div className="container py-5 flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-ink-300">
           <p>© {new Date().getFullYear()} Anvi Corp USA. All rights reserved.</p>
           <div className="flex gap-5">
-            <Link href="/privacy-policy" className="hover:text-brand">Privacy Policy</Link>
+            <Link href="/privacy" className="hover:text-brand">Privacy Policy</Link>
             <Link href="/contact" className="hover:text-brand">Contact</Link>
           </div>
         </div>

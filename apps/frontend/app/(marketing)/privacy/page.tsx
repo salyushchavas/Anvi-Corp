@@ -1,16 +1,19 @@
 import type { Metadata } from "next";
 import { InnerBanner } from "@/components/inner-banner";
+import { BRAND } from "@/lib/careers/brand";
 
-// Staged review copy — replaces /privacy-policy after legal approval.
-// The current live version at /privacy-policy is intentionally left
-// untouched; both routes coexist during the review window. Once legal
-// signs off, swap the register-page link back and redirect
-// /privacy-policy → /privacy in next.config.mjs to retire the old one.
+// Privacy Policy — canonical route. Phase-0 batch 1 collapsed the
+// pre-existing /privacy vs /privacy-policy duplication: this file is
+// the one canonical page, and /privacy-policy now 301-redirects here
+// via next.config.mjs. Company-identity variables (entity name,
+// contact email) come from BRAND.* so a per-brand deploy swaps them
+// via NEXT_PUBLIC_BRAND_* env vars. Legal SUBSTANCE of the clauses
+// is unchanged — only the identity slots become config-driven. Legal
+// review still required before this page is treated as binding.
 
 export const metadata: Metadata = {
   title: "Privacy Policy (Draft — under review)",
-  description:
-    "How Anvi Corp USA collects, uses, and protects your personal information. This is the draft version under legal review.",
+  description: `How ${BRAND.legalName} collects, uses, and protects your personal information. This is the draft version under legal review.`,
 };
 
 export default function PrivacyDraftPage() {
@@ -26,7 +29,7 @@ export default function PrivacyDraftPage() {
           </p>
 
           <Block title="Our commitment to privacy">
-            Anvi Corp USA prioritizes protecting your privacy. We are committed to protecting your personal information and remaining transparent about our data practices. This privacy statement describes our online information practices and the options available to you about the collection and use of your data. We make this notice prominently displayed on our site and at all points where personally identifiable information may be sought.
+            {BRAND.legalName} prioritizes protecting your privacy. We are committed to protecting your personal information and remaining transparent about our data practices. This privacy statement describes our online information practices and the options available to you about the collection and use of your data. We make this notice prominently displayed on our site and at all points where personally identifiable information may be sought.
           </Block>
 
           <Block title="The way we use information">
@@ -42,7 +45,7 @@ export default function PrivacyDraftPage() {
           </Block>
 
           <Block title="Contact us">
-            Your questions, concerns, and requests regarding this privacy policy or our data practices are important to us. Please feel free to contact us at <a href="mailto:info@anvicorp.com" className="text-brand hover:text-brand-600">info@anvicorp.com</a>. We are dedicated to addressing any inquiries promptly and ensuring your privacy rights are protected.
+            Your questions, concerns, and requests regarding this privacy policy or our data practices are important to us. Please feel free to contact us at <a href={`mailto:${BRAND.contactEmail}`} className="text-brand hover:text-brand-600">{BRAND.contactEmail}</a>. We are dedicated to addressing any inquiries promptly and ensuring your privacy rights are protected.
           </Block>
 
           <p className="mt-10 rounded-2xl bg-ink-50 p-5 text-sm text-ink-500 border border-ink-100">
@@ -61,12 +64,8 @@ function DraftNotice() {
       className="mb-8 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
     >
       <strong className="text-amber-900">DRAFT — pending legal review.</strong>{" "}
-      This is a working version of our Privacy Policy under review. For the current
-      binding policy, see{" "}
-      <a href="/privacy-policy" className="underline hover:no-underline">
-        /privacy-policy
-      </a>
-      .
+      This is a working version of our Privacy Policy under review. Individual
+      clauses may change before this page is considered binding.
     </div>
   );
 }

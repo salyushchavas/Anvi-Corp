@@ -1,16 +1,23 @@
 import type { Metadata } from "next";
 import { InnerBanner } from "@/components/inner-banner";
+import { BRAND } from "@/lib/careers/brand";
 
 // Standard-template Terms of Service — DRAFT copy that unblocks the
 // register / signup flow (previously linked to a 404) while legal
 // reviews. Every clause below is intentionally generic and MUST be
 // reviewed by counsel before this page is considered binding — the
 // DraftNotice at the top makes that explicit to any reader.
+//
+// Phase-0 batch 1: company-identity variables (entity name, governing
+// jurisdiction, contact email) now come from BRAND.* so a per-brand
+// deploy swaps them via NEXT_PUBLIC_BRAND_* env vars. Legal SUBSTANCE
+// of the clauses is unchanged — only the identity slots become
+// config-driven. Legal review still required before this page is
+// treated as binding.
 
 export const metadata: Metadata = {
   title: "Terms of Service (Draft — under review)",
-  description:
-    "Terms governing your use of Anvi Corp USA services. This is the draft version under legal review.",
+  description: `Terms governing your use of ${BRAND.legalName} services. This is the draft version under legal review.`,
 };
 
 export default function TermsDraftPage() {
@@ -26,7 +33,7 @@ export default function TermsDraftPage() {
           </p>
 
           <Block title="1. Acceptance of terms">
-            By accessing or using the Anvi Corp USA website, careers portal, or any
+            By accessing or using the {BRAND.legalName} website, careers portal, or any
             related service (collectively, the &ldquo;Service&rdquo;), you agree to be
             bound by these Terms of Service and by our{" "}
             <a href="/privacy" className="text-brand hover:text-brand-600">
@@ -57,7 +64,7 @@ export default function TermsDraftPage() {
           <Block title="4. User content">
             You retain ownership of content you submit through the Service
             (including resumes, application answers, uploaded documents, and
-            profile information). By submitting content you grant Anvi Corp USA a
+            profile information). By submitting content you grant {BRAND.legalName} a
             non-exclusive, worldwide, royalty-free license to use, store, display,
             and process that content solely for the purpose of operating and
             improving the Service and evaluating your candidacy where applicable.
@@ -65,7 +72,7 @@ export default function TermsDraftPage() {
 
           <Block title="5. Intellectual property">
             All software, design, text, graphics, and other materials that make up
-            the Service are the property of Anvi Corp USA or its licensors and are
+            the Service are the property of {BRAND.legalName} or its licensors and are
             protected by intellectual-property laws. You may not copy, modify,
             distribute, sell, or lease any part of the Service without our prior
             written permission.
@@ -77,25 +84,25 @@ export default function TermsDraftPage() {
             of these terms. You may stop using the Service at any time; account
             deletion requests can be made by contacting us at{" "}
             <a
-              href="mailto:info@anvicorp.com"
+              href={`mailto:${BRAND.contactEmail}`}
               className="text-brand hover:text-brand-600"
             >
-              info@anvicorp.com
+              {BRAND.contactEmail}
             </a>
             .
           </Block>
 
           <Block title="7. Disclaimer of warranties">
             The Service is provided on an &ldquo;as is&rdquo; and &ldquo;as
-            available&rdquo; basis. To the fullest extent permitted by law, Anvi
-            Corp USA disclaims all warranties, express or implied, including
+            available&rdquo; basis. To the fullest extent permitted by law, {BRAND.legalName}{" "}
+            disclaims all warranties, express or implied, including
             warranties of merchantability, fitness for a particular purpose, and
             non-infringement. We do not warrant that the Service will be
             uninterrupted, error-free, or free of harmful components.
           </Block>
 
           <Block title="8. Limitation of liability">
-            To the fullest extent permitted by law, Anvi Corp USA and its
+            To the fullest extent permitted by law, {BRAND.legalName} and its
             affiliates, officers, and employees will not be liable for any
             indirect, incidental, special, consequential, or punitive damages, or
             any loss of profits or revenues, arising out of or in connection with
@@ -111,19 +118,19 @@ export default function TermsDraftPage() {
           </Block>
 
           <Block title="10. Governing law">
-            These terms are governed by the laws of the jurisdiction in which Anvi
-            Corp USA is established, without regard to conflict-of-law rules. Any
-            dispute arising out of or relating to these terms or the Service will
-            be resolved in the courts of that jurisdiction.
+            These terms are governed by the laws of {BRAND.jurisdiction},
+            without regard to conflict-of-law rules. Any dispute arising out of
+            or relating to these terms or the Service will be resolved in the
+            courts of that jurisdiction.
           </Block>
 
           <Block title="11. Contact">
             Questions about these Terms of Service can be sent to{" "}
             <a
-              href="mailto:info@anvicorp.com"
+              href={`mailto:${BRAND.contactEmail}`}
               className="text-brand hover:text-brand-600"
             >
-              info@anvicorp.com
+              {BRAND.contactEmail}
             </a>
             .
           </Block>
