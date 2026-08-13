@@ -50,6 +50,94 @@ export const BRAND = {
   documentDescription:
     process.env.NEXT_PUBLIC_BRAND_DOCUMENT_DESCRIPTION
       || 'Anvi Corp USA Careers — IT consulting, software development, and STEM internships.',
+
+  // ── Phase-0 config-layer extension ─────────────────────────────────
+  // Fields the identity-centralization survey flagged as missing. Each
+  // reads NEXT_PUBLIC_BRAND_* with the current Anvi-Corp default so a
+  // fresh clone renders identically until the operator overrides in
+  // Vercel. NOTE: no reference migration is done in this commit — the
+  // batches that consume these come next.
+
+  /** Company phone (E.164 / US-formatted, marketing chrome + contact page). */
+  phone: process.env.NEXT_PUBLIC_BRAND_PHONE || '+1 469-945-4554',
+
+  /** Physical address — separate lines so callers can format per-locale. */
+  addressLine1:
+    process.env.NEXT_PUBLIC_BRAND_ADDRESS_LINE1 || '7950 Legacy Dr',
+  addressLine2:
+    process.env.NEXT_PUBLIC_BRAND_ADDRESS_LINE2 || 'Suite 400',
+  city: process.env.NEXT_PUBLIC_BRAND_CITY || 'Plano',
+  state: process.env.NEXT_PUBLIC_BRAND_STATE || 'TX',
+  postalCode: process.env.NEXT_PUBLIC_BRAND_POSTAL_CODE || '75024',
+  country: process.env.NEXT_PUBLIC_BRAND_COUNTRY || 'USA',
+
+  /**
+   * Corporate mailbox suffix (bare domain, no @). Consumed by the
+   * company-mailbox composer UIs that build `<local>@<emailDomain>`.
+   * Distinct from `websiteUrl` in case a deploy wants to host the
+   * marketing site on `.io` but keep `.com` mailboxes.
+   */
+  emailDomain: process.env.NEXT_PUBLIC_BRAND_EMAIL_DOMAIN || 'anvicorp.com',
+
+  /**
+   * Generic contact email surfaced on marketing chrome / legal pages.
+   * DISTINCT from {@link supportEmail} — support is careers-team-facing
+   * (`careers@`) while contact is the general company mailbox
+   * (`info@`). Survey found 8+ places using `info@` separately from
+   * `careers@`; keeping them as two fields lets a clone route each to
+   * a different inbox.
+   */
+  contactEmail:
+    process.env.NEXT_PUBLIC_BRAND_CONTACT_EMAIL || 'info@anvicorp.com',
+
+  /**
+   * Absolute canonical URL for the marketing site — the value that
+   * belongs in `<link rel="canonical">`, sitemap.xml `<loc>`,
+   * `metadataBase`, and OpenGraph `url`. `websiteUrl` above is kept
+   * for backwards compatibility but callers targeting metadata should
+   * prefer this field (the Next.js metadata layer needs a URL object,
+   * not a bare hostname).
+   */
+  siteBaseUrl:
+    process.env.NEXT_PUBLIC_BRAND_SITE_BASE_URL || 'https://www.anvicorp.com',
+
+  /**
+   * Marketing tagline that hangs off the metadata `<title>` and hero
+   * headings. Matches the current hardcoded `app/layout.tsx` copy so
+   * migrating the metadata later is a mechanical swap.
+   */
+  siteTagline:
+    process.env.NEXT_PUBLIC_BRAND_SITE_TAGLINE
+      || "Building Tomorrow's Future, Today",
+
+  /**
+   * OpenGraph `siteName` — often the legal or full brand name. Split
+   * from `productName` because product = "Anvi Careers" but siteName =
+   * "Anvi Corp USA" (the parent entity on marketing surfaces).
+   */
+  metadataSiteName:
+    process.env.NEXT_PUBLIC_BRAND_METADATA_SITE_NAME || 'Anvi Corp USA',
+
+  /**
+   * Governing-law jurisdiction for the /terms clause. Default matches
+   * the physical-address state so the boilerplate resolves to a real
+   * courts venue. A future legal-review pass can override per-brand.
+   */
+  jurisdiction:
+    process.env.NEXT_PUBLIC_BRAND_JURISDICTION || 'Texas, USA',
+
+  /**
+   * Bare S3 host for user-content asset URLs (used by Next.js
+   * `next.config.mjs` `images.remotePatterns` + CSP `connect-src`).
+   * Bare host, no scheme, no bucket-suffix — callers append the
+   * region variant. Current bucket name has a legacy typo
+   * ("carrers"); a clone can fix it via the env var without touching
+   * code. Kept blank-default-safe so an unset env falls back to the
+   * literal current host.
+   */
+  s3AssetHost:
+    process.env.NEXT_PUBLIC_BRAND_S3_ASSET_HOST
+      || 'anvi-corp-carrers.s3.amazonaws.com',
 };
 
 /**
