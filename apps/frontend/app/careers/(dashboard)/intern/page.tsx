@@ -4,8 +4,11 @@ import Link from 'next/link';
 import {
   AlertCircle,
   ArrowRight,
+  Award,
+  CalendarClock,
   CheckCircle2,
   Circle,
+  ClipboardList,
   Inbox,
   PartyPopper,
   Sparkles,
@@ -98,6 +101,15 @@ export default function InternHomePage() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
         <main className="min-w-0 space-y-6">
+          {/* W3 #21 / #22 — once activated, the applicant funnel bar
+              is gone (InternJourneyStepper self-hides) and this card
+              takes its place at the top of the main column. Shows the
+              intern's active state + shortcuts to the two most-common
+              recurring actions (weekly report, timesheet). */}
+          {data.mode === 'ACTIVE_INTERN' && (
+            <ActiveInternCard employeeId={data.user.employeeId} />
+          )}
+
           {!data.applyReadiness.complete && (
             <InternProfileCompletionCard readiness={data.applyReadiness} />
           )}
@@ -111,7 +123,12 @@ export default function InternHomePage() {
 
           <UpcomingGroupSessionsCard />
 
-          <DoThisNextHero action={data.nextAction} />
+          {/* W3 #14 — suppress the "Do this next" hero when the
+              SelectionAckCard is already surfacing the same
+              "Receive my offer letter" CTA above; the celebration card
+              is the richer version, so avoid duplication. Every other
+              lifecycle stage still gets the next-action hero. */}
+          {!data.selectionAck && <DoThisNextHero action={data.nextAction} />}
 
           <TasksCard data={data} />
 
@@ -120,6 +137,64 @@ export default function InternHomePage() {
         <RightSidePanel />
       </div>
     </>
+  );
+}
+
+/**
+ * W3 #21 — the "you're active" state card that replaces the applicant
+ * funnel stepper once the intern's lifecycleStatus is ACTIVE_INTERN.
+ * Deliberately understated (no confetti) — the stepper's celebratory
+ * arc is already implicit in "you made it past every step"; the card's
+ * job now is to orient the active intern to their recurring workflows.
+ */
+function ActiveInternCard({ employeeId }: { employeeId?: string | null }) {
+  return (
+    <section
+      aria-label="Active intern status"
+      className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-6 shadow-ds-sm"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+            <Award className="h-3 w-3" strokeWidth={2.5} />
+            Active intern
+          </div>
+          <h2 className="text-lg font-semibold text-slate-900">
+            You&apos;re active — welcome aboard.
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Onboarding is complete. Your day-to-day work runs from your
+            projects, timesheets, and weekly reports below.
+            {employeeId && (
+              <>
+                {' '}
+                Employee ID:{' '}
+                <span className="font-mono font-medium text-slate-800">
+                  {employeeId}
+                </span>
+                .
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Link
+          href="/careers/intern/weekly-reports"
+          className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-ds-sm ring-1 ring-inset ring-emerald-200 hover:bg-emerald-50"
+        >
+          <ClipboardList className="h-4 w-4" />
+          This week&apos;s report
+        </Link>
+        <Link
+          href="/careers/intern/timesheets"
+          className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-ds-sm ring-1 ring-inset ring-emerald-200 hover:bg-emerald-50"
+        >
+          <CalendarClock className="h-4 w-4" />
+          Log timesheet
+        </Link>
+      </div>
+    </section>
   );
 }
 

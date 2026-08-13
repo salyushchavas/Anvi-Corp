@@ -69,7 +69,22 @@ interface Props {
   className?: string;
 }
 
+/**
+ * W3 #21 / #22 — once the intern is ACTIVE_INTERN (or INACTIVE_INTERN
+ * post-engagement) the applicant funnel bar (Apply → Shortlist → …
+ * → Active) is no longer meaningful. It also visually strands "Active"
+ * as the perma-highlighted `isCurrent` step (never advancing to `isPast`
+ * because 8 is the last milestone), which is the exact "active is
+ * incomplete" symptom the ERM/intern have both hit after activation.
+ *
+ * <p>Returning null here removes the stepper from every intern surface
+ * (both the home page and every shared {@code InternPageShell} page).
+ * The home page substitutes an {@code ActiveInternCard} for the active
+ * state; other pages simply show no journey bar (correct — the intern
+ * is past the funnel).</p>
+ */
 export default function InternJourneyStepper({ status, className }: Props) {
+  if (status === 'ACTIVE_INTERN' || status === 'INACTIVE_INTERN') return null;
   const currentIndex = milestoneIndexFor(status);
   return (
     <section

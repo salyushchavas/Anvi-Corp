@@ -618,9 +618,17 @@ public class InternDashboardService {
                             false, null);
                 }
                 if (selection != null && selection.awaitingOffer()) {
+                    // W3 #15 — wording tightened per user request. The
+                    // prior message ("Offer letter on its way / Thanks
+                    // for acknowledging…") was fine but the leading
+                    // line implied the letter was already in motion;
+                    // ERM may still be preparing. This variant leads
+                    // with the ack receipt (the visible thing the
+                    // intern just did) then previews what's next.
                     yield waiting(
-                            "Offer letter on its way",
-                            "Thanks for acknowledging. ERM will issue your offer shortly — you'll get an email when it's ready to sign.",
+                            "We've received your acknowledgement",
+                            "Your offer letter will be sent shortly. "
+                                    + "You'll get an email the moment it's ready to sign.",
                             "ERM");
                 }
                 yield waiting(
@@ -638,8 +646,15 @@ public class InternDashboardService {
                     "Your employee ID is being created.",
                     "system");
             case EMPLOYEE_ID_CREATED -> waiting(
-                    "Onboarding packet pending",
-                    "ERM will assign your onboarding documents shortly.",
+                    // W3 #15 — softened the alarmed "Onboarding packet
+                    // pending" copy that made the intern think something
+                    // was overdue. At this stage the offer is signed and
+                    // ERM is preparing the onboarding documents; the
+                    // intern doesn't need to do anything.
+                    "Your onboarding packet is being prepared",
+                    "Your offer is signed and your employee record is set up. "
+                            + "ERM is putting together your onboarding documents — "
+                            + "you'll get an email when they're ready to complete.",
                     "ERM");
             case ONBOARDING_ASSIGNED -> action(
                     "Complete onboarding documents",
