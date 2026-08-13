@@ -1,6 +1,7 @@
 package com.anvicorp.api.config;
 
 import lombok.Getter;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -32,16 +33,84 @@ public class BrandConfig {
     /** mailto: support address surfaced in templates + UI. */
     private final String supportEmail;
 
+    // ── Phase-0 config-layer extension ─────────────────────────────────
+    // Fields the identity-centralization survey flagged as missing on
+    // the backend side. Same @Value pattern, same BRAND_* env-var +
+    // app.brand.* property namespace, Anvi-Corp defaults so nothing
+    // changes for the current deploy until an operator overrides.
+    // NOTE: no reference migration is done in this commit — the
+    // batches that consume these come next (seeders currently
+    // hardcode `@anvicorp.com`; email footers hardcode phone/address).
+
+    /** Company phone (E.164 / US-formatted, for email footer + templates). */
+    private final String phone;
+    /**
+     * Physical address as a single formatted string. Kept as one field
+     * (not a block) because 100% of the current backend consumers are
+     * email footers / offer-letter boilerplate that want a preformatted
+     * line rather than a struct — matches the shape template render
+     * vars expect.
+     */
+    private final String address;
+    /**
+     * Bare corporate mailbox suffix (no @). Consumed by the account
+     * seeders — currently they hardcode "@anvicorp.com" inline; this
+     * gives them a real config to read.
+     */
+    private final String emailDomain;
+    /**
+     * Absolute canonical URL for the marketing site. Distinct from
+     * {@code app.frontend.base-url} which points at the careers /
+     * dashboard host; these can differ (e.g. www.brand.com vs
+     * app.brand.com). Both kept — {@code frontend.base-url} stays for
+     * deep-link construction in listeners; this is for
+     * template-visible / footer-visible marketing URLs.
+     */
+    private final String websiteUrl;
+
+    // @Autowired on the 8-arg primary so Spring picks it deterministically
+    // now that the class has a secondary test-convenience constructor —
+    // without this, ctor auto-selection fails with "No default constructor
+    // found" (Spring can't tell which of the two overloads to inject).
+    @Autowired
     public BrandConfig(
             @Value("${app.brand.name:Anvi Corp}") String name,
             @Value("${app.brand.product-name:Anvi Careers}") String productName,
             @Value("${app.brand.legal-name:Anvi Corp USA}") String legalName,
-            @Value("${app.brand.support-email:careers@anvicorp.com}") String supportEmail
+            @Value("${app.brand.support-email:careers@anvicorp.com}") String supportEmail,
+            @Value("${app.brand.phone:+1 469-945-4554}") String phone,
+            @Value("${app.brand.address:7950 Legacy Dr, Suite 400, Plano, TX 75024}") String address,
+            @Value("${app.brand.email-domain:anvicorp.com}") String emailDomain,
+            @Value("${app.brand.website-url:https://www.anvicorp.com}") String websiteUrl
     ) {
         this.name = name;
         this.productName = productName;
         this.legalName = legalName;
         this.supportEmail = supportEmail;
+        this.phone = phone;
+        this.address = address;
+        this.emailDomain = emailDomain;
+        this.websiteUrl = websiteUrl;
+    }
+
+    /**
+     * Convenience 4-arg constructor for tests that only care about the
+     * brand-name / signoff surface and don't want to invent phone /
+     * address values. Delegates to the full constructor with the
+     * production Anvi-Corp defaults for the 4 Phase-0 fields — same
+     * shape a plain {@code new BrandConfig("A","B","C","D")} call gave
+     * before Phase-0 extended the constructor. Preserves compatibility
+     * for {@link com.anvicorp.api.erm.CommunicationTemplateWave1Test},
+     * the 5 Email-Slice tests, and any future test that constructs
+     * BrandConfig directly without needing the new fields.
+     */
+    public BrandConfig(String name, String productName,
+                       String legalName, String supportEmail) {
+        this(name, productName, legalName, supportEmail,
+                "+1 469-945-4554",
+                "7950 Legacy Dr, Suite 400, Plano, TX 75024",
+                "anvicorp.com",
+                "https://www.anvicorp.com");
     }
 
     /**
