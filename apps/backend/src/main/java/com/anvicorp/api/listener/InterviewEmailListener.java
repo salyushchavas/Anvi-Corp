@@ -218,13 +218,18 @@ public class InterviewEmailListener {
         vars.put("jobTitle", jobTitle(app));
         vars.put("cancellationMessage",
                 "Reason: " + humanReason(reasonCode));
+        // Email-slice-2 — INTERVIEW_CANCELLED template is seeded at boot
+        // (CommunicationTemplateSeeder line 275) with brandName + signoffBlock
+        // placeholders resolved by CommunicationTemplateService.render's
+        // brand-defaults merge. The prior hard-coded fallback body
+        // duplicated the template and made a rebrand deploy print the
+        // OLD wording alongside the seeded copy on any transient render
+        // failure. Fallback is now a minimal brand-neutral one-liner —
+        // template is the authoritative body.
         renderAndSend("INTERVIEW_CANCELLED", vars, applicant,
-                "Your " + brand.getName() + " interview has been cancelled",
-                "Hello " + vars.get("firstName") + ",\n\n"
-                        + "Your interview for " + vars.get("jobTitle")
-                        + " has been cancelled.\n\n"
-                        + vars.get("cancellationMessage") + "\n\n"
-                        + "We will follow up shortly with next steps.\n\n" + brand.signoffErm(),
+                "Your interview has been cancelled",
+                "Your interview for " + vars.get("jobTitle")
+                        + " has been cancelled.",
                 "INTERVIEW_CANCELLED",
                 "/careers/intern/interviews");
     }
