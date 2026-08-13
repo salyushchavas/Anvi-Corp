@@ -819,7 +819,43 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "What changed: {{changeSummary}}\n\n"
                             + "Open your I-983: {{deepLink}}\n\n"
                             + "— Anvi Corp",
-                    "firstName,evaluatorName,changeSummary,deepLink")
+                    "firstName,evaluatorName,changeSummary,deepLink"),
+            // ── Slice-3 manager-hire-decision fold-ins — ERM-facing.
+            // Recipient for all three: the ERM who owns the applicant.
+            // Previously the inline title/body was built in
+            // InterviewEmailListener.notifyErmOfHireDecision and shipped
+            // in two places (the dispatcher's auto-email hook AND an
+            // explicit emailProvider.sendRendered call), which double-
+            // emailed the ERM. Templates + emailSent=true collapse the
+            // send to one place while unlocking rebrand/admin-edit.
+            new Seed(
+                    "MANAGER_HIRE_APPROVED", "EMAIL",
+                    "Hire approved: {{internName}}",
+                    "Hello {{ermName}},\n\n"
+                            + "A Manager approved the hire for {{internName}}. The "
+                            + "candidate is now SELECTED; once they acknowledge the "
+                            + "selection, you can send the offer.\n\n"
+                            + "Open the decision center:\n{{deepLink}}\n\n"
+                            + "— Anvi Corp ERM",
+                    "ermName,internName,deepLink"),
+            new Seed(
+                    "MANAGER_HIRE_HOLD", "EMAIL",
+                    "Hire on hold: {{internName}}",
+                    "Hello {{ermName}},\n\n"
+                            + "A Manager placed the hire for {{internName}} ON HOLD — "
+                            + "no final decision yet.{{noteBlock}}\n\n"
+                            + "Check the interview and follow up as needed:\n{{deepLink}}\n\n"
+                            + "— Anvi Corp ERM",
+                    "ermName,internName,noteBlock,deepLink"),
+            new Seed(
+                    "MANAGER_HIRE_DECLINED", "EMAIL",
+                    "Hire not approved: {{internName}}",
+                    "Hello {{ermName}},\n\n"
+                            + "A Manager declined the hire for {{internName}}. The "
+                            + "application has been moved to REJECTED.\n\n"
+                            + "Open the interview:\n{{deepLink}}\n\n"
+                            + "— Anvi Corp ERM",
+                    "ermName,internName,deepLink")
     );
 
     @Override
