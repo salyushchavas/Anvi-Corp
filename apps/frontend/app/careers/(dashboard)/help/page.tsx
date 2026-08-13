@@ -3,6 +3,7 @@
 import { LifeBuoy, Mail, MessagesSquare } from 'lucide-react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import { BRAND } from '@/lib/careers/brand';
 
 /**
  * Help & Support landing page for the candidate / intern sidebar.
@@ -38,14 +39,14 @@ function Body() {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <a
-          href="mailto:careers@skyzentech.com"
+          href={`mailto:${BRAND.supportEmail}`}
           className="rounded-lg border border-gray-200 bg-white p-5 transition-shadow hover:shadow-sm"
         >
           <div className="mb-2 flex items-center gap-2">
             <Mail className="h-4 w-4 text-accent" strokeWidth={2} />
             <h2 className="text-sm font-semibold text-gray-900">Email</h2>
           </div>
-          <p className="text-sm text-gray-700">careers@skyzentech.com</p>
+          <p className="text-sm text-gray-700">{BRAND.supportEmail}</p>
           <p className="mt-1 text-xs text-gray-500">
             Best for application, offer, or compliance questions.
           </p>

@@ -349,7 +349,7 @@ function ZoomHostEmailCard() {
           type="email"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder={loading ? 'Loading…' : 'you@skyzen.com'}
+          placeholder={loading ? 'Loading…' : `you@${BRAND.emailDomain}`}
           disabled={loading || saving}
           className="min-w-[220px] flex-1 rounded-md border border-slate-200 px-2 py-1.5 text-sm"
         />

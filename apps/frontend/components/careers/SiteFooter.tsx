@@ -25,7 +25,7 @@ const LEGAL_LINKS: ReadonlyArray<{ label: string; href: string }> = [
 export default function SiteFooter() {
   const year = new Date().getFullYear();
   return (
-    <footer className="bg-[#050a14] text-skyzen-text">
+    <footer className="bg-[#050a14] text-chrome-text">
       <div className="mx-auto max-w-7xl px-6 pt-16 pb-6">
         <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-4">
           {/* Brand — same wordmark as marketing (public/logo.png).
@@ -40,7 +40,7 @@ export default function SiteFooter() {
                 className="h-10 w-auto rounded-md bg-white/95 px-2 py-1.5"
               />
             </Link>
-            <p className="max-w-[280px] text-sm leading-relaxed text-skyzen-muted">
+            <p className="max-w-[280px] text-sm leading-relaxed text-chrome-muted">
               {/* From _legacy/index.html — hero tagline (slider 1, line 109) +
                   the "Advanced IT solutions tailored to your needs" descriptor
                   from the services section heading (line 223). */}
@@ -63,7 +63,7 @@ export default function SiteFooter() {
                 <li key={link.href + link.label}>
                   <Link
                     href={link.href}
-                    className="text-sm text-skyzen-muted transition hover:text-accent"
+                    className="text-sm text-chrome-muted transition hover:text-accent"
                   >
                     {link.label}
                   </Link>
@@ -82,7 +82,7 @@ export default function SiteFooter() {
                 <li key={link.href + link.label}>
                   <Link
                     href={link.href}
-                    className="text-sm text-skyzen-muted transition hover:text-accent"
+                    className="text-sm text-chrome-muted transition hover:text-accent"
                   >
                     {link.label}
                   </Link>
@@ -101,7 +101,7 @@ export default function SiteFooter() {
                 <i className="icofont-phone mt-0.5 text-accent" />
                 <a
                   href={`tel:${BRAND.phone.replace(/[^\d+]/g, "")}`}
-                  className="text-sm text-skyzen-muted transition hover:text-accent"
+                  className="text-sm text-chrome-muted transition hover:text-accent"
                 >
                   {BRAND.phone}
                 </a>
@@ -110,14 +110,14 @@ export default function SiteFooter() {
                 <i className="icofont-email mt-0.5 text-accent" />
                 <a
                   href={`mailto:${BRAND.supportEmail}`}
-                  className="text-sm text-skyzen-muted transition hover:text-accent"
+                  className="text-sm text-chrome-muted transition hover:text-accent"
                 >
                   {BRAND.supportEmail}
                 </a>
               </div>
               <div className="flex items-start gap-2.5">
                 <i className="icofont-location-pin mt-0.5 text-accent" />
-                <span className="text-sm text-skyzen-muted">
+                <span className="text-sm text-chrome-muted">
                   {BRAND.addressLine1}, {BRAND.addressLine2},
                   <br />
                   {BRAND.city}, {BRAND.state} {BRAND.postalCode}
@@ -128,8 +128,8 @@ export default function SiteFooter() {
         </div>
 
         {/* Bottom */}
-        <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-skyzen-border pt-5">
-          <span className="text-xs text-skyzen-muted">
+        <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-chrome-border pt-5">
+          <span className="text-xs text-chrome-muted">
             &copy; {year} {BRAND.legalName}. All rights reserved.
           </span>
           <div className="flex flex-wrap items-center gap-4">
@@ -137,7 +137,7 @@ export default function SiteFooter() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="text-xs text-skyzen-muted transition hover:text-accent"
+                className="text-xs text-chrome-muted transition hover:text-accent"
               >
                 {link.label}
               </Link>

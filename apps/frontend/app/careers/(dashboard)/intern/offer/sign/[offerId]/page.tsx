@@ -306,8 +306,8 @@ export default function InternOfferSignPage() {
 
             <footer className="text-center text-xs text-slate-500">
               Need help? Contact your ERM at{' '}
-              <a className="text-brand-700 hover:underline" href="mailto:erm@skyzentech.com">
-                erm@skyzentech.com
+              <a className="text-brand-700 hover:underline" href={`mailto:erm@${BRAND.emailDomain}`}>
+                erm@{BRAND.emailDomain}
               </a>
               .{' '}
               <Link href="/careers/intern" className="text-brand-700 hover:underline">

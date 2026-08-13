@@ -4,14 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { X, ExternalLink, RotateCcw, Search } from 'lucide-react';
 import api from '@/lib/careers/api';
 import {
-  SKYZEN_DOCUMENT_BY_KEY,
+  ONBOARDING_DOCUMENT_BY_KEY,
   CATEGORY_BADGE,
   SENSITIVITY_BADGE,
   SENSITIVITY_LABEL,
-  type SkyzenDocumentKey,
-  type SkyzenDocumentCategory,
-  type SkyzenDocumentSensitivity,
-} from '@/lib/careers/skyzen-documents';
+  type OnboardingDocumentKey,
+  type OnboardingDocumentCategory,
+  type OnboardingDocumentSensitivity,
+} from '@/lib/careers/onboarding-documents';
 import type { TaskStatus, TaskSummary } from './types';
 
 type Props = {
@@ -266,7 +266,7 @@ export default function AssignAdditionalDocumentModal({
           {rows !== null && categories.map((cat) => {
             const items = grouped.get(cat) ?? [];
             if (items.length === 0) return null;
-            const badgeCls = CATEGORY_BADGE[cat as SkyzenDocumentCategory]
+            const badgeCls = CATEGORY_BADGE[cat as OnboardingDocumentCategory]
               ?? 'bg-slate-100 text-slate-700';
             return (
               <section key={cat} className="mb-4">
@@ -280,12 +280,12 @@ export default function AssignAdditionalDocumentModal({
                     // Post-widening — every DB template row (enum-seeded
                     // AND admin-added custom) is selectable + assignable
                     // end-to-end.
-                    const isCustom = !SKYZEN_DOCUMENT_BY_KEY[d.key as SkyzenDocumentKey];
+                    const isCustom = !ONBOARDING_DOCUMENT_BY_KEY[d.key as OnboardingDocumentKey];
                     const on = selected.has(d.key);
                     const currentStatus = statusByKey.get(d.key);
-                    const sensBadge = SENSITIVITY_BADGE[d.sensitivity as SkyzenDocumentSensitivity]
+                    const sensBadge = SENSITIVITY_BADGE[d.sensitivity as OnboardingDocumentSensitivity]
                       ?? 'bg-slate-100 text-slate-700';
-                    const sensLabel = SENSITIVITY_LABEL[d.sensitivity as SkyzenDocumentSensitivity]
+                    const sensLabel = SENSITIVITY_LABEL[d.sensitivity as OnboardingDocumentSensitivity]
                       ?? d.sensitivity;
                     return (
                       <li key={d.key} className="flex items-start gap-3 px-3 py-2">

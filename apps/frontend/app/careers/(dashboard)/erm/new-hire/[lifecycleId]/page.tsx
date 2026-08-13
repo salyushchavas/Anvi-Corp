@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { CalendarClock, ChevronLeft, PencilLine, Zap, X } from 'lucide-react';
 import api from '@/lib/careers/api';
+import { BRAND } from '@/lib/careers/brand';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
@@ -674,7 +675,7 @@ function CompanyEmailSection({
             Assign company email
           </button>
           <p className="text-[11px] text-slate-500">
-            Provisions a {`<localpart>@skyzentech.com`} mailbox and emails the
+            Provisions a {`<localpart>@${BRAND.emailDomain}`} mailbox and emails the
             starting credentials to the intern&rsquo;s personal Gmail. After
             they change the password in the mailbox, the same credentials
             sign them into the dashboard.

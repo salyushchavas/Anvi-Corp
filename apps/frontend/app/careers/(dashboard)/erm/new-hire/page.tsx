@@ -13,7 +13,7 @@
  * + zebra rows, status pill conventions, cursor-pointer on every
  * clickable element, focus rings preserved, 150-300ms transitions,
  * skeleton loaders for >300ms loads, no emoji icons. Palette stays on
- * the Skyzen brand-700 + accent-orange + slate-200 theme — only
+ * the existing brand-700 + accent + slate-200 theme — only
  * structural patterns came from the skill.
  *
  * The row data is server-authoritative: the unified-table fetches

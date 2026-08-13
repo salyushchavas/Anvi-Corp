@@ -51,7 +51,7 @@ const WORK_AUTH_TYPES = [
 // step for citizens + permanent residents. They travel through the same
 // `docFiles` map + `documents[]` submission as any other catalog doc, so
 // no separate storage path exists — the server sees them as regular
-// enum-backed onboarding-document rows already seeded from SkyzenDocument.
+// enum-backed onboarding-document rows already seeded from OnboardingDocument.
 const US_CITIZEN_PROOF_KEY = 'US_CITIZEN_PROOF';
 const PERMANENT_RESIDENT_GREEN_CARD_KEY = 'PERMANENT_RESIDENT_GREEN_CARD';
 
@@ -212,7 +212,7 @@ function DirectOnboardingWizard() {
 
   // Documents step (new position: index 2) — lazy load the pickable
   // template catalog. E-Verify + the per-type proof docs surface here
-  // automatically once the SkyzenDocument enum is seeded.
+  // automatically once the OnboardingDocument enum is seeded.
   useEffect(() => {
     if (stepIdx !== 2) return;
     if (catalog.length > 0) return;

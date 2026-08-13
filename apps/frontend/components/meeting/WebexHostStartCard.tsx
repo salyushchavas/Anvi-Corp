@@ -15,7 +15,7 @@ import api from '@/lib/careers/api';
  * <ol>
  *   <li><b>Mount fetch</b> — every render of the card kicks
  *       {@code GET /api/v1/meetings/{id}/host-start}, which re-fetches
- *       the meeting via {@link com.skyzen.careers.integration.zoom
+ *       the meeting via {@link com.anvicorp.api.integration.zoom
  *       .ZoomService#getMeeting(long)} and serves a brand-new
  *       {@code zak}-bearing {@code start_url} (no caching;
  *       {@code Cache-Control: no-store}).</li>

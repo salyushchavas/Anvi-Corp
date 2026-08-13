@@ -1,4 +1,7 @@
-// ERM Phase 8.2 — mirror of com.skyzen.careers.erm.documents.SkyzenDocument.
+// ERM Phase 8.2 — mirror of the backend OnboardingDocument enum
+// (com.anvicorp.api.erm.documents package on the current deploy;
+// per-brand clones with a different Java package still consume the
+// same enum shape).
 // Keep in sync manually with the backend enum: same keys, same order,
 // same sensitivities. The 13 blank PDFs live as static files in
 // `frontend/public/document-templates/`; the URL each entry exposes is
@@ -10,7 +13,7 @@
 // filesystems on Vercel are case-sensitive — do not change casing
 // without renaming the file on disk.
 
-export type SkyzenDocumentKey =
+export type OnboardingDocumentKey =
   | 'W4_2026'
   | 'W9_FW9'
   | 'I9_FORM_2026'
@@ -37,29 +40,29 @@ export type SkyzenDocumentKey =
   | 'I20_FORM'
   | 'I9_TRAVEL_HISTORY';
 
-export type SkyzenDocumentCategory =
+export type OnboardingDocumentCategory =
   | 'TAX'
   | 'IMMIGRATION'
   | 'EMPLOYMENT'
   | 'LEGAL'
   | 'INFORMATIONAL';
 
-export type SkyzenDocumentSensitivity =
+export type OnboardingDocumentSensitivity =
   | 'GENERAL'
   | 'FINANCIAL'
   | 'GOVERNMENT_ID';
 
-export type SkyzenDocumentSpec = {
-  key: SkyzenDocumentKey;
+export type OnboardingDocumentSpec = {
+  key: OnboardingDocumentKey;
   title: string;
-  category: SkyzenDocumentCategory;
-  sensitivity: SkyzenDocumentSensitivity;
+  category: OnboardingDocumentCategory;
+  sensitivity: OnboardingDocumentSensitivity;
   /** Null for upload-only docs (scan/photo of an existing item — passport,
    *  license, transcripts, etc.) that have no fill-in template. */
   filename: string | null;
   description: string;
   /** Null when the doc has no fill-in template (mirrors the backend
-   *  SkyzenDocument.publicUrl() null contract). */
+   *  OnboardingDocument.publicUrl() null contract). */
   publicUrl: string | null;
   /** Hidden from the AssignPacketModal but still a valid value on the
    *  document_tasks.document_key CHECK constraint so historical packets
@@ -73,9 +76,9 @@ function publicUrlFor(filename: string | null): string | null {
   return `/document-templates/${encodeURIComponent(filename)}`;
 }
 
-type SkyzenDocumentSpecInput = Omit<SkyzenDocumentSpec, 'publicUrl'>;
+type OnboardingDocumentSpecInput = Omit<OnboardingDocumentSpec, 'publicUrl'>;
 
-const SPECS: readonly SkyzenDocumentSpecInput[] = [
+const SPECS: readonly OnboardingDocumentSpecInput[] = [
   { key: 'W4_2026', title: 'W-4 2026', category: 'TAX',
     sensitivity: 'FINANCIAL', filename: 'W4 2026.pdf',
     description: 'IRS W-4 employee withholding certificate, 2026 version.' },
@@ -174,21 +177,21 @@ const SPECS: readonly SkyzenDocumentSpecInput[] = [
       + 'Use the I-94 travel history PDF from i94.cbp.dhs.gov.' },
 ];
 
-export const SKYZEN_DOCUMENTS: readonly SkyzenDocumentSpec[] = SPECS.map((s) => ({
+export const ONBOARDING_DOCUMENTS: readonly OnboardingDocumentSpec[] = SPECS.map((s) => ({
   ...s,
   publicUrl: publicUrlFor(s.filename),
 }));
 
-export const SKYZEN_DOCUMENT_BY_KEY: Record<SkyzenDocumentKey, SkyzenDocumentSpec> =
-  Object.fromEntries(SKYZEN_DOCUMENTS.map((d) => [d.key, d])) as Record<
-    SkyzenDocumentKey, SkyzenDocumentSpec
+export const ONBOARDING_DOCUMENT_BY_KEY: Record<OnboardingDocumentKey, OnboardingDocumentSpec> =
+  Object.fromEntries(ONBOARDING_DOCUMENTS.map((d) => [d.key, d])) as Record<
+    OnboardingDocumentKey, OnboardingDocumentSpec
   >;
 
-export const SKYZEN_DOCUMENT_CATEGORIES: readonly SkyzenDocumentCategory[] = [
+export const ONBOARDING_DOCUMENT_CATEGORIES: readonly OnboardingDocumentCategory[] = [
   'TAX', 'IMMIGRATION', 'EMPLOYMENT', 'LEGAL', 'INFORMATIONAL',
 ];
 
-export const CATEGORY_BADGE: Record<SkyzenDocumentCategory, string> = {
+export const CATEGORY_BADGE: Record<OnboardingDocumentCategory, string> = {
   TAX: 'bg-amber-100 text-amber-800',
   IMMIGRATION: 'bg-violet-100 text-violet-800',
   EMPLOYMENT: 'bg-sky-100 text-sky-800',
@@ -196,13 +199,13 @@ export const CATEGORY_BADGE: Record<SkyzenDocumentCategory, string> = {
   INFORMATIONAL: 'bg-slate-100 text-slate-700',
 };
 
-export const SENSITIVITY_BADGE: Record<SkyzenDocumentSensitivity, string> = {
+export const SENSITIVITY_BADGE: Record<OnboardingDocumentSensitivity, string> = {
   GENERAL: 'bg-slate-100 text-slate-700',
   FINANCIAL: 'bg-amber-100 text-amber-800',
   GOVERNMENT_ID: 'bg-rose-100 text-rose-800',
 };
 
-export const SENSITIVITY_LABEL: Record<SkyzenDocumentSensitivity, string> = {
+export const SENSITIVITY_LABEL: Record<OnboardingDocumentSensitivity, string> = {
   GENERAL: 'General',
   FINANCIAL: 'Financial',
   GOVERNMENT_ID: 'Government ID',

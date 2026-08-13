@@ -14,7 +14,7 @@ import type { User } from '@/types';
  * call in {@code auth-context.tsx}.</p>
  */
 
-const USER_KEY = 'skyzen.user';
+const USER_KEY = 'careers.user';
 
 export function getUser(): User | null {
   if (typeof window === 'undefined') return null;
@@ -33,13 +33,14 @@ export function setUser(user: User): void {
 }
 
 /**
- * Best-effort client-side cleanup. Also removes the pre-Wave-2 token keys
- * so a returning user with a stale localStorage cache from before this
- * ship gets a clean slate (safe no-op after the first call).
+ * Best-effort client-side cleanup. Wipes the cached User object.
+ * The server-side session clear happens via {@code POST /auth/logout}
+ * in {@code auth-context.tsx}, which invalidates the httpOnly access
+ * + refresh cookies (Security Wave 2 moved tokens out of
+ * localStorage into httpOnly cookies — no JS-readable token keys
+ * exist anymore).
  */
 export function clearAuth(): void {
   if (typeof window === 'undefined') return;
   window.localStorage.removeItem(USER_KEY);
-  window.localStorage.removeItem('skyzen.token');
-  window.localStorage.removeItem('skyzen.refreshToken');
 }

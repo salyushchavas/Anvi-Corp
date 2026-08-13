@@ -32,7 +32,7 @@ import Modal from '@/components/ui/Modal';
  *       (resets) or <em>Log out now</em> (immediate teardown).</li>
  *   <li>When the countdown finishes the same shared teardown runs and
  *       the user is sent to {@code /careers/login?reason=idle}.</li>
- *   <li>{@code BroadcastChannel('skyzen.session')} keeps sibling tabs
+ *   <li>{@code BroadcastChannel('careers.session')} keeps sibling tabs
  *       in lock-step — activity in one tab resets every tab's timer;
  *       an explicit / idle logout in one tab tears the others down.</li>
  * </ul>

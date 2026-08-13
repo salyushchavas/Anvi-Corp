@@ -48,11 +48,12 @@
   --ds-text-muted: #475569;    /* slate-600 */
   --ds-text-subtle: #94a3b8;   /* slate-400 */
 
-  /* Brand — Anvi blue defaults. Careers layout injects an inline <style>
-   * override at runtime for per-brand deploys, but marketing pages don't
-   * run that layout so they use these defaults directly. The *:focus-visible
-   * outline below reads --ds-brand-ring — with Skyzen orange as the default
-   * (as it was), the homepage focus states rendered orange. */
+  /* Brand — Anvi blue defaults. Root layout injects an inline <style>
+   * override at runtime for per-brand deploys (Phase-0 batch 5-fix
+   * moved the inject from careers/layout up to root so marketing
+   * routes also get the per-brand focus ring). These fallbacks are
+   * what a plain build renders when NEXT_PUBLIC_BRAND_PRIMARY is
+   * unset — same shade Anvi ships today. */
   --ds-brand: #1D6299;         /* brand-700 = mix(#2A8CDB, black, 0.30) */
   --ds-brand-hover: #174D78;   /* brand-800 = mix(#2A8CDB, black, 0.45) */
   --ds-brand-ring: #2A8CDB;    /* brand-500 = Anvi blue */

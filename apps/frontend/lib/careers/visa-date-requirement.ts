@@ -1,7 +1,7 @@
 // Single source of truth on the frontend for which date inputs each
 // visa track needs on the registration / profile form. Mirrors the
 // Java map in
-// `backend/src/main/java/com/skyzen/careers/enums/VisaDateRequirement.java`
+// `backend/src/main/java/com/anvicorp/api/enums/VisaDateRequirement.java`
 // — keep both in sync.
 
 import type { WorkAuthTrack } from '@/types';

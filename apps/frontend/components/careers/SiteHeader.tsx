@@ -33,21 +33,21 @@ export default function SiteHeader() {
   const primaryRole = user?.roles?.[0] ?? '';
 
   return (
-    <header className="bg-skyzen-dark text-skyzen-text">
+    <header className="bg-chrome-dark text-chrome-text">
       {/* Top bar — email + phone from _legacy/contact-us.php (real Anvi values). */}
-      <div className="border-b border-skyzen-border bg-skyzen-dark/95 text-[13px]">
+      <div className="border-b border-chrome-border bg-chrome-dark/95 text-[13px]">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-2">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
             <a
               href={`mailto:${BRAND.supportEmail}`}
-              className="inline-flex items-center text-skyzen-muted transition hover:text-accent"
+              className="inline-flex items-center text-chrome-muted transition hover:text-accent"
             >
               <i className="icofont-email mr-1.5 text-accent" />
               {BRAND.supportEmail}
             </a>
             <a
               href={`tel:${BRAND.phone.replace(/[^\d+]/g, "")}`}
-              className="inline-flex items-center text-skyzen-muted transition hover:text-accent"
+              className="inline-flex items-center text-chrome-muted transition hover:text-accent"
             >
               <i className="icofont-phone mr-1.5 text-accent" />
               {BRAND.phone}
@@ -63,10 +63,10 @@ export default function SiteHeader() {
       <nav className="px-4 py-4 lg:py-5">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 rounded-full border border-white/10 bg-[#2a2d35] px-4 py-2.5 shadow-[0_8px_32px_rgba(0,0,0,0.4)] lg:px-7">
         {/* Brand — reuses the marketing wordmark logo (public/logo.png).
-            The logo IS the wordmark, so we drop the previous SKY-ZEN text
-            span (Skyzen had an icon-only logo + text wordmark; Anvi's is
-            a single wordmark image). A small vertical separator + product
-            label indicates you're in the /careers section vs the marketing site. */}
+            The logo IS the wordmark, so no adjacent text-span is needed:
+            the current wordmark carries the brand mark itself. A small
+            vertical separator + product label indicates you're in the
+            /careers section vs the marketing site. */}
         <Link href="/" className="flex items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -114,7 +114,7 @@ export default function SiteHeader() {
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="rounded-md border border-skyzen-border px-3 py-1.5 text-xs font-medium text-white/80 transition hover:border-white/30 hover:text-white"
+                  className="rounded-md border border-chrome-border px-3 py-1.5 text-xs font-medium text-white/80 transition hover:border-white/30 hover:text-white"
                   aria-label={`Logout ${primaryRole.toLowerCase()}`}
                 >
                   Logout
@@ -146,7 +146,7 @@ export default function SiteHeader() {
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="border-t border-skyzen-border bg-skyzen-dark/98 lg:hidden">
+        <div className="border-t border-chrome-border bg-chrome-dark/98 lg:hidden">
           <ul className="mx-auto max-w-7xl space-y-1 px-4 py-4">
             {NAV_LINKS.map((link) => (
               <li key={link.href}>
@@ -159,7 +159,7 @@ export default function SiteHeader() {
                 </Link>
               </li>
             ))}
-            <li className="border-t border-skyzen-border pt-2">
+            <li className="border-t border-chrome-border pt-2">
               <Link
                 href="/careers/openings"
                 onClick={closeMobile}
