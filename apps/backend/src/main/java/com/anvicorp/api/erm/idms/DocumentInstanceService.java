@@ -544,7 +544,69 @@ public class DocumentInstanceService {
                 "Please make corrections to your document",
                 "Your ERM has asked for changes to \"" + instance.getTemplateTitle() + "\".",
                 internDocPath(instance));
+        // Parity-gap fill — the in-app dispatch above uses IDMS_DOC_RETURNED
+        // with emailSent=false but the event isn't in the auto-email
+        // allow-list, so the intern would otherwise miss a time-sensitive
+        // corrections deadline. Render + send the intern email directly
+        // with the real return context (which document, ERM name, reason,
+        // comments, deep link).
+        emailInternDocReturned(instance, caller, req.reasonCode(), req.comments());
         return toDetail(instance, caller);
+    }
+
+    /**
+     * Parity-gap fill — send the intern the {@code IDMS_DOC_RETURNED}
+     * template on {@link #returnForCorrections}. Best-effort: a lookup or
+     * render failure is logged and only skips the email leg; the in-app
+     * dispatch already happened.
+     *
+     * <p>Peer to {@link #sendFinalizedPdfEmail} — same template-first
+     * pattern, same {@code emailProvider.sendRendered} sink.</p>
+     */
+    private void emailInternDocReturned(DocumentInstance instance, User caller,
+                                         String reasonCode, String comments) {
+        try {
+            User intern = userRepo.findById(instance.getInternUserId()).orElse(null);
+            if (intern == null || intern.getEmail() == null || intern.getEmail().isBlank()) {
+                return;
+            }
+            String ermName = caller != null && caller.getFullName() != null
+                    && !caller.getFullName().isBlank()
+                    ? caller.getFullName() : brand.getName() + " ERM";
+            String reasonBlock = reasonCode != null && !reasonCode.isBlank()
+                    ? "\n\nReason: " + reasonCode.replace('_', ' ').toLowerCase()
+                    : "";
+            String commentsBlock = comments != null && !comments.isBlank()
+                    ? "\nERM comments: " + comments : "";
+            Map<String, Object> vars = new LinkedHashMap<>();
+            vars.put("firstName", firstName(intern));
+            vars.put("ermName", ermName);
+            vars.put("templateTitle", instance.getTemplateTitle() != null
+                    ? instance.getTemplateTitle() : "your document");
+            vars.put("reasonBlock", reasonBlock);
+            vars.put("commentsBlock", commentsBlock);
+            vars.put("deepLink", frontendBaseUrl + internDocPath(instance));
+            var rendered = templateService
+                    .render("IDMS_DOC_RETURNED", "EMAIL", vars).orElse(null);
+            if (rendered == null) {
+                log.debug("[IDMS] template IDMS_DOC_RETURNED missing — skipping intern mail");
+                return;
+            }
+            emailProvider.sendRendered(intern.getEmail(),
+                    rendered.subject() != null
+                            ? rendered.subject()
+                            : "Please make corrections to your document",
+                    rendered.body() != null ? rendered.body() : "");
+        } catch (Exception e) {
+            log.warn("[IDMS] IDMS_DOC_RETURNED intern-mail failed (non-fatal): {}",
+                    e.getMessage());
+        }
+    }
+
+    private static String firstName(User u) {
+        if (u == null || u.getFullName() == null) return "there";
+        String[] parts = u.getFullName().trim().split("\\s+", 2);
+        return parts.length > 0 && !parts[0].isEmpty() ? parts[0] : "there";
     }
 
     @Transactional
