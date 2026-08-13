@@ -15,6 +15,15 @@ import {
 } from '@/components/ui';
 
 const POLL_INTERVAL_MS = 30_000;
+// Pattern-D freshness — while a poll is failing we bound staleness by
+// scheduling a much faster one-shot retry (instead of waiting the full
+// 30 s window). At a transition boundary this is what stops the panel
+// from rendering pre-transition state for up to 30 s.
+const RECONNECT_INTERVAL_MS = 5_000;
+// Any mutation site that changes the candidate's state can fire
+// `window.dispatchEvent(new Event(DASHBOARD_REFRESH_EVENT))` to force
+// this panel to refetch immediately instead of waiting for the poll.
+const DASHBOARD_REFRESH_EVENT = 'careers:dashboard-refresh';
 
 interface NextStepData {
   type?: string | null;
@@ -81,6 +90,16 @@ export default function YourJourneyPanel() {
   const [error, setError] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const intervalRef = useRef<number | null>(null);
+  // Bounds staleness after an error — one-shot fast retry that runs
+  // separately from the 30 s poll. Cleared on success + unmount.
+  const retryTimeoutRef = useRef<number | null>(null);
+
+  const clearRetryTimeout = useCallback(() => {
+    if (retryTimeoutRef.current != null) {
+      window.clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -88,15 +107,27 @@ export default function YourJourneyPanel() {
       setData(res.data);
       setError(null);
       setReconnecting(false);
+      // Recovered — cancel any pending fast retry so the next tick
+      // falls back to the normal 30 s cadence.
+      clearRetryTimeout();
     } catch (err: any) {
       if (data == null) {
         setError(err?.response?.data?.error ?? "Couldn't load your journey.");
       } else {
+        // Keep last-good data visible for continuity, but mark stale
+        // via the Reconnecting pill AND schedule a fast retry so we
+        // don't render pre-transition state for the full 30 s window.
         setReconnecting(true);
+      }
+      if (retryTimeoutRef.current == null) {
+        retryTimeoutRef.current = window.setTimeout(() => {
+          retryTimeoutRef.current = null;
+          void load();
+        }, RECONNECT_INTERVAL_MS);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [clearRetryTimeout]);
 
   const startPolling = useCallback(() => {
     if (intervalRef.current != null) return;
@@ -120,12 +151,26 @@ export default function YourJourneyPanel() {
         startPolling();
       }
     };
+    // Focus complements visibilitychange — some browsers/scenarios (e.g.
+    // BFCache restore, alt-tab back to the same tab) fire one without
+    // the other. Refetching on either catches transition-caused updates
+    // that happened while the user was away.
+    const onFocus = () => void load();
+    // Transition-refresh signal — any state-changing POST elsewhere in
+    // the app can dispatch DASHBOARD_REFRESH_EVENT to force this panel
+    // to update immediately instead of waiting up to 30 s for the poll.
+    const onRefreshSignal = () => void load();
     document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener(DASHBOARD_REFRESH_EVENT, onRefreshSignal);
     return () => {
       document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener(DASHBOARD_REFRESH_EVENT, onRefreshSignal);
       stopPolling();
+      clearRetryTimeout();
     };
-  }, [load, startPolling, stopPolling]);
+  }, [load, startPolling, stopPolling, clearRetryTimeout]);
 
   if (error && data == null) {
     return (
