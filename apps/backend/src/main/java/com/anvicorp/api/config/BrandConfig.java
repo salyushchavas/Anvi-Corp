@@ -81,7 +81,7 @@ public class BrandConfig {
             @Value("${app.brand.phone:+1 469-945-4554}") String phone,
             @Value("${app.brand.address:7950 Legacy Dr, Suite 400, Plano, TX 75024}") String address,
             @Value("${app.brand.email-domain:anvicorp.com}") String emailDomain,
-            @Value("${app.brand.website-url:https://www.anvicorp.com}") String websiteUrl
+            @Value("${app.brand.website-url:https://anvicorp.com}") String websiteUrl
     ) {
         this.name = name;
         this.productName = productName;
@@ -110,7 +110,7 @@ public class BrandConfig {
                 "+1 469-945-4554",
                 "7950 Legacy Dr, Suite 400, Plano, TX 75024",
                 "anvicorp.com",
-                "https://www.anvicorp.com");
+                "https://anvicorp.com");
     }
 
     /**
