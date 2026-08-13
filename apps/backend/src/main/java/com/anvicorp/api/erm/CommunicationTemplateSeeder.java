@@ -521,6 +521,30 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Please contact {{trainerName}} to reschedule.\n\n"
                             + "— Anvi Corp",
                     "firstName,trainerName,meetingDateLocal,missedReason"),
+            // Email-slice-2 — scheduler/host "you scheduled this meeting"
+            // email. Dual-use: TrainerMeetingNotificationDispatcher sends
+            // this to the trainer for a weekly meeting, and
+            // InterviewEmailListener sends it to the interviewer for an
+            // interview. Subject prefix is caller-supplied via
+            // {{subjectPrefix}} ("Weekly meeting scheduled" or "Interview
+            // scheduled") so the ONE template covers both flows and
+            // future scheduler use-cases without another seed. Body
+            // carries the meeting title, participant context, when/zone,
+            // and — when available — the one-click Zoom {{startUrl}} for
+            // the host (fetched fresh by SchedulerMeetingEmailSender on
+            // send because Zoom start URLs expire ~2h after create).
+            // The dashboard fallback line handles the missing-start-url
+            // case without breaking the render.
+            new Seed(
+                    "MEETING_INVITE_HOST", "EMAIL",
+                    "{{subjectPrefix}} — {{meetingTitle}}",
+                    "Hi {{recipientName}},\n\n"
+                            + "You scheduled \"{{meetingTitle}}\"{{participantLine}} "
+                            + "for {{scheduledForLocal}} ({{timezone}}).\n\n"
+                            + "{{hostAccessBlock}}\n\n"
+                            + "— Anvi Corp",
+                    "subjectPrefix,meetingTitle,recipientName,participantLine,"
+                            + "scheduledForLocal,timezone,hostAccessBlock"),
             new Seed(
                     "SUBMISSION_UPLOADED", "EMAIL",
                     "Submission ready for review: {{projectTitle}}",
