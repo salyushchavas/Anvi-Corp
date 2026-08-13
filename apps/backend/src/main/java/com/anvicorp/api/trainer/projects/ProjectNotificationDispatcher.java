@@ -11,6 +11,7 @@ import com.anvicorp.api.notification.UserNotificationDispatcher;
 import com.anvicorp.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.format.DateTimeFormatter;
@@ -51,6 +52,14 @@ public class ProjectNotificationDispatcher {
     private final com.anvicorp.api.notification.InternNotificationService internNotifications;
     private final com.anvicorp.api.config.BrandConfig brand;
 
+    /** Frontend base URL used to promote the intern {@code deepLink} into
+     *  a fully-qualified URL for the rendered {@code PROJECT_ASSIGNED}
+     *  template. Same key peer email code injects (e.g.
+     *  DocumentEmailListener, ComplianceLifecycleListener,
+     *  EvaluationNotificationFanout). */
+    @Value("${app.frontend.base-url:https://www.anvicorp.com}")
+    private String frontendBaseUrl;
+
     public void dispatchProjectAssigned(Project project, InternLifecycle lc,
                                          User trainer, boolean notifyStakeholders,
                                          boolean backdated,
@@ -89,26 +98,54 @@ public class ProjectNotificationDispatcher {
         String deepLinkStaff = "/careers/trainer/active-interns/" + lc.getId();
 
         // ── 1) Intern (always) ───────────────────────────────────────────
-        // Model A — system sends the mail; the body names the actor + role
-        // ("<Trainer name>, your Trainer, has assigned..."). Replaces the
-        // previous PROJECT_ASSIGNED template render so the explicit wording
-        // is the source of truth for intern delivery and lands directly in
-        // the company mailbox via InternNotificationService.
+        // Slice-4 fold-in — restore the PROJECT_ASSIGNED template render.
+        // A prior revision replaced the render with inline body construction
+        // to route through the internal-mail bridge (notifyIntern), but the
+        // template-first pattern (render then hand the rendered subject/body
+        // to notifyIntern) now gives us BOTH: rebrand-safe / admin-editable
+        // copy AND bridge delivery to the intern's company mailbox. In-app
+        // leg keeps a terse actor+role phrasing so the bell row is distinct
+        // from the fuller email body.
         try {
+            String projectTitle = nz(project.getTitle());
             String actorPhrase = trainer.getFullName() != null
                     && !trainer.getFullName().isBlank()
                     ? trainer.getFullName() + ", your Trainer,"
                     : "Your Trainer";
-            String projectTitle = nz(project.getTitle());
-            String subject = "New project assigned by your Trainer: " + projectTitle;
-            String plain = "Hi " + firstName(intern) + ",\n\n"
-                    + actorPhrase + " has assigned you a new project: \""
-                    + projectTitle + "\""
-                    + (project.getDueDate() != null ? " due " + dueDateLocal : "")
-                    + (project.getTechStack() != null && !project.getTechStack().isBlank()
-                        ? " (tech: " + project.getTechStack() + ")" : "")
-                    + ".\n\nOpen the project: " + deepLinkIntern
-                    + "\n\n" + brand.signoff();
+            Map<String, Object> internVars = new LinkedHashMap<>();
+            internVars.put("firstName", firstName(intern));
+            internVars.put("trainerName", trainer.getFullName() != null
+                    && !trainer.getFullName().isBlank()
+                    ? trainer.getFullName() : "your Trainer");
+            internVars.put("projectTitle", projectTitle);
+            internVars.put("technologyArea", project.getTechStack() != null
+                    && !project.getTechStack().isBlank()
+                    ? project.getTechStack() : "no tech tag");
+            internVars.put("dueDateLocal", dueDateLocal);
+            internVars.put("deepLink", absoluteLink(deepLinkIntern));
+            var rendered = templateService.render(
+                    "PROJECT_ASSIGNED", "EMAIL", internVars).orElse(null);
+            String subject;
+            String plain;
+            if (rendered != null) {
+                subject = rendered.subject() != null ? rendered.subject()
+                        : "New project assigned: " + projectTitle;
+                plain = rendered.body() != null ? rendered.body() : "";
+            } else {
+                // Rebrand-safe fallback — same shape as before, kept as a
+                // safety net when the template row is temporarily absent.
+                log.info("[ProjectNotify] PROJECT_ASSIGNED template missing — "
+                        + "using fallback copy");
+                subject = "New project assigned by your Trainer: " + projectTitle;
+                plain = "Hi " + firstName(intern) + ",\n\n"
+                        + actorPhrase + " has assigned you a new project: \""
+                        + projectTitle + "\""
+                        + (project.getDueDate() != null ? " due " + dueDateLocal : "")
+                        + (project.getTechStack() != null && !project.getTechStack().isBlank()
+                            ? " (tech: " + project.getTechStack() + ")" : "")
+                        + ".\n\nOpen the project: " + deepLinkIntern
+                        + "\n\n" + brand.signoff();
+            }
             internNotifications.notifyIntern(intern.getId(),
                     com.anvicorp.api.notification.NotificationEventType.PROJECT_ASSIGNED,
                     subject, plain, null);
@@ -196,6 +233,19 @@ public class ProjectNotificationDispatcher {
             log.warn("[ProjectNotify] in-app dispatch to {} failed: {}",
                     recipient, e.getMessage());
         }
+    }
+
+    /** Promote a relative frontend path into an absolute URL using the
+     *  configured {@code app.frontend.base-url}, so the {@code {{deepLink}}}
+     *  placeholder in a rendered email body is a real clickable URL rather
+     *  than a bare {@code /careers/...} string most mail clients don't
+     *  auto-linkify. Peer to the same helper in DocumentEmailListener /
+     *  ComplianceLifecycleListener / EvaluationNotificationFanout. */
+    private String absoluteLink(String path) {
+        if (path == null || path.isBlank()) return "";
+        if (path.startsWith("http://") || path.startsWith("https://")) return path;
+        String base = frontendBaseUrl == null ? "" : frontendBaseUrl.replaceAll("/+$", "");
+        return base + path;
     }
 
     private void renderAndSend(String templateKey, Map<String, Object> vars,

@@ -89,25 +89,12 @@ public class DocumentEmailListener {
             // which BridgingEmailProvider does NOT intercept, so the intern's
             // company mailbox misses it. notifyIntern with the eventType
             // stamp routes an internal mail via the bridge (ERM sender).
-            try {
-                String ermName = erm != null && erm.getFullName() != null
-                        ? erm.getFullName() : brand.getName() + " ERM";
-                String subject = "Your onboarding document packet is ready";
-                String plain = "Hi " + firstName(intern) + ",\n\n"
-                        + ermName + ", your ERM, has assigned you a document packet with "
-                        + vars.get("templateCount") + " document(s) to complete."
-                        + (vars.get("templateTitlesList") != null
-                            && !((String) vars.get("templateTitlesList")).isBlank()
-                            ? "\n\nDocuments:\n" + vars.get("templateTitlesList") : "")
-                        + "\nOpen your documents dashboard: " + absoluteLink(INTERN_DASH)
-                        + "\n\n" + brand.signoff();
-                internNotifications.notifyIntern(intern.getId(),
-                        com.anvicorp.api.notification.NotificationEventType.DOCUMENT_PACKET_ASSIGNED,
-                        subject, plain, null);
-            } catch (Exception ex2) {
-                log.warn("[DocumentEmail] packet-assigned intern-mail failed (non-fatal): {}",
-                        ex2.getMessage());
-            }
+            // Slice-4 fold-in: render the SAME template so the bridged mail
+            // is edit-consistent with the personal-Gmail mail (ERM template
+            // edits now flow to BOTH destinations instead of diverging).
+            renderBridgedIntern("DOCUMENT_PACKET_ASSIGNED", vars, intern,
+                    com.anvicorp.api.notification.NotificationEventType.DOCUMENT_PACKET_ASSIGNED,
+                    "packet-assigned");
             dispatcher.dispatch(intern.getId(), "DOCUMENT_PACKET_ASSIGNED",
                     intern.getId(),
                     "Your document packet is ready",
@@ -288,6 +275,38 @@ public class DocumentEmailListener {
         } catch (Exception e) {
             log.warn("[DocumentEmail] renderAndSend failed for {}: {}",
                     templateKey, e.getMessage());
+        }
+    }
+
+    /**
+     * Slice-4 fold-in — render the SAME template used for the personal-
+     * Gmail leg and route it through {@link
+     * com.anvicorp.api.notification.InternNotificationService#notifyIntern}
+     * so the intern's company mailbox sees identical copy. Before Slice 4
+     * the bridge leg carried an inline body construction that duplicated
+     * (and could drift from) the template used at
+     * {@link #renderAndSend}. Best-effort — template-absent or render
+     * failure is logged and only skips the bridge leg.
+     */
+    private void renderBridgedIntern(String templateKey, Map<String, Object> vars,
+                                      User intern,
+                                      com.anvicorp.api.notification.NotificationEventType eventType,
+                                      String logTag) {
+        if (intern == null) return;
+        try {
+            var rendered = templateService.render(templateKey, "EMAIL", vars).orElse(null);
+            if (rendered == null) {
+                log.debug("[DocumentEmail] {} template {} missing — skipping intern-mail",
+                        logTag, templateKey);
+                return;
+            }
+            internNotifications.notifyIntern(intern.getId(), eventType,
+                    rendered.subject() != null ? rendered.subject() : templateKey,
+                    rendered.body() != null ? rendered.body() : "",
+                    null);
+        } catch (Exception e) {
+            log.warn("[DocumentEmail] {} intern-mail failed (non-fatal): {}",
+                    logTag, e.getMessage());
         }
     }
 
