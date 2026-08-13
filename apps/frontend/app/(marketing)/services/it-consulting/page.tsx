@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import { ServicePageTemplate } from "@/components/service-page-template";
+import { BRAND, BRAND_SHORT } from "@/lib/careers/brand";
 
 export const metadata: Metadata = {
   title: "IT Consulting",
-  description:
-    "ANVI IT consulting: accurate insights, tailored strategies, vast cross-industry experience, and process improvements to drive your business forward.",
+  description: `${BRAND_SHORT} IT consulting: accurate insights, tailored strategies, vast cross-industry experience, and process improvements to drive your business forward.`,
 };
 
 export default function ItConsultingPage() {
@@ -12,9 +12,9 @@ export default function ItConsultingPage() {
     <ServicePageTemplate
       banner="IT Consulting"
       eyebrow="IT Consulting"
-      heading="Achieve IT excellence with ANVI Consulting Services"
-      intro="Navigating the complexities of IT can be challenging, but Anvi Corp is here to guide you with expert IT consulting services."
-      outro="Drive your business forward with ANVI IT consulting."
+      heading={`Achieve IT excellence with ${BRAND_SHORT} Consulting Services`}
+      intro={`Navigating the complexities of IT can be challenging, but ${BRAND.name} is here to guide you with expert IT consulting services.`}
+      outro={`Drive your business forward with ${BRAND_SHORT} IT consulting.`}
       image="/services/it-consulting.png"
       items={[
         { letter: "A", lead: "ccurate Insights:",     text: "Expertise and strategic insight to overcome technological challenges." },
