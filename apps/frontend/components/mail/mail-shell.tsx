@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Bell, LogOut, Mail, Menu, Search, Settings, Shield, X } from "lucide-react";
+import { Bell, Home, LogOut, Mail, Menu, Search, Settings, Shield, X } from "lucide-react";
 import { useMailAuth } from "./mail-auth-provider";
 import { FolderRail, type FolderView } from "./folder-rail";
 import { MessageList } from "./message-list";
@@ -427,6 +427,25 @@ export function MailShell() {
         </form>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* W5 #20 — Home button that returns the intern to the
+              careers dashboard. Placed first in the right-side action
+              group so it's the most obvious "exit-to-careers" affordance.
+              Icon-only on mobile (label hides <sm:), pill button
+              matching the Admin/Settings pattern already established
+              in this row. Uses a plain <a> not next/link because the
+              mail app lives under a different route group (/mail/*)
+              and the careers app under /careers/* — Next's client-side
+              nav still works but a hard nav is more predictable when
+              crossing route groups. */}
+          <a
+            href="/careers/intern"
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50"
+            title="Back to careers dashboard"
+            aria-label="Back to careers dashboard"
+          >
+            <Home className="h-4 w-4" />
+            <span className="hidden sm:inline">Careers home</span>
+          </a>
           {isAdmin && (
             <Link href="/mail/admin" className="hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50 sm:inline-flex">
               <Shield className="h-4 w-4" /> Admin
