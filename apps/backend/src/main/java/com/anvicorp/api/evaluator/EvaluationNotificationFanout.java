@@ -40,7 +40,6 @@ public class EvaluationNotificationFanout {
     private final OrgTeamResolver orgTeamResolver;
     private final SchedulerMeetingEmailSender schedulerEmail;
     private final com.anvicorp.api.notification.InternNotificationService internNotifications;
-    private final com.anvicorp.api.config.BrandConfig brand;
 
     @Value("${app.frontend.base-url:https://www.anvicorp.com}")
     private String frontendBaseUrl;
@@ -58,26 +57,23 @@ public class EvaluationNotificationFanout {
                 ? evaluator.getFullName() : "your Evaluator";
         String deepLink = link("/careers/intern/evaluations");
 
-        // Intern — Model A: system sends; body names the evaluator + role
+        // Intern — Model A: system sends; body names the evaluator + role.
+        // Slice-1 migration: rendered via the EVALUATION_SCHEDULED template.
         String actorPhrase = evaluator != null && evaluator.getFullName() != null
                 && !evaluator.getFullName().isBlank()
                 ? evaluator.getFullName() + ", your Evaluator,"
                 : "Your Evaluator";
-        try {
-            String subject = "Evaluation scheduled by your Evaluator";
-            String plain = "Hi " + firstName + ",\n\n"
-                    + actorPhrase + " has scheduled your monthly evaluation for "
-                    + date + " (" + tz + ")."
-                    + (ev.getZoomJoinUrl() != null && !ev.getZoomJoinUrl().isBlank()
-                        ? "\n\nJoin: " + ev.getZoomJoinUrl() : "")
-                    + "\n\nOpen your evaluations: " + deepLink
-                    + "\n\n" + brand.signoff();
-            internNotifications.notifyInternFromRole(intern.getId(),
-                    com.anvicorp.api.notification.NotificationSenderRoles.EVALUATOR,
-                    subject, plain, null);
-        } catch (Exception e) {
-            log.warn("[EvaluatorFanout] intern scheduled mail failed: {}", e.getMessage());
-        }
+        Map<String, Object> schedVars = new LinkedHashMap<>();
+        schedVars.put("firstName", firstName);
+        schedVars.put("evaluatorName", evaluatorName);
+        schedVars.put("evaluationType", "monthly");
+        schedVars.put("scheduledDateLocal", date);
+        schedVars.put("timezone", tz);
+        schedVars.put("zoomLink", ev.getZoomJoinUrl() != null && !ev.getZoomJoinUrl().isBlank()
+                ? ev.getZoomJoinUrl() : "(join link will be shared before the session)");
+        renderInternMailFromRole(intern,
+                com.anvicorp.api.notification.NotificationSenderRoles.EVALUATOR,
+                "EVALUATION_SCHEDULED", schedVars);
 
         // In-app — intern
         tryInApp(intern.getId(), "EVALUATION_SCHEDULED", intern.getId(),
@@ -121,24 +117,25 @@ public class EvaluationNotificationFanout {
                         : "no recommendation");
         String deepLink = link("/careers/intern/evaluations/" + ev.getId());
 
-        // Intern — Model A: system sends; body names the evaluator + role
+        // Intern — Model A: system sends; body names the evaluator + role.
+        // Slice-1 migration: rendered via the EVALUATION_PUBLISHED template.
+        String evaluatorName = evaluator != null && evaluator.getFullName() != null
+                && !evaluator.getFullName().isBlank()
+                ? evaluator.getFullName() : "your Evaluator";
         String actorPhrase = evaluator != null && evaluator.getFullName() != null
                 && !evaluator.getFullName().isBlank()
                 ? evaluator.getFullName() + ", your Evaluator,"
                 : "Your Evaluator";
-        try {
-            String subject = "Your Evaluator published your evaluation";
-            String plain = "Hi " + firstName + ",\n\n"
-                    + actorPhrase + " published your monthly evaluation."
-                    + "\n\n" + summary
-                    + "\n\nOpen it to acknowledge: " + deepLink
-                    + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(),
-                    com.anvicorp.api.notification.NotificationEventType.EVALUATION_FINALIZED,
-                    subject, plain, null);
-        } catch (Exception e) {
-            log.warn("[EvaluatorFanout] intern published mail failed: {}", e.getMessage());
-        }
+        Map<String, Object> pubVars = new LinkedHashMap<>();
+        pubVars.put("firstName", firstName);
+        pubVars.put("evaluatorName", evaluatorName);
+        pubVars.put("evaluationType", "monthly");
+        pubVars.put("ackDays", "3");
+        pubVars.put("summaryLine", summary);
+        pubVars.put("deepLink", deepLink);
+        renderInternMail(intern,
+                com.anvicorp.api.notification.NotificationEventType.EVALUATION_FINALIZED,
+                "EVALUATION_PUBLISHED", pubVars);
 
         // Distinct "please acknowledge" action-required nudge, delivered
         // as its own item so the intern's mailbox shows the ack as a
@@ -146,22 +143,15 @@ public class EvaluationNotificationFanout {
         // (intern), same sender (evaluator@); different subject line
         // + Type so the mailbox renders it as a separate thread and any
         // future reminder / rules can key off EVALUATION_ACK_REQUESTED.
-        try {
-            String ackSubject = "Action needed: acknowledge your evaluation";
-            String ackPlain = "Hi " + firstName + ",\n\n"
-                    + actorPhrase + " is waiting on your acknowledgment of the "
-                    + "monthly evaluation just published. Two-click flow: open the "
-                    + "evaluation, add an optional note, and click Acknowledge — that "
-                    + "confirms you've reviewed the ratings and lets your Manager and "
-                    + "ERM know you're aware."
-                    + "\n\nOpen it to acknowledge: " + deepLink
-                    + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(),
-                    com.anvicorp.api.notification.NotificationEventType.EVALUATION_ACK_REQUESTED,
-                    ackSubject, ackPlain, null);
-        } catch (Exception e) {
-            log.warn("[EvaluatorFanout] intern ack-requested mail failed: {}", e.getMessage());
-        }
+        // Slice-1 migration: rendered via the EVALUATION_ACK_REQUESTED
+        // template (Slice-1 seed).
+        Map<String, Object> ackVars = new LinkedHashMap<>();
+        ackVars.put("firstName", firstName);
+        ackVars.put("evaluatorName", evaluatorName);
+        ackVars.put("deepLink", deepLink);
+        renderInternMail(intern,
+                com.anvicorp.api.notification.NotificationEventType.EVALUATION_ACK_REQUESTED,
+                "EVALUATION_ACK_REQUESTED", ackVars);
 
         tryInApp(intern.getId(), "EVALUATION_PUBLISHED", intern.getId(),
                 "Your Evaluator published your evaluation",
@@ -273,6 +263,63 @@ public class EvaluationNotificationFanout {
         }
     }
 
+    /**
+     * Slice-1 evaluation-template migration — render {@code templateKey} for
+     * the intern's internal-mailbox and dispatch through
+     * {@link com.anvicorp.api.notification.InternNotificationService#notifyInternFromRole}
+     * with the given sender role. Preserves in-app dispatch + timing
+     * untouched (caller runs those separately). Best-effort: template-
+     * absent or render failure is logged and only the email leg is
+     * skipped.
+     */
+    private void renderInternMailFromRole(User intern, String senderRole,
+                                           String templateKey,
+                                           Map<String, Object> vars) {
+        if (intern == null) return;
+        try {
+            Optional<CommunicationTemplateService.Rendered> r =
+                    templateService.render(templateKey, "EMAIL", vars);
+            if (r.isEmpty()) {
+                log.warn("[EvaluatorFanout] {} template missing — skipping intern mail",
+                        templateKey);
+                return;
+            }
+            internNotifications.notifyInternFromRole(intern.getId(), senderRole,
+                    r.get().subject(), r.get().body(), null);
+        } catch (Exception e) {
+            log.warn("[EvaluatorFanout] {} intern-mail failed (non-fatal): {}",
+                    templateKey, e.getMessage());
+        }
+    }
+
+    /**
+     * Slice-1 event-typed variant — same contract as
+     * {@link #renderInternMailFromRole} but dispatches through
+     * {@code notifyIntern(uid, NotificationEventType, …)} so the
+     * sender-role resolves via
+     * {@link com.anvicorp.api.notification.NotificationSenderRoles}.
+     */
+    private void renderInternMail(User intern,
+                                   com.anvicorp.api.notification.NotificationEventType eventType,
+                                   String templateKey,
+                                   Map<String, Object> vars) {
+        if (intern == null) return;
+        try {
+            Optional<CommunicationTemplateService.Rendered> r =
+                    templateService.render(templateKey, "EMAIL", vars);
+            if (r.isEmpty()) {
+                log.warn("[EvaluatorFanout] {} template missing — skipping intern mail",
+                        templateKey);
+                return;
+            }
+            internNotifications.notifyIntern(intern.getId(), eventType,
+                    r.get().subject(), r.get().body(), null);
+        } catch (Exception e) {
+            log.warn("[EvaluatorFanout] {} intern-mail failed (non-fatal): {}",
+                    templateKey, e.getMessage());
+        }
+    }
+
     private String link(String path) {
         return frontendBaseUrl.replaceAll("/+$", "") + path;
     }
@@ -315,24 +362,12 @@ public class EvaluationNotificationFanout {
         vars.put("deepLink", deepLink);
         // Lifecycle-mail-bridge: route through internNotifications with the
         // I983_EVALUATION_DUE event stamp so the intern's company mailbox sees
-        // it from evaluator@. The prior renderAndEmail(...) call was a raw
-        // sendBrandedHtml that skipped G1 and only reached personal SMTP.
-        try {
-            String subject = "I-983 " + type + " evaluation scheduled by your Evaluator";
-            String plain = "Hi " + firstName + ",\n\n"
-                    + evaluatorName + ", your Evaluator, has scheduled your "
-                    + type + " I-983 evaluation."
-                    + "\n\nWindow: " + vars.get("windowStartDate")
-                    + "  →  Due: " + vars.get("dueDate")
-                    + "\n\nOpen your I-983 evaluations: " + deepLink
-                    + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(),
-                    com.anvicorp.api.notification.NotificationEventType.I983_EVALUATION_DUE,
-                    subject, plain, null);
-        } catch (Exception e) {
-            log.warn("[EvaluatorFanout] I-983 scheduled intern-mail failed (non-fatal): {}",
-                    e.getMessage());
-        }
+        // it from evaluator@. Slice-1 migration: rendered via the intern-
+        // facing I983_EVALUATION_SCHEDULED template (I983_EVALUATION_DUE
+        // remains evaluator-facing).
+        renderInternMail(intern,
+                com.anvicorp.api.notification.NotificationEventType.I983_EVALUATION_DUE,
+                "I983_EVALUATION_SCHEDULED", vars);
 
         tryInApp(intern.getId(), "I983_EVALUATION_SCHEDULED", intern.getId(),
                 "I-983 evaluation scheduled",
@@ -362,23 +397,11 @@ public class EvaluationNotificationFanout {
         vars.put("deepLink", deepLink);
         // Lifecycle-mail-bridge: route through internNotifications with the
         // I983_EVALUATION_PUBLISHED event stamp so the intern's company
-        // mailbox sees it from evaluator@. The prior renderAndEmail(...) call
-        // skipped G1 and only reached personal SMTP.
-        try {
-            String subject = "I-983 " + type + " evaluation ready to sign — action required";
-            String plain = "Hi " + firstName + ",\n\n"
-                    + evaluatorName + ", your Evaluator, has published your "
-                    + type + " I-983 evaluation. This is a federal STEM-OPT "
-                    + "requirement — please review and sign within 7 days."
-                    + "\n\nOpen it to sign: " + deepLink
-                    + "\n\n" + brand.signoff();
-            internNotifications.notifyIntern(intern.getId(),
-                    com.anvicorp.api.notification.NotificationEventType.I983_EVALUATION_PUBLISHED,
-                    subject, plain, null);
-        } catch (Exception e) {
-            log.warn("[EvaluatorFanout] I-983 published intern-mail failed (non-fatal): {}",
-                    e.getMessage());
-        }
+        // mailbox sees it from evaluator@. Slice-1 migration: rendered via
+        // the I983_EVALUATION_PUBLISHED template.
+        renderInternMail(intern,
+                com.anvicorp.api.notification.NotificationEventType.I983_EVALUATION_PUBLISHED,
+                "I983_EVALUATION_PUBLISHED", vars);
 
         tryInApp(intern.getId(), "I983_EVALUATION_PUBLISHED", intern.getId(),
                 "I-983 evaluation ready to sign",
@@ -427,26 +450,20 @@ public class EvaluationNotificationFanout {
 
         // Tier A — federal compliance peace-of-mind: notify the intern
         // via internal mail so the DSO submission has a permanent record
-        // in their company mailbox. Actor is typically ERM.
-        try {
-            String actorPhrase = actor != null && actor.getFullName() != null
-                    && !actor.getFullName().isBlank()
-                    ? actor.getFullName() + ", your ERM,"
-                    : "Your ERM";
-            String subject = "Your I-983 was submitted to your DSO";
-            String plain = "Hi,\n\n" + actorPhrase + " has submitted your I-983 "
-                    + "evaluation to your DSO."
-                    + "\nSubmission method: " + method + "."
-                    + "\n\nKeep this confirmation for your STEM-OPT records."
-                    + "\nOpen your I-983: " + deepLink
-                    + "\n\n" + brand.signoff();
-            internNotifications.notifyInternFromRole(intern.getId(),
-                    com.anvicorp.api.notification.NotificationSenderRoles.ERM,
-                    subject, plain, null);
-        } catch (Exception e) {
-            log.warn("[EvaluatorFanout] I-983 DSO submitted intern-mail failed (non-fatal): {}",
-                    e.getMessage());
-        }
+        // in their company mailbox. Actor is typically ERM. Slice-1
+        // migration: rendered via the I983_DSO_SUBMITTED template
+        // (Slice-1 seed).
+        String actorName = actor != null && actor.getFullName() != null
+                && !actor.getFullName().isBlank()
+                ? actor.getFullName() : "your ERM";
+        Map<String, Object> dsoVars = new LinkedHashMap<>();
+        dsoVars.put("firstName", firstName(intern));
+        dsoVars.put("actorName", actorName);
+        dsoVars.put("submissionMethod", method);
+        dsoVars.put("deepLink", deepLink);
+        renderInternMailFromRole(intern,
+                com.anvicorp.api.notification.NotificationSenderRoles.ERM,
+                "I983_DSO_SUBMITTED", dsoVars);
     }
 
     public void i983Amended(I983Evaluation ev, InternLifecycle lc, User evaluator,
@@ -468,26 +485,18 @@ public class EvaluationNotificationFanout {
 
         // Tier A — re-signature required is a high-action prompt; surface
         // it in the intern's company mailbox alongside the in-app cue so
-        // it isn't lost in the bell stream.
-        try {
-            String actorPhrase = evaluator != null && evaluator.getFullName() != null
-                    && !evaluator.getFullName().isBlank()
-                    ? evaluator.getFullName() + ", your Evaluator,"
-                    : "Your Evaluator";
-            String subject = "Your I-983 was updated — please re-sign";
-            String plain = "Hi,\n\n" + actorPhrase + " has updated your I-983 "
-                    + "evaluation. Your previous signature has been reset, so "
-                    + "please review the changes and re-sign before the DSO "
-                    + "submission window."
-                    + "\n\nWhat changed: " + summary
-                    + "\n\nOpen your I-983: " + deepLink
-                    + "\n\n" + brand.signoff();
-            internNotifications.notifyInternFromRole(intern.getId(),
-                    com.anvicorp.api.notification.NotificationSenderRoles.EVALUATOR,
-                    subject, plain, null);
-        } catch (Exception e) {
-            log.warn("[EvaluatorFanout] I-983 amended intern-mail failed (non-fatal): {}",
-                    e.getMessage());
-        }
+        // it isn't lost in the bell stream. Slice-1 migration: rendered
+        // via the I983_EVALUATION_AMENDED template (Slice-1 seed).
+        String evaluatorName = evaluator != null && evaluator.getFullName() != null
+                && !evaluator.getFullName().isBlank()
+                ? evaluator.getFullName() : "your Evaluator";
+        Map<String, Object> amendVars = new LinkedHashMap<>();
+        amendVars.put("firstName", firstName(intern));
+        amendVars.put("evaluatorName", evaluatorName);
+        amendVars.put("changeSummary", summary);
+        amendVars.put("deepLink", deepLink);
+        renderInternMailFromRole(intern,
+                com.anvicorp.api.notification.NotificationSenderRoles.EVALUATOR,
+                "I983_EVALUATION_AMENDED", amendVars);
     }
 }
