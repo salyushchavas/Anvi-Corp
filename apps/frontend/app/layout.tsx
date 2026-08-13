@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Kumbh_Sans, Inter, Poppins } from "next/font/google";
 import "./globals.css";
-import { BRAND } from "@/lib/careers/brand";
+import { BRAND, brandDsCssVars } from "@/lib/careers/brand";
 
 // Marketing typeface (kept from the original Anvi site).
 const kumbh = Kumbh_Sans({
@@ -63,12 +63,37 @@ export const metadata: Metadata = {
 // providers in app/careers/layout.tsx. Nested layouts wrap only their
 // subtree — marketing pages don't pay for careers-only providers, etc.
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Phase-0 batch 5-fix — brand CSS-var override moved up from
+  // app/careers/layout.tsx to here so it applies GLOBALLY, not just
+  // under /careers/*. Consequence: the `*:focus-visible { outline: 2px
+  // solid var(--ds-brand-ring) }` rule in globals.css (which is
+  // global, not scoped to .ds) now gets the per-brand ring color on
+  // marketing routes too. Before this fix, marketing pages always
+  // showed the globals.css fallback (`#2A8CDB` Anvi blue) even when a
+  // per-brand clone set NEXT_PUBLIC_BRAND_PRIMARY.
+  //
+  // Byte-identical for Anvi: brandDsCssVars() returns null when the
+  // primary env var is unset → the guard drops the `<style>` → the
+  // globals.css defaults apply exactly as before. When the env IS set
+  // to the current Anvi value `#2A8CDB`, the computed override values
+  // equal the fallbacks (same mix() formula) — still byte-identical.
+  const dsVars = brandDsCssVars();
   return (
     <html
       lang="en"
       className={`${kumbh.variable} ${inter.variable} ${poppins.variable}`}
     >
-      <body>{children}</body>
+      <body>
+        {dsVars && (
+          <style
+            // eslint-disable-next-line react/no-danger
+            dangerouslySetInnerHTML={{
+              __html: `:root{--ds-brand:${dsVars.brand};--ds-brand-hover:${dsVars.brandHover};--ds-brand-ring:${dsVars.brandRing};}`,
+            }}
+          />
+        )}
+        {children}
+      </body>
     </html>
   );
 }

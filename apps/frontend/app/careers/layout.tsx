@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from '@/lib/careers/auth-context';
-import { BRAND, brandDsCssVars } from '@/lib/careers/brand';
+import { BRAND } from '@/lib/careers/brand';
 import IdleTimeoutProvider from '@/components/auth/IdleTimeoutProvider';
 
 // Careers-specific metadata — overrides the root marketing metadata for
@@ -29,19 +29,15 @@ export const metadata: Metadata = {
  * providers. Nested layouts only wrap their subtree.
  */
 export default function CareersLayout({ children }: { children: React.ReactNode }) {
-  const dsVars = brandDsCssVars();
+  // Phase-0 batch 5-fix — the brandDsCssVars() `<style>` override that
+  // used to live here has moved up to app/layout.tsx (root) so
+  // marketing routes also get the per-brand `--ds-brand-ring` on
+  // `*:focus-visible`. This layout no longer needs the duplicate;
+  // root covers all routes including /careers/*.
   return (
     <>
       {/* icofont is used inside careers SiteHeader/SiteFooter chrome. Local plugin, moved under /careers/. */}
       <link rel="stylesheet" href="/careers/plugins/icofont/icofont.min.css" />
-      {dsVars && (
-        <style
-          // eslint-disable-next-line react/no-danger
-          dangerouslySetInnerHTML={{
-            __html: `:root{--ds-brand:${dsVars.brand};--ds-brand-hover:${dsVars.brandHover};--ds-brand-ring:${dsVars.brandRing};}`,
-          }}
-        />
-      )}
       <AuthProvider>
         <IdleTimeoutProvider>{children}</IdleTimeoutProvider>
       </AuthProvider>
