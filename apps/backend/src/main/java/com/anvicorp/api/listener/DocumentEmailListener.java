@@ -156,41 +156,22 @@ public class DocumentEmailListener {
             vars.put("deepLink", absoluteLink(INTERN_DASH));
             vars.put("remainingTasksBlurb", buildRemainingBlurb(e.getPacketId()));
             renderAndSend(templateKey, vars, intern);
-            // Lifecycle-mail-bridge: renderAndSend above goes via sendRendered
-            // (bypass); the bridged mirror below routes an internal mail so
-            // the intern's company mailbox sees the review decision from erm@.
-            try {
-                com.anvicorp.api.notification.NotificationEventType et = switch (e.getDecision()) {
-                    case "ACCEPT" -> com.anvicorp.api.notification.NotificationEventType.DOCUMENT_TASK_ACCEPTED;
-                    case "REJECT" -> com.anvicorp.api.notification.NotificationEventType.DOCUMENT_TASK_REJECTED;
-                    case "RESEND_REQUEST" -> com.anvicorp.api.notification.NotificationEventType.DOCUMENT_TASK_RESEND_REQUESTED;
-                    default -> null;
-                };
-                if (et != null) {
-                    String title = nz(e.getTemplateTitle());
-                    String ermName = erm != null && erm.getFullName() != null
-                            ? erm.getFullName() : brand.getName() + " ERM";
-                    String verb = switch (e.getDecision()) {
-                        case "ACCEPT" -> "accepted";
-                        case "REJECT" -> "rejected";
-                        case "RESEND_REQUEST" -> "asked you to re-upload";
-                        default -> "reviewed";
-                    };
-                    String subject = "Document " + verb + " by your ERM — " + title;
-                    String plain = "Hi " + firstName(intern) + ",\n\n"
-                            + ermName + ", your ERM, has " + verb + " your submission of "
-                            + "\"" + title + "\"."
-                            + (e.getReasonCode() != null && !e.getReasonCode().isBlank()
-                                ? "\nReason: " + humanReason(e.getReasonCode()) : "")
-                            + (e.getErmComments() != null && !e.getErmComments().isBlank()
-                                ? "\nComments: " + e.getErmComments() : "")
-                            + "\n\nOpen your documents dashboard: " + absoluteLink(INTERN_DASH)
-                            + "\n\n" + brand.signoff();
-                    internNotifications.notifyIntern(intern.getId(), et, subject, plain, null);
-                }
-            } catch (Exception ex2) {
-                log.warn("[DocumentEmail] task-reviewed intern-mail failed (non-fatal): {}",
-                        ex2.getMessage());
+            // Slice-6a fold-in — render the SAME template for the bridged
+            // mirror so the intern's company mailbox sees copy identical
+            // to the personal-Gmail leg. Reuses the renderBridgedIntern
+            // helper Slice 4 built for onPacketAssigned. Note: template
+            // key "DOCUMENT_TASK_RESEND" maps to enum
+            // DOCUMENT_TASK_RESEND_REQUESTED (asymmetric naming, retained
+            // for backward-compat with existing dispatchers).
+            com.anvicorp.api.notification.NotificationEventType et = switch (e.getDecision()) {
+                case "ACCEPT" -> com.anvicorp.api.notification.NotificationEventType.DOCUMENT_TASK_ACCEPTED;
+                case "REJECT" -> com.anvicorp.api.notification.NotificationEventType.DOCUMENT_TASK_REJECTED;
+                case "RESEND_REQUEST" -> com.anvicorp.api.notification.NotificationEventType.DOCUMENT_TASK_RESEND_REQUESTED;
+                default -> null;
+            };
+            if (et != null) {
+                renderBridgedIntern(templateKey, vars, intern, et,
+                        "task-reviewed-" + e.getDecision().toLowerCase());
             }
             dispatcher.dispatch(intern.getId(), "DOCUMENT_TASK_" + e.getDecision(),
                     intern.getId(),
@@ -228,27 +209,13 @@ public class DocumentEmailListener {
             vars.put("evaluatorName", nameFor(lc != null ? orgTeamResolver.resolveEvaluatorId(lc) : null));
             vars.put("managerName", nameFor(lc != null ? lc.getManagerId() : null));
             renderAndSend("DOCUMENT_PACKET_COMPLETED", vars, intern);
-            // Lifecycle-mail-bridge: renderAndSend uses sendRendered (bypass);
-            // mirror the completion notice into the intern's company mailbox
-            // via the bridge with the ERM sender role.
-            try {
-                String subject = "Onboarding complete — welcome to " + brand.getName() + "!";
-                String plain = "Hi " + firstName(intern) + ",\n\n"
-                        + "All your onboarding documents have been accepted."
-                        + "\nTentative start date: " + vars.get("tentativeStartDate")
-                        + "\n\nYour team:"
-                        + "\n · Trainer: " + vars.get("trainerName")
-                        + "\n · Evaluator: " + vars.get("evaluatorName")
-                        + "\n · Manager: " + vars.get("managerName")
-                        + "\n\nOpen your dashboard: " + absoluteLink(INTERN_DASH)
-                        + "\n\n" + brand.signoff();
-                internNotifications.notifyIntern(intern.getId(),
-                        com.anvicorp.api.notification.NotificationEventType.DOCUMENT_PACKET_COMPLETED,
-                        subject, plain, null);
-            } catch (Exception ex2) {
-                log.warn("[DocumentEmail] packet-completed intern-mail failed (non-fatal): {}",
-                        ex2.getMessage());
-            }
+            // Slice-6a fold-in — render the SAME template for the bridged
+            // mirror so both destinations use identical copy (ERM template
+            // edits now flow to both). Reuses the Slice-4
+            // renderBridgedIntern helper.
+            renderBridgedIntern("DOCUMENT_PACKET_COMPLETED", vars, intern,
+                    com.anvicorp.api.notification.NotificationEventType.DOCUMENT_PACKET_COMPLETED,
+                    "packet-completed");
             dispatcher.dispatch(intern.getId(), "DOCUMENT_PACKET_COMPLETED",
                     intern.getId(),
                     "Onboarding complete — welcome to " + brand.getName() + "!",
