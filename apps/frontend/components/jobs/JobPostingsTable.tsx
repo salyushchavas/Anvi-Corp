@@ -31,6 +31,12 @@ export default function JobPostingsTable({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [applyTarget, setApplyTarget] = useState<JobPostingResponse | null>(null);
   const [appliedOverrides, setAppliedOverrides] = useState<Record<string, boolean>>({});
+  // W5 #9 — the Review step of ApplyNowModal shows "Applicant" +
+  // "Email" fields that were blank because this call site (unlike the
+  // JobCard call site) forgot to pass defaultName + defaultEmail. Wire
+  // them from the same auth context JobCard uses so the intern's own
+  // name + email surface before they submit.
+  const { user } = useAuth();
 
   const rows = useMemo(() => postings ?? [], [postings]);
 
@@ -72,6 +78,8 @@ export default function JobPostingsTable({
       {applyTarget && (
         <ApplyNowModal
           posting={applyTarget}
+          defaultName={user?.fullName}
+          defaultEmail={user?.email}
           onClose={() => setApplyTarget(null)}
           onApplied={(applicationId) => {
             handleApplied(applyTarget.id, applicationId);
