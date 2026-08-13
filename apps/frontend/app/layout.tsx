@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Kumbh_Sans, Inter, Poppins } from "next/font/google";
 import "./globals.css";
+import { BRAND } from "@/lib/careers/brand";
 
 // Marketing typeface (kept from the original Anvi site).
 const kumbh = Kumbh_Sans({
@@ -27,24 +28,33 @@ const poppins = Poppins({
   display: "swap",
 });
 
+// Phase-0 batch 2 — metadata identity now flows from BRAND.* (env-driven
+// at build time). Composed values kept byte-identical for the current
+// Anvi deploy: default title = "{metadataSiteName} — {siteTagline}"
+// resolves to "Anvi Corp USA — Building Tomorrow's Future, Today", which
+// is exactly what the pre-migration literal was. A per-brand clone
+// sets NEXT_PUBLIC_BRAND_METADATA_SITE_NAME / _SITE_TAGLINE /
+// _SITE_BASE_URL / _NAME / _LEGAL_NAME on Vercel and gets its own
+// metadata without editing this file.
+const defaultTitle = `${BRAND.metadataSiteName} — ${BRAND.siteTagline}`;
+
 export const metadata: Metadata = {
-  metadataBase: new URL("https://anvicorp.com"),
+  metadataBase: new URL(BRAND.siteBaseUrl),
   title: {
-    default: "Anvi Corp USA — Building Tomorrow's Future, Today",
-    template: "%s | Anvi Corp USA",
+    default: defaultTitle,
+    template: `%s | ${BRAND.metadataSiteName}`,
   },
-  description:
-    "Anvi Corp USA delivers IT consulting, software development, cloud, and mobile application development services tailored to your business.",
-  keywords: ["IT consulting", "software development", "cloud development", "mobile app development", "Anvi Corp"],
+  description: `${BRAND.legalName} delivers IT consulting, software development, cloud, and mobile application development services tailored to your business.`,
+  keywords: ["IT consulting", "software development", "cloud development", "mobile app development", BRAND.name],
   openGraph: {
-    title: "Anvi Corp USA — Building Tomorrow's Future, Today",
+    title: defaultTitle,
     description:
       "Advanced IT solutions tailored to your needs: software, cloud, mobile, and consulting.",
-    url: "https://anvicorp.com",
-    siteName: "Anvi Corp USA",
+    url: BRAND.siteBaseUrl,
+    siteName: BRAND.metadataSiteName,
     type: "website",
   },
-  twitter: { card: "summary_large_image", title: "Anvi Corp USA" },
+  twitter: { card: "summary_large_image", title: BRAND.metadataSiteName },
 };
 
 // Shell-free root layout: only html/body + fonts + globals. The marketing

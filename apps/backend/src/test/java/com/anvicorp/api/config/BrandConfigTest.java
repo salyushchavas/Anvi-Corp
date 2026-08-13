@@ -43,7 +43,7 @@ class BrandConfigTest {
                 "+1 469-945-4554",
                 "7950 Legacy Dr, Suite 400, Plano, TX 75024",
                 "anvicorp.com",
-                "https://www.anvicorp.com");
+                "https://anvicorp.com");
     }
 
     // ── Existing fields unchanged ─────────────────────────────────────
@@ -109,7 +109,7 @@ class BrandConfigTest {
 
     @Test
     void phase0_website_url_default() {
-        assertEquals("https://www.anvicorp.com",
+        assertEquals("https://anvicorp.com",
                 defaults().getWebsiteUrl());
     }
 
@@ -138,8 +138,8 @@ class BrandConfigTest {
                 "frontend BRAND.phone default is '+1 469-945-4554'");
         assertEquals("anvicorp.com", b.getEmailDomain(),
                 "frontend BRAND.emailDomain default is 'anvicorp.com'");
-        assertEquals("https://www.anvicorp.com", b.getWebsiteUrl(),
+        assertEquals("https://anvicorp.com", b.getWebsiteUrl(),
                 "frontend BRAND.siteBaseUrl default is "
-                        + "'https://www.anvicorp.com'");
+                        + "'https://anvicorp.com'");
     }
 }

@@ -97,9 +97,16 @@ export const BRAND = {
    * for backwards compatibility but callers targeting metadata should
    * prefer this field (the Next.js metadata layer needs a URL object,
    * not a bare hostname).
+   *
+   * <p>Default is BARE `anvicorp.com` (no `www.` prefix) to match the
+   * pre-Phase-0-Batch-2 hardcoded value in `app/layout.tsx`,
+   * `app/sitemap.ts`, and `app/robots.ts` — so wiring these three
+   * metadata surfaces through the config is byte-identical for the
+   * current Anvi SEO footprint. A per-brand deploy that prefers the
+   * `www.` canonical can override via env var.</p>
    */
   siteBaseUrl:
-    process.env.NEXT_PUBLIC_BRAND_SITE_BASE_URL || 'https://www.anvicorp.com',
+    process.env.NEXT_PUBLIC_BRAND_SITE_BASE_URL || 'https://anvicorp.com',
 
   /**
    * Marketing tagline that hangs off the metadata `<title>` and hero

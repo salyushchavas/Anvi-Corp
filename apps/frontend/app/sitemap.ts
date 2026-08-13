@@ -1,6 +1,10 @@
 import type { MetadataRoute } from "next";
+import { BRAND } from "@/lib/careers/brand";
 
-const BASE = "https://anvicorp.com";
+// Phase-0 batch 2 — the sitemap base URL flows from BRAND.siteBaseUrl
+// (env-driven at build time). Default preserves the pre-migration
+// bare canonical (no `www.` prefix). Route list unchanged.
+const BASE = BRAND.siteBaseUrl;
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date();
