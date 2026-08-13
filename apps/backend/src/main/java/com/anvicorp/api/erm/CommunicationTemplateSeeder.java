@@ -413,6 +413,58 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "share updated documentation or discuss extension "
                             + "options.\n\n— Anvi Corp ERM",
                     "firstName,workAuthType,expirationDate,daysUntilExpiration,ermName"),
+            // Parity-gap fill — ERM-facing counterpart for the work-auth
+            // expiring alert. The intern already gets WORK_AUTH_EXPIRING
+            // via ComplianceLifecycleListener; the ERM CC leg only wrote an
+            // in-app row (WORK_AUTH_EXPIRING is not in the dispatcher's
+            // auto-email allowlist AND the auto-hook couldn't carry the
+            // real context anyway — it composes plaintext from the row's
+            // title/body only). This seed lets us render a proper, context-
+            // rich alert directly to the ERM: which intern, which
+            // work-auth type (CPT/OPT/H1B/…), the expiry date, days
+            // remaining, and the review action.
+            new Seed(
+                    "WORK_AUTH_EXPIRING_ERM", "EMAIL",
+                    "Action needed: {{internName}}'s {{workAuthType}} expires "
+                            + "in {{daysUntilExpiration}} days",
+                    "Hello {{ermName}},\n\n"
+                            + "{{internName}}'s work authorization is approaching "
+                            + "expiry:\n\n"
+                            + " · Intern: {{internName}}\n"
+                            + " · Work authorization: {{workAuthType}}\n"
+                            + " · Expires: {{expirationDate}}\n"
+                            + " · Days remaining: {{daysUntilExpiration}}\n\n"
+                            + "Please review the compliance record and follow up with "
+                            + "the intern to collect updated documentation or discuss "
+                            + "extension options before the deadline:\n"
+                            + "{{deepLink}}\n\n"
+                            + "— Anvi Corp ERM",
+                    "ermName,internName,workAuthType,expirationDate,"
+                            + "daysUntilExpiration,deepLink"),
+            // Parity-gap fill — intern-facing "your IDMS document was
+            // returned for corrections" alert. Distinct from the packet-
+            // level DOCUMENT_TASK_REJECTED (which covers document-packet
+            // task reviews and already double-emails via
+            // DocumentEmailListener); this covers the IDMS-native flow
+            // where an ERM returns a signed / submitted document instance
+            // via DocumentInstanceService.returnForCorrections. Was
+            // dispatched with emailSent=false + not in the allowlist, so
+            // the intern only saw an in-app row and could miss a time-
+            // sensitive corrections deadline.
+            new Seed(
+                    "IDMS_DOC_RETURNED", "EMAIL",
+                    "Please make corrections to \"{{templateTitle}}\"",
+                    "Hello {{firstName}},\n\n"
+                            + "{{ermName}}, your ERM, has returned "
+                            + "\"{{templateTitle}}\" and asked for some corrections "
+                            + "before it can be accepted."
+                            + "{{reasonBlock}}"
+                            + "{{commentsBlock}}"
+                            + "\n\nOpen the document to review the feedback, apply "
+                            + "the corrections, and re-submit:\n{{deepLink}}\n\n"
+                            + "— Anvi Corp ERM",
+                    "firstName,ermName,templateTitle,reasonBlock,"
+                            + "commentsBlock,deepLink"),
             // ── Trainer Phase 0 — doc §10 + §8 notification matrix (7 templates).
             new Seed(
                     "PROJECT_ASSIGNED", "EMAIL",

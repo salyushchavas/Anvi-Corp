@@ -124,8 +124,50 @@ public class ComplianceLifecycleListener {
                     "Intern work authorization expires "
                             + (e.getExpirationDate() != null ? "on " + e.getExpirationDate() : "soon")
                             + ".");
+            // Parity-gap fill — the in-app row above lands with
+            // emailSent=false but WORK_AUTH_EXPIRING is not in the
+            // dispatcher's auto-email allow-list, and the auto-hook
+            // couldn't carry the intern/authtype/deadline context anyway
+            // (it composes plaintext from the row's title/body only).
+            // Render + send the ERM email directly with the full context.
+            emailErmWorkAuthExpiring(e, applicant);
         } catch (Exception ex) {
             log.warn("[Compliance] WorkAuthExpiring handler failed: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * Parity-gap fill — send the ERM the WORK_AUTH_EXPIRING_ERM template
+     * with real context (which intern, which work-auth type, expiry
+     * date, days remaining, deep link into the compliance record). The
+     * intern already gets a mail via {@link #renderAndSend} in the
+     * primary path above; this closes the ERM leg the auto-email hook
+     * cannot cover.
+     *
+     * <p>Best-effort — a lookup or render failure is logged and skips
+     * only the email leg; the in-app dispatch already happened.</p>
+     */
+    private void emailErmWorkAuthExpiring(WorkAuthExpiringEvent e, User intern) {
+        try {
+            var lc = lifecycleRepository.findByUserId(e.getUserId()).orElse(null);
+            if (lc == null || lc.getErmId() == null) return;
+            User erm = userRepository.findById(lc.getErmId()).orElse(null);
+            if (erm == null || erm.getEmail() == null || erm.getEmail().isBlank()) return;
+            Map<String, Object> vars = new LinkedHashMap<>();
+            vars.put("ermName", erm.getFullName() != null && !erm.getFullName().isBlank()
+                    ? erm.getFullName() : brand.getName() + " ERM");
+            vars.put("internName", intern != null && intern.getFullName() != null
+                    ? intern.getFullName() : "the intern");
+            vars.put("workAuthType", e.getWorkAuthType() != null
+                    ? e.getWorkAuthType() : "work authorization");
+            vars.put("expirationDate", e.getExpirationDate() != null
+                    ? e.getExpirationDate().toString() : "soon");
+            vars.put("daysUntilExpiration", e.getDaysUntilExpiration());
+            vars.put("deepLink", ERM_COMPLIANCE + "/" + e.getUserId());
+            renderAndSend("WORK_AUTH_EXPIRING_ERM", vars, erm);
+        } catch (Exception ex) {
+            log.warn("[Compliance] WorkAuthExpiring ERM-mail failed (non-fatal): {}",
+                    ex.getMessage());
         }
     }
 
