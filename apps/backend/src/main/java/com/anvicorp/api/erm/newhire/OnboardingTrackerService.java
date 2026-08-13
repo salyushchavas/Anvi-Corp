@@ -21,12 +21,14 @@ import com.anvicorp.api.repository.OfferRepository;
 import com.anvicorp.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -56,6 +58,20 @@ public class OnboardingTrackerService {
     private final EmailProvider emailProvider;
     private final JdbcTemplate jdbc;
     private final com.anvicorp.api.config.BrandConfig brand;
+    private final com.anvicorp.api.erm.CommunicationTemplateService templateService;
+
+    /** Frontend base URL used to promote relative dashboard paths into
+     *  absolute {@code {{deepLink}}} URLs for the seeded templates —
+     *  peer to the same key used by every other email listener/service. */
+    @Value("${app.frontend.base-url:https://www.anvicorp.com}")
+    private String frontendBaseUrl;
+
+    private String absoluteLink(String path) {
+        if (path == null || path.isBlank()) return "";
+        if (path.startsWith("http://") || path.startsWith("https://")) return path;
+        String base = frontendBaseUrl == null ? "" : frontendBaseUrl.replaceAll("/+$", "");
+        return base + path;
+    }
 
     // ── Read ─────────────────────────────────────────────────────────────────
 
@@ -135,11 +151,39 @@ public class OnboardingTrackerService {
             log.info("[OnboardingTracker] notify {} skipped — recipient unresolved", role);
             return;
         }
-        String title = "New intern joined — " + internName;
-        String body = internName + " has accepted their offer and onboarding "
-                + "is in progress. You'll see them in your dashboard.";
         String url = "/careers/" + (role.equals("manager") ? "manager"
                 : role.equals("evaluator") ? "evaluator" : "trainer") + "/active-interns";
+        // Slice-6c fold-in — render INTERN_ONBOARDING_ANNOUNCED for the
+        // email body; rebrand-safe fallback preserves the pre-migration
+        // subject + body if the template row is absent.
+        String fallbackTitle = "New intern joined — " + internName;
+        String fallbackBody = "Hi " + firstName(recipient) + ",\n\n"
+                + internName + " has accepted their offer with " + brand.getName() + " and "
+                + "their onboarding is in progress. They'll appear in your "
+                + "dashboard once activated.\n\nView: " + url + "\n\n" + brand.signoffErm();
+        String title = fallbackTitle;
+        String body = fallbackBody;
+        try {
+            Map<String, Object> vars = new LinkedHashMap<>();
+            vars.put("firstName", firstName(recipient));
+            vars.put("internName", internName);
+            vars.put("deepLink", absoluteLink(url));
+            var rendered = templateService
+                    .render("INTERN_ONBOARDING_ANNOUNCED", "EMAIL", vars).orElse(null);
+            if (rendered != null) {
+                title = rendered.subject() != null ? rendered.subject() : fallbackTitle;
+                body = rendered.body() != null ? rendered.body() : fallbackBody;
+            } else {
+                log.info("[OnboardingTracker] INTERN_ONBOARDING_ANNOUNCED template missing — "
+                        + "using fallback copy for {}", role);
+            }
+        } catch (Exception e) {
+            log.warn("[OnboardingTracker] {} template render failed (non-fatal): {}",
+                    role, e.getMessage());
+        }
+        // In-app dispatch — carries the rendered (or fallback) subject/body
+        // so the bell row matches the email. emailSent=true because we own
+        // the email leg below.
         try {
             userNotifications.dispatch(recipient.getId(), "INTERN_ONBOARDING_ANNOUNCED",
                     intern != null ? intern.getId() : null,
@@ -148,12 +192,7 @@ public class OnboardingTrackerService {
             log.warn("[OnboardingTracker] in-app notify {} failed: {}", role, e.getMessage());
         }
         try {
-            String plain = "Hi " + firstName(recipient) + ",\n\n"
-                    + internName + " has accepted their offer with " + brand.getName() + " and "
-                    + "their onboarding is in progress. They'll appear in your "
-                    + "dashboard once activated.\n\nView: " + url + "\n\n" + brand.signoffErm();
-            emailProvider.sendBrandedHtml(recipient.getEmail(), title, plain,
-                    "<p>" + escape(plain).replace("\n", "<br>") + "</p>");
+            emailProvider.sendRendered(recipient.getEmail(), title, body);
         } catch (Exception e) {
             log.warn("[OnboardingTracker] email notify {} failed: {}", role, e.getMessage());
         }
@@ -183,15 +222,39 @@ public class OnboardingTrackerService {
             return;
         }
         String url = "/careers/intern/offers";
-        String title = "Reminder: please sign your " + brand.getName() + " offer";
-        String plain = "Hi " + firstName(intern) + ",\n\nYour offer letter is waiting "
+        String ermName = caller != null && caller.getFullName() != null
+                && !caller.getFullName().isBlank()
+                ? caller.getFullName() : "your ERM";
+        // Slice-6c fold-in — render OFFER_SIGN_REMINDER for the email
+        // body. Rebrand-safe fallback preserves the pre-migration copy.
+        String fallbackTitle = "Reminder: please sign your " + brand.getName() + " offer";
+        String fallbackBody = "Hi " + firstName(intern) + ",\n\nYour offer letter is waiting "
                 + "for your e-signature. Sign in to view + sign: " + url
                 + "\n\nThis is a friendly reminder from your ERM ("
                 + (caller != null && caller.getFullName() != null ? caller.getFullName() : brand.getName())
                 + ").\n\n" + brand.signoff();
+        String title = fallbackTitle;
+        String body = fallbackBody;
         try {
-            emailProvider.sendBrandedHtml(intern.getEmail(), title, plain,
-                    "<p>" + escape(plain).replace("\n", "<br>") + "</p>");
+            Map<String, Object> vars = new LinkedHashMap<>();
+            vars.put("firstName", firstName(intern));
+            vars.put("ermName", ermName);
+            vars.put("deepLink", absoluteLink(url));
+            var rendered = templateService
+                    .render("OFFER_SIGN_REMINDER", "EMAIL", vars).orElse(null);
+            if (rendered != null) {
+                title = rendered.subject() != null ? rendered.subject() : fallbackTitle;
+                body = rendered.body() != null ? rendered.body() : fallbackBody;
+            } else {
+                log.info("[OnboardingTracker] OFFER_SIGN_REMINDER template missing — "
+                        + "using fallback copy");
+            }
+        } catch (Exception e) {
+            log.warn("[OnboardingTracker] OFFER_SIGN_REMINDER render failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
+        try {
+            emailProvider.sendRendered(intern.getEmail(), title, body);
         } catch (Exception e) {
             log.warn("[OnboardingTracker] signature reminder email failed: {}", e.getMessage());
         }
@@ -418,10 +481,4 @@ public class OnboardingTrackerService {
         return parts.length > 0 && !parts[0].isEmpty() ? parts[0] : "there";
     }
 
-    private static String escape(String s) {
-        if (s == null) return "";
-        return s.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;");
-    }
 }
