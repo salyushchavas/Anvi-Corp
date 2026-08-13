@@ -21,6 +21,7 @@ import com.anvicorp.api.repository.InterviewRepository;
 import com.anvicorp.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -57,6 +58,14 @@ public class InterviewEmailListener {
     private final UserNotificationDispatcher dispatcher;
     private final SchedulerMeetingEmailSender schedulerEmail;
     private final com.anvicorp.api.config.BrandConfig brand;
+
+    /** Frontend base URL used to promote the ERM {@code actionUrl} into a
+     *  fully-qualified {@code {{deepLink}}} for the manager-hire-decision
+     *  templates. Peer to the same key used by other listeners
+     *  (ComplianceLifecycleListener, DocumentEmailListener,
+     *  EvaluationNotificationFanout). */
+    @Value("${app.frontend.base-url:https://www.anvicorp.com}")
+    private String frontendBaseUrl;
 
     // ── SCHEDULED ─────────────────────────────────────────────────────────
 
@@ -272,40 +281,84 @@ public class InterviewEmailListener {
         if (erm == null) return;
         Application app = iv.getApplication();
         User applicant = applicantUser(app);
-        String name = applicant != null && applicant.getFullName() != null
+        String internName = applicant != null && applicant.getFullName() != null
                 ? applicant.getFullName() : "the candidate";
-        String title;
-        String body;
-        String actionUrl;
         String note = iv.getManagerHireDecisionNote();
-        String noteFragment = note != null && !note.isBlank()
+        String noteBlock = note != null && !note.isBlank()
                 ? " Note: " + note.trim() : "";
-        if ("APPROVED".equalsIgnoreCase(e.getDecision())) {
-            title = "Hire approved: " + name;
-            body = "A Manager approved the hire for " + name
-                    + ". The candidate is now SELECTED; once they "
-                    + "acknowledge the selection, you can send the offer.";
-            actionUrl = "/careers/erm/decision-center";
-        } else if ("HOLD".equalsIgnoreCase(e.getDecision())) {
-            // Manager parked the hire decision — ERM needs to know so they
-            // can nudge / gather info. Kept out of the applicant email
-            // path (sendDecision reads iv.decision which the hold() method
-            // deliberately leaves untouched).
-            title = "Hire on hold: " + name;
-            body = "A Manager placed the hire for " + name
-                    + " ON HOLD — no final decision yet." + noteFragment
-                    + " Check the interview and follow up as needed.";
-            actionUrl = "/careers/erm/interviews/" + iv.getId();
-        } else {
-            title = "Hire not approved: " + name;
-            body = "A Manager declined the hire for " + name
-                    + ". The application has been moved to REJECTED.";
-            actionUrl = "/careers/erm/interviews/" + iv.getId();
+        String decision = e.getDecision() != null
+                ? e.getDecision().toUpperCase() : "";
+
+        // Slice-3 fold-in — pick the template + deep-link path per decision.
+        // Recipients + in-app leg unchanged from pre-migration.
+        String templateKey;
+        String actionUrl;
+        switch (decision) {
+            case "APPROVED" -> {
+                templateKey = "MANAGER_HIRE_APPROVED";
+                actionUrl = "/careers/erm/decision-center";
+            }
+            case "HOLD" -> {
+                templateKey = "MANAGER_HIRE_HOLD";
+                actionUrl = "/careers/erm/interviews/" + iv.getId();
+            }
+            default -> {
+                templateKey = "MANAGER_HIRE_DECLINED";
+                actionUrl = "/careers/erm/interviews/" + iv.getId();
+            }
         }
+
+        Map<String, Object> vars = new LinkedHashMap<>();
+        vars.put("ermName", erm.getFullName() != null && !erm.getFullName().isBlank()
+                ? erm.getFullName() : brand.getName() + " ERM");
+        vars.put("internName", internName);
+        vars.put("noteBlock", noteBlock);
+        vars.put("deepLink", absoluteLink(actionUrl));
+
+        // Render the template; retain a rebrand-safe fallback subject/body
+        // if the template row is missing so the ERM still sees the decision.
+        String fallbackTitle = switch (decision) {
+            case "APPROVED" -> "Hire approved: " + internName;
+            case "HOLD" -> "Hire on hold: " + internName;
+            default -> "Hire not approved: " + internName;
+        };
+        String fallbackBody = switch (decision) {
+            case "APPROVED" -> "A Manager approved the hire for " + internName
+                    + ". The candidate is now SELECTED; once they acknowledge "
+                    + "the selection, you can send the offer.";
+            case "HOLD" -> "A Manager placed the hire for " + internName
+                    + " ON HOLD — no final decision yet." + noteBlock
+                    + " Check the interview and follow up as needed.";
+            default -> "A Manager declined the hire for " + internName
+                    + ". The application has been moved to REJECTED.";
+        };
+        String title = fallbackTitle;
+        String body = fallbackBody;
         try {
-            dispatcher.dispatch(erm.getId(), "MANAGER_HIRE_" + e.getDecision(),
+            var rendered = templateService.render(templateKey, "EMAIL", vars).orElse(null);
+            if (rendered != null) {
+                title = rendered.subject() != null ? rendered.subject() : fallbackTitle;
+                body = rendered.body() != null ? rendered.body() : fallbackBody;
+            } else {
+                log.info("[InterviewEmail] template {} missing — using fallback copy",
+                        templateKey);
+            }
+        } catch (Exception ex) {
+            log.warn("[InterviewEmail] {} render failed (non-fatal): {}",
+                    templateKey, ex.getMessage());
+        }
+
+        // In-app dispatch: title/body carry the rendered copy so the bell
+        // row matches the email. emailSent=true because we own the email
+        // leg below — without this, the dispatcher's auto-email hook
+        // would ALSO fire (all three MANAGER_HIRE_* strings are in
+        // EMAIL_ENABLED_EVENT_TYPES) and the ERM would receive two
+        // near-duplicate emails per hire decision.
+        try {
+            dispatcher.dispatch(erm.getId(), "MANAGER_HIRE_" + decision,
                     applicant != null ? applicant.getId() : null,
-                    cap(title, 200), cap(body, 400), actionUrl, false);
+                    cap(fallbackTitle, 200), cap(fallbackBody, 400),
+                    actionUrl, true);
         } catch (Exception ex) {
             log.debug("[InterviewEmail] ERM in-app dispatch failed: {}", ex.getMessage());
         }
@@ -317,6 +370,13 @@ public class InterviewEmailListener {
                         erm.getEmail(), ex.getMessage());
             }
         }
+    }
+
+    private String absoluteLink(String path) {
+        if (path == null || path.isBlank()) return "";
+        if (path.startsWith("http://") || path.startsWith("https://")) return path;
+        String base = frontendBaseUrl == null ? "" : frontendBaseUrl.replaceAll("/+$", "");
+        return base + path;
     }
 
     private void sendDecision(Interview iv) {
