@@ -46,17 +46,38 @@ const nextConfig = {
     // so a bucket takeover on a different account can't smuggle bytes
     // through the app's CSP allowance.
     //
-    // Overridable via NEXT_PUBLIC_S3_ORIGINS (comma-separated list of
-    // absolute origins) for staging / preview deployments that hit a
-    // different bucket.
-    const s3Origins = (process.env.NEXT_PUBLIC_S3_ORIGINS
-      ?? [
-        "https://anvi-corp-carrers.s3.amazonaws.com",
-        "https://anvi-corp-carrers.s3.us-east-1.amazonaws.com",
-      ].join(","))
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    // Phase 0 Batch 8: bucket host is env-driven via
+    // NEXT_PUBLIC_BRAND_S3_ASSET_HOST — the same env var BRAND.s3AssetHost
+    // reads from (lib/careers/brand.ts). Expected format is the BARE host
+    // `<bucket>.s3.amazonaws.com`; the regional twin is derived from it
+    // below. NEXT_PUBLIC_S3_ORIGINS remains as an override (comma-separated
+    // absolute origins) for staging/preview that fronts S3 behind a
+    // non-standard hostname or needs a different region variant.
+    //
+    // ⚠️ TYPO CAVEAT: The Anvi default keeps `anvi-corp-carrers` (typo and
+    // all) because that is the REAL production bucket name — "fixing" the
+    // typo here would break every existing signed URL Anvi has issued. A
+    // brand clone MUST override this via NEXT_PUBLIC_BRAND_S3_ASSET_HOST
+    // in its own .env with its (typo-free) bucket host.
+    const brandS3Host = process.env.NEXT_PUBLIC_BRAND_S3_ASSET_HOST
+      || "anvi-corp-carrers.s3.amazonaws.com";
+    // Derive the regional twin. If env is already regional (or otherwise
+    // non-bare) the regex misses and the twin equals the base — the Set
+    // below dedups so we don't emit a duplicate origin in that case.
+    const brandS3HostRegional = brandS3Host.replace(
+      /^([^.]+)\.s3\.amazonaws\.com$/,
+      "$1.s3.us-east-1.amazonaws.com",
+    );
+    const s3Origins = Array.from(new Set(
+      (process.env.NEXT_PUBLIC_S3_ORIGINS
+        ?? [
+          `https://${brandS3Host}`,
+          `https://${brandS3HostRegional}`,
+        ].join(","))
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ));
     // Cloudflare Turnstile — the bot-signup CAPTCHA. Needs three CSP
     // hooks working together: script-src (the api.js SDK loaded via
     // <Script src="…/turnstile/v0/api.js">), frame-src (the challenge
