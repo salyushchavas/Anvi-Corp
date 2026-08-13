@@ -100,10 +100,10 @@ export default function SiteFooter() {
               <div className="flex items-start gap-2.5">
                 <i className="icofont-phone mt-0.5 text-accent" />
                 <a
-                  href="tel:+14699454554"
+                  href={`tel:${BRAND.phone.replace(/[^\d+]/g, "")}`}
                   className="text-sm text-skyzen-muted transition hover:text-accent"
                 >
-                  +1 469-945-4554
+                  {BRAND.phone}
                 </a>
               </div>
               <div className="flex items-start gap-2.5">
@@ -118,9 +118,9 @@ export default function SiteFooter() {
               <div className="flex items-start gap-2.5">
                 <i className="icofont-location-pin mt-0.5 text-accent" />
                 <span className="text-sm text-skyzen-muted">
-                  7950 Legacy Dr, Suite 400,
+                  {BRAND.addressLine1}, {BRAND.addressLine2},
                   <br />
-                  Plano, TX 75024
+                  {BRAND.city}, {BRAND.state} {BRAND.postalCode}
                 </span>
               </div>
             </div>

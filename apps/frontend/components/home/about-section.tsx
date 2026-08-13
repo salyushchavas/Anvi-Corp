@@ -1,5 +1,6 @@
 import Image from "next/image";
 import { CheckList } from "@/components/check-list";
+import { BRAND } from "@/lib/careers/brand";
 
 export function AboutSection() {
   return (
@@ -9,7 +10,7 @@ export function AboutSection() {
           <div className="rounded-3xl overflow-hidden shadow-card">
             <Image
               src="/about-1.jpg"
-              alt="Anvi Corp team at work"
+              alt={`${BRAND.name} team at work`}
               width={800}
               height={600}
               className="h-full w-full object-cover"
@@ -33,7 +34,7 @@ export function AboutSection() {
           </span>
           <h2 className="mb-5">We prioritize <span className="text-brand">attention to detail</span> in every project we undertake.</h2>
           <p className="text-ink-400 mb-8 leading-relaxed">
-            At Anvi Corp, we&apos;re laser-focused on delivering meticulous, detail-oriented solutions. We dive deep, leaving no pixel unscrutinized, to make sure we deliver solutions that are polished to perfection.
+            At {BRAND.name}, we&apos;re laser-focused on delivering meticulous, detail-oriented solutions. We dive deep, leaving no pixel unscrutinized, to make sure we deliver solutions that are polished to perfection.
           </p>
           <CheckList
             items={[

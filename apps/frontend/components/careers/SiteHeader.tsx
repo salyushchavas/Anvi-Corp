@@ -46,11 +46,11 @@ export default function SiteHeader() {
               {BRAND.supportEmail}
             </a>
             <a
-              href="tel:+14699454554"
+              href={`tel:${BRAND.phone.replace(/[^\d+]/g, "")}`}
               className="inline-flex items-center text-skyzen-muted transition hover:text-accent"
             >
               <i className="icofont-phone mr-1.5 text-accent" />
-              +1 469-945-4554
+              {BRAND.phone}
             </a>
           </div>
           {/* Social icons intentionally omitted — no real Anvi social URLs in _legacy/

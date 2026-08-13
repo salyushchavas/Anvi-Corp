@@ -2,10 +2,17 @@ import type { Metadata } from "next";
 import { Mail, MapPin, Phone } from "lucide-react";
 import { InnerBanner } from "@/components/inner-banner";
 import { ContactForm } from "@/components/contact-form";
+import { BRAND } from "@/lib/careers/brand";
+
+// Phase-0 batch 3 — contact info flows from BRAND.*. Composed values
+// byte-identical to pre-migration for Anvi.
+const streetLine = `${BRAND.addressLine1}, ${BRAND.addressLine2}`;
+const cityLine = `${BRAND.city}, ${BRAND.state} ${BRAND.postalCode}`;
+const telHref = `tel:${BRAND.phone.replace(/[^\d+]/g, "")}`;
 
 export const metadata: Metadata = {
   title: "Contact",
-  description: "Get in touch with Anvi Corp USA — Plano, TX. We typically reply within one business day.",
+  description: `Get in touch with ${BRAND.legalName} — ${BRAND.city}, ${BRAND.state}. We typically reply within one business day.`,
 };
 
 export default function ContactPage() {
@@ -24,17 +31,17 @@ export default function ContactPage() {
             <ContactItem
               icon={<MapPin className="h-5 w-5" />}
               title="Office"
-              body={<>7950 Legacy Dr, Suite 400<br/>Plano, TX 75024</>}
+              body={<>{streetLine}<br/>{cityLine}</>}
             />
             <ContactItem
               icon={<Phone className="h-5 w-5" />}
               title="Phone"
-              body={<a href="tel:+14699454554" className="hover:text-brand">+1 469-945-4554</a>}
+              body={<a href={telHref} className="hover:text-brand">{BRAND.phone}</a>}
             />
             <ContactItem
               icon={<Mail className="h-5 w-5" />}
               title="Email"
-              body={<a href="mailto:info@anvicorp.com" className="hover:text-brand">info@anvicorp.com</a>}
+              body={<a href={`mailto:${BRAND.contactEmail}`} className="hover:text-brand">{BRAND.contactEmail}</a>}
             />
           </div>
 

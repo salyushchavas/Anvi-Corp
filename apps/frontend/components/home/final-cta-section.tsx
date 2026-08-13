@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { BRAND } from "@/lib/careers/brand";
 
 export function FinalCtaSection() {
   return (
@@ -9,7 +10,7 @@ export function FinalCtaSection() {
         <div className="grid gap-8 lg:grid-cols-3 lg:items-center">
           <div className="lg:col-span-2 max-w-3xl">
             <h2 className="text-white">
-              Experience the <span className="text-brand-300">advantage</span> of partnering with Anvi Corp USA for all your IT needs.
+              Experience the <span className="text-brand-300">advantage</span> of partnering with {BRAND.legalName} for all your IT needs.
             </h2>
           </div>
           <div className="lg:text-right">
