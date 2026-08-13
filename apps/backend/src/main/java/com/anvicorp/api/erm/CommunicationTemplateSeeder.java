@@ -855,7 +855,72 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "application has been moved to REJECTED.\n\n"
                             + "Open the interview:\n{{deepLink}}\n\n"
                             + "— Anvi Corp ERM",
-                    "ermName,internName,deepLink")
+                    "ermName,internName,deepLink"),
+            // ── Slice-5 profile + I-983 self-eval fold-ins.
+            // PROFILE_SUBMITTED — ERM-facing one-shot alert when an intern
+            // first meets the stricter completeness bar (base + address +
+            // education + expected work-auth track). One row per active ERM.
+            // The blank {{aptLine}} / {{workAuthBlock}} placeholders are
+            // supplied by the caller as empty strings when the intern
+            // didn't provide those optional pieces — the template renders
+            // cleanly (no orphan labels) either way.
+            new Seed(
+                    "PROFILE_SUBMITTED", "EMAIL",
+                    "Profile submitted: {{internName}}",
+                    "Hello {{ermName}},\n\n"
+                            + "A new intern profile has been submitted.\n\n"
+                            + "  · Name: {{internName}}\n"
+                            + "  · Email: {{internEmail}}\n"
+                            + "  · Contact: {{internPhone}}\n"
+                            + "  · Work authorization: {{workAuth}}\n"
+                            + "  · Skillset: {{skillset}}\n"
+                            + "  · Full address: {{fullAddress}}\n"
+                            + "  · Submitted: {{submittedAtLocal}}\n\n"
+                            + "Open the ERM applications dashboard to review:\n"
+                            + "{{deepLink}}\n\n— Anvi Corp ERM",
+                    "ermName,internName,internEmail,internPhone,workAuth,"
+                            + "skillset,fullAddress,submittedAtLocal,deepLink"),
+            // PROFILE_EDITED — ERM-facing throttled alert (max 1/15min) when
+            // an intern edits a monitored field after submission. Same
+            // recipient shape as PROFILE_SUBMITTED. {{changedField}} names
+            // the area that triggered the notify.
+            new Seed(
+                    "PROFILE_EDITED", "EMAIL",
+                    "Profile updated: {{internName}}",
+                    "Hello {{ermName}},\n\n"
+                            + "An intern updated their profile after submission.\n\n"
+                            + "  · Name: {{internName}}\n"
+                            + "  · Email: {{internEmail}}\n"
+                            + "  · Contact: {{internPhone}}\n"
+                            + "  · Changed area: {{changedField}}\n"
+                            + "  · Skillset: {{skillset}}\n"
+                            + "  · Full address: {{fullAddress}}\n"
+                            + "  · Work authorization: {{workAuth}}\n\n"
+                            + "Open the ERM applications dashboard to review:\n"
+                            + "{{deepLink}}\n\n"
+                            + "(Note: further edits by this intern in the next 15 "
+                            + "minutes will not trigger additional notifications.)\n\n"
+                            + "— Anvi Corp ERM",
+                    "ermName,internName,internEmail,internPhone,changedField,"
+                            + "skillset,fullAddress,workAuth,deepLink"),
+            // I983_SELF_EVAL_DUE — intern-facing STEM-OPT compliance nudge
+            // when the intern's self-review section on an I-983 evaluation
+            // is awaiting completion. Distinct from I983_EVALUATION_DUE
+            // (evaluator-facing) and I983_EVALUATION_SCHEDULED (intern-
+            // facing scheduling notice). {{evaluationType}} inlines the
+            // 12-month / 24-month label; deep link goes to the intern's
+            // evaluations dashboard.
+            new Seed(
+                    "I983_SELF_EVAL_DUE", "EMAIL",
+                    "Your {{evaluationType}} self-evaluation is awaiting your reflection",
+                    "Hello {{firstName}},\n\n"
+                            + "Your {{evaluationType}} I-983 self-evaluation is awaiting "
+                            + "your reflection. Add your ratings and reflection notes "
+                            + "before your supervisor finalizes their side — the two "
+                            + "halves sign the same federal STEM-OPT record.\n\n"
+                            + "Open your evaluations dashboard:\n{{deepLink}}\n\n"
+                            + "— Anvi Corp",
+                    "firstName,evaluationType,deepLink")
     );
 
     @Override
