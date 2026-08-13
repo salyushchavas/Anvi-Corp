@@ -1,5 +1,6 @@
 package com.anvicorp.api.notification;
 
+import com.anvicorp.api.erm.CommunicationTemplateService;
 import com.anvicorp.api.integration.meeting.MeetingProvider;
 import com.anvicorp.api.integration.meeting.MeetingResponse;
 import lombok.RequiredArgsConstructor;
@@ -9,6 +10,8 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Sends the scheduler-side "you scheduled this meeting" email. Unlike the
@@ -41,6 +44,11 @@ public class SchedulerMeetingEmailSender {
     private final MeetingProvider meetingProvider;
     private final EmailProvider emailProvider;
     private final com.anvicorp.api.config.BrandConfig brand;
+    // Email-slice-2 — the plain body used to be built inline via
+    // StringBuilder; now it renders from the MEETING_INVITE_HOST template
+    // seeded at boot (CommunicationTemplateSeeder), keeping brand/signoff
+    // strings out of code and letting ERM edit the copy without a deploy.
+    private final CommunicationTemplateService templateService;
 
     /**
      * Send the scheduler email. Safe to call even when fields are null/blank
@@ -93,31 +101,71 @@ public class SchedulerMeetingEmailSender {
                 ? "there" : recipientName;
         String title = meetingTitle == null || meetingTitle.isBlank()
                 ? "Meeting" : meetingTitle;
-        String subject = subjectPrefix + " — " + title;
-        StringBuilder plain = new StringBuilder();
-        plain.append("Hi ").append(name).append(",\n\n")
-                .append("You scheduled \"").append(title).append("\"");
-        if (participantLabel != null && !participantLabel.isBlank()) {
-            plain.append(" ").append(participantLabel);
+
+        // Email-slice-2 — render the MEETING_INVITE_HOST template. The
+        // per-recipient text that used to live in a StringBuilder now
+        // resolves via {{placeholders}}; the dynamic "start URL vs
+        // dashboard-fallback" block is composed in Java (its shape
+        // depends on runtime state, not on ERM copy) and passed in as
+        // {{hostAccessBlock}} — keeping the template author out of the
+        // start-URL-expiry-caveat wording while still routing the whole
+        // body through the templated pipeline. brandName + signoffBlock
+        // are auto-injected by CommunicationTemplateService.render so
+        // the seeded copy stays rebrand-safe.
+        String participantLine = participantLabel != null && !participantLabel.isBlank()
+                ? " " + participantLabel : "";
+        String hostAccessBlock = startUrl != null && !startUrl.isBlank()
+                ? "Start as host (one click, no Zoom sign-in needed): " + startUrl + "\n"
+                        + "Note: this start link expires roughly 2 hours after the "
+                        + "meeting was created. If it doesn't work, open the meeting "
+                        + "in the {{brandName}} dashboard for a fresh link."
+                : "Open the meeting in the {{brandName}} dashboard for your host start link.";
+
+        Map<String, Object> vars = new LinkedHashMap<>();
+        vars.put("subjectPrefix", subjectPrefix == null ? "Meeting scheduled" : subjectPrefix);
+        vars.put("meetingTitle", title);
+        vars.put("recipientName", name);
+        vars.put("participantLine", participantLine);
+        vars.put("scheduledForLocal", when);
+        vars.put("timezone", zone.getId());
+        vars.put("hostAccessBlock", hostAccessBlock);
+
+        String subject;
+        String plain;
+        try {
+            var rendered = templateService.render("MEETING_INVITE_HOST", "EMAIL", vars)
+                    .orElse(null);
+            if (rendered == null) {
+                // Template absent at boot (seeder disabled / DB pristine).
+                // Skip send rather than fall back to inline copy so the
+                // rebrand-safe contract holds — a MEETING_INVITE_HOST
+                // rebrand deploy without the seeded row would otherwise
+                // silently leak the old wording. In-app fanout (elsewhere)
+                // keeps the participant informed.
+                log.warn("[SchedulerMeetingEmail] MEETING_INVITE_HOST template missing — "
+                        + "skipping host email to {}", recipientEmail);
+                return;
+            }
+            subject = rendered.subject() != null && !rendered.subject().isBlank()
+                    ? rendered.subject() : (subjectPrefix + " — " + title);
+            plain = rendered.body();
+            // Second-pass substitution for {{brandName}} tokens that were
+            // baked into the hostAccessBlock value (the template renderer
+            // resolves placeholders inside the TEMPLATE body, not inside
+            // caller-supplied variable values — one-pass by design).
+            plain = plain.replace("{{brandName}}", brand.getName());
+        } catch (Exception e) {
+            log.warn("[SchedulerMeetingEmail] template render failed for {} (non-fatal): {}",
+                    recipientEmail, e.getMessage());
+            return;
         }
-        plain.append(" for ").append(when).append(" (").append(zone.getId()).append(").\n\n");
-        if (startUrl != null && !startUrl.isBlank()) {
-            plain.append("Start as host (one click, no Zoom sign-in needed): ")
-                    .append(startUrl).append("\n")
-                    .append("Note: this start link expires roughly 2 hours after the meeting was created. ")
-                    .append("If it doesn't work, open the meeting in the ").append(brand.getName()).append(" dashboard for a fresh link.\n\n");
-        } else {
-            plain.append("Open the meeting in the ").append(brand.getName()).append(" dashboard for your host start link.\n\n");
-        }
-        plain.append(brand.signoff());
         // Scheduler email is host-only — the attendee join link is sent
         // separately to the participant via their own notification flow,
         // and is NEVER included here. The HTML builder receives a null
         // joinUrl so the "Join Meeting" button is skipped.
-        String html = MeetingEmailHtmlBuilder.buildWithHostStart(
-                plain.toString(), null, startUrl);
+        String html = MeetingEmailHtmlBuilder.buildWithHostStart(plain, null, startUrl);
         try {
-            emailProvider.sendBrandedHtml(recipientEmail, subject, plain.toString(), html);
+            emailProvider.sendBrandedHtml(recipientEmail, subject, plain, html);
         } catch (Exception e) {
             log.warn("[SchedulerMeetingEmail] send to {} failed (non-fatal): {}",
                     recipientEmail, e.getMessage());
