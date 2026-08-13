@@ -29,7 +29,7 @@ export default function GlobalError({
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
-      <header className="bg-skyzen-dark py-4 text-white">
+      <header className="bg-chrome-dark py-4 text-white">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-6">
           <Link href="/" className="flex items-center gap-2.5">
             <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-md bg-white/10 p-1">
@@ -40,12 +40,11 @@ export default function GlobalError({
               />
             </span>
             <span className="flex flex-col leading-tight">
-              <span className="text-[17px] font-extrabold uppercase tracking-wide">
-                <span className="text-white">SKY</span>
-                <span className="text-accent">ZEN</span>
+              <span className="text-[17px] font-extrabold uppercase tracking-wide text-white">
+                {BRAND.name}
               </span>
               <span className="text-[10px] uppercase tracking-[0.15em] text-white/50">
-                Technologies LLC
+                {BRAND.legalName}
               </span>
             </span>
           </Link>

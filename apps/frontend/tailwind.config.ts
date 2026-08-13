@@ -9,8 +9,8 @@ import type { Config } from "tailwindcss";
 // env var goes missing. Anvi's .env.local sets NEXT_PUBLIC_BRAND_PRIMARY
 // explicitly (quoted, because Next's dotenv parses bare `#value` as an
 // empty-string comment), so the derived ramp is what actually renders.
-// This fallback exists only to prevent Skyzen orange from re-appearing
-// if the env var ever gets unset or mis-quoted again.
+// This fallback exists only to prevent a wrong-brand color from
+// re-appearing if the env var ever gets unset or mis-quoted again.
 const DEFAULT_BRAND_RAMP: Record<number, string> = {
   50:  "#EFF7FD",
   100: "#D8ECFA",
@@ -74,8 +74,8 @@ const BRAND_RAMP    = BRAND_PRIMARY_ENV ? deriveRamp(BRAND_PRIMARY_ENV) : DEFAUL
 const RING_DEFAULT  = BRAND_PRIMARY_ENV ?? "#2A8CDB";
 
 // Accent — env-derivable. Anvi's .env.local sets NEXT_PUBLIC_BRAND_ACCENT="#3C72FC".
-// Fallback constants below are Anvi values (not Skyzen orange) so a missing
-// env var never causes an orange render.
+// Fallback constants below are Anvi values so a missing env var never
+// causes a wrong-brand color to render.
 const ANVI_ACCENT_RGB: [number, number, number] = [60, 114, 252]; // #3C72FC
 const ACCENT_DEFAULT = BRAND_ACCENT_ENV ?? "#3C72FC";
 const ACCENT_DARK    = BRAND_ACCENT_ENV
@@ -113,7 +113,9 @@ const config: Config = {
       colors: {
         // ── Brand (env-derived) — replaces marketing's hardcoded ramp.
         // With NEXT_PUBLIC_BRAND_PRIMARY=#2A8CDB set in apps/frontend/.env.local
-        // the derived ramp is Anvi blue; unset would fall back to Skyzen orange.
+        // the derived ramp is Anvi blue; unset falls back to
+        // DEFAULT_BRAND_RAMP (also Anvi blue — no wrong-brand
+        // color can render).
         // DEFAULT alias to brand-500 so `bg-brand`/`text-brand` (marketing utilities) resolve.
         brand: {
           DEFAULT: BRAND_RAMP[500],
@@ -148,10 +150,12 @@ const config: Config = {
           900: "#020B18",
         },
 
-        // ── skyzen.* — dark navy palette used by careers marketing chrome
-        // (SiteHeader/SiteFooter). Kept for those surfaces; safe to rename
-        // to `chrome:` in a later cleanup pass.
-        skyzen: {
+        // ── chrome.* — dark navy palette used by careers marketing chrome
+        // (SiteHeader/SiteFooter). Phase-0 batch 6 introduced this token
+        // under the brand-neutral `chrome` name — brand-isolation +
+        // cloning nicety. Hex values are the current Anvi navy shade:
+        // the rendered chrome color is unchanged by the rename.
+        chrome: {
           dark:   "#080d1a",
           dark2:  "#0c1221",
           dark3:  "#111827",

@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Users,
 } from 'lucide-react';
+import { BRAND } from '@/lib/careers/brand';
 
 type QuickStart = {
   icon: React.ReactNode;
@@ -170,11 +171,11 @@ export default function TrainerHelpPage() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <ContactCard
             role="ERM (Engagement & Relationship Manager)"
-            email="erm@skyzen.test"
+            email={`erm@${BRAND.emailDomain}`}
             blurb="Escalations, intern lifecycle changes, document chasing." />
           <ContactCard
             role="Reporting Manager"
-            email="manager@skyzen.test"
+            email={`manager@${BRAND.emailDomain}`}
             blurb="Resource conflicts, scope changes, off-boarding." />
         </div>
       </section>

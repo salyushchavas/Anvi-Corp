@@ -1,4 +1,4 @@
-// Mirrors com.skyzen.careers.manager.hire.ManagerHireApprovalDtos.
+// Mirrors com.anvicorp.api.manager.hire.ManagerHireApprovalDtos.
 // Single source of truth for the Hire Approvals queue + detail.
 
 export type HireApprovalRow = {

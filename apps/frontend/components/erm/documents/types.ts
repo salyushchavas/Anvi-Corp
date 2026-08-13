@@ -1,8 +1,8 @@
 // ERM Phase 8.2 → 8.9 — mirrors of com.anvicorp.api.erm.documents.DocumentDtos.
-// documentKey was widened from the SkyzenDocument enum to a free-form
+// documentKey was widened from the OnboardingDocument enum to a free-form
 // String so admin-added custom templates (keys outside the enum) are
 // assignable end-to-end. The 13 enum-seeded docs still live in
-// `lib/skyzen-documents.ts` for the static-fallback preview URL.
+// `lib/careers/onboarding-documents.ts` for the static-fallback preview URL.
 
 export type PacketStatus =
   | 'DRAFT'

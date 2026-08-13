@@ -1,6 +1,7 @@
-// Mail-module auth storage. SEPARATE from Skyzen's lib/auth-storage.ts — distinct
-// localStorage keys (mail.* vs skyzen.*) so the two sessions never collide. The
-// mail client reads/writes ONLY these keys and never touches skyzen.*.
+// Mail-module auth storage. SEPARATE from the careers lib/auth-storage.ts —
+// distinct localStorage keys (mail.* vs careers.*) so the two sessions never
+// collide. The mail client reads/writes ONLY these keys and never touches
+// careers.*.
 
 /** The mail identity persisted client-side (assembled from the S1 API responses). */
 export interface MailAccount {

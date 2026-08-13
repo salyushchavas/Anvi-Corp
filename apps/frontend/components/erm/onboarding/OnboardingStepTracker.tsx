@@ -8,7 +8,7 @@
  * disabled state for LOCKED (opacity-50 + cursor-not-allowed +
  * aria-disabled), animated-pulse skeleton for loading >300ms, focus
  * rings preserved, ≥44px touch targets, no emoji icons (lucide-react
- * throughout). Palette is the existing Skyzen brand-700/accent-orange
+ * throughout). Palette is the existing brand-700/accent
  * theme — only the structural patterns came from the skill.
  *
  * The component is server-state-driven: it never decides which step is

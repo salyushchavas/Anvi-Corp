@@ -1,5 +1,5 @@
 /**
- * Tiny cross-tab session bus over BroadcastChannel('skyzen.session').
+ * Tiny cross-tab session bus over BroadcastChannel('careers.session').
  * Used by the idle-timeout provider and SignOutButton so siblings tabs
  * stay in lock-step:
  *  - 'activity' from any tab resets every sibling's idle countdown
@@ -13,7 +13,7 @@ export type SessionEvent =
   | { type: 'activity'; ts: number }
   | { type: 'logout'; reason?: 'idle' };
 
-const CHANNEL_NAME = 'skyzen.session';
+const CHANNEL_NAME = 'careers.session';
 let channel: BroadcastChannel | null = null;
 
 function getChannel(): BroadcastChannel | null {

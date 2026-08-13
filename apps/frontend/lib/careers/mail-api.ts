@@ -1,8 +1,8 @@
 // Independent axios client for the mail module. Mirrors lib/api.ts's pattern
 // (single-flight 401 refresh) but is a SEPARATE instance: it attaches the mail
 // Bearer (mail.token), refreshes via /api/mail/auth/refresh, and on failure
-// redirects to /mail/login. It does NOT import or share Skyzen's `api` instance,
-// so the two interceptor chains never interfere.
+// redirects to /mail/login. It does NOT import or share the careers `api`
+// instance, so the two interceptor chains never interfere.
 
 import axios, {
   AxiosError,
@@ -17,8 +17,8 @@ import {
   setMailToken,
 } from './mail-auth-storage';
 
-// Same env var Skyzen uses — the mail UI is same-origin with careers, so this
-// already points at the backend. No new env var needed.
+// Same env var the careers app uses — the mail UI is same-origin with careers,
+// so this already points at the backend. No new env var needed.
 const baseURL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 
 export const mailApiBaseURL = baseURL;

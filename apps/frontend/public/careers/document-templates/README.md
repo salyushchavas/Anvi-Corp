@@ -1,4 +1,4 @@
-# Skyzen Document Templates — static PDF library
+# Onboarding Document Templates — static PDF library
 
 ERM Phase 8.2 replaces the dynamic `DocumentTemplate` entity with a static
 list of 13 blank PDFs served by Next.js from this folder. The canonical
@@ -6,8 +6,8 @@ list — including the URL slugs used here and the sensitivity tag each
 filled-in PDF inherits when uploaded — lives in two places that must
 stay in sync:
 
-- Backend: `backend/.../erm/documents/SkyzenDocument.java`
-- Frontend: `frontend/lib/skyzen-documents.ts`
+- Backend: `backend/.../erm/documents/OnboardingDocument.java`
+- Frontend: `frontend/lib/onboarding-documents.ts`
 
 When you add or rename a template you must update **both** files **and**
 this README's filename list below.
@@ -19,7 +19,7 @@ assign that document. Missing files don't break the build, but interns
 clicking "Download" will get a 404. There is no fallback.
 
 Filenames are case-sensitive on Linux (Vercel). Spaces and special
-characters are URL-encoded by `SkyzenDocument.publicUrl()` (backend)
+characters are URL-encoded by `OnboardingDocument.publicUrl()` (backend)
 and `publicUrlFor()` (frontend mirror) — keep the on-disk names below
 in lock-step with the `filename` field in both files.
 
@@ -53,6 +53,6 @@ in lock-step with the `filename` field in both files.
 ## Updating a template
 
 1. Drop the new PDF in this folder using the exact filename above.
-2. If the title or sensitivity changed, update `SkyzenDocument.java` +
-   `skyzen-documents.ts` + the table above.
+2. If the title or sensitivity changed, update `OnboardingDocument.java` +
+   `onboarding-documents.ts` + the table above.
 3. Commit. Vercel redeploys and the new file is live on next request.
