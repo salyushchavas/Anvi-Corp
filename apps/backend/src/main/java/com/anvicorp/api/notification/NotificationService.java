@@ -1025,8 +1025,27 @@ public class NotificationService {
         if (alreadySent(NotificationEventType.I983_SELF_EVAL_DUE, targetId)) return;
 
         String type = evaluation.getType() != null ? evaluation.getType().name() : null;
+        // Slice-5 fold-in — template-first via I983_SELF_EVAL_DUE. Same
+        // shape as sendApplicationReceived above: render the template if
+        // present, fall back to the pre-migration typed hardcoded method
+        // if the row is absent (fresh DB pre-seed or a manually-deleted
+        // row).
+        String friendlyType = type != null ? type.replace('_', ' ') : "I-983";
         deliver(NotificationEventType.I983_SELF_EVAL_DUE, targetId, email,
-                () -> emailProvider.sendI983SelfEvalDue(email, name, type, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("evaluationType", friendlyType);
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "I983_SELF_EVAL_DUE", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendI983SelfEvalDue(email, name, type, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(intern),
                 NotificationEventType.I983_SELF_EVAL_DUE,

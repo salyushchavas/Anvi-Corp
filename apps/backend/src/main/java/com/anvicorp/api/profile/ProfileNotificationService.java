@@ -4,6 +4,7 @@ import com.anvicorp.api.entity.Candidate;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.entity.WorkAuthorizationRecord;
 import com.anvicorp.api.enums.UserRole;
+import com.anvicorp.api.erm.CommunicationTemplateService;
 import com.anvicorp.api.notification.EmailProvider;
 import com.anvicorp.api.notification.NotificationSenderContext;
 import com.anvicorp.api.notification.NotificationSenderRoles;
@@ -14,13 +15,16 @@ import com.anvicorp.api.repository.UserRepository;
 import com.anvicorp.api.repository.WorkAuthorizationRecordRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * B2 profile expansion — ERM notification helpers for the intern profile
@@ -69,6 +73,18 @@ public class ProfileNotificationService {
     private final WorkAuthorizationRecordRepository workAuthRepository;
     private final EmailProvider emailProvider;
     private final UserNotificationDispatcher userNotificationDispatcher;
+    private final CommunicationTemplateService templateService;
+    private final com.anvicorp.api.config.BrandConfig brand;
+
+    /** Frontend base URL used to promote the ERM deep link into a
+     *  clickable absolute URL for the rendered PROFILE_SUBMITTED /
+     *  PROFILE_EDITED templates. Peer to the same key used across other
+     *  listeners (ComplianceLifecycleListener, DocumentEmailListener,
+     *  EvaluationNotificationFanout, InterviewEmailListener). */
+    @Value("${app.frontend.base-url:https://www.anvicorp.com}")
+    private String frontendBaseUrl;
+
+    private static final String ERM_APPLICATIONS_PATH = "/careers/erm/applications";
 
     // ── Public API ────────────────────────────────────────────────────────
 
@@ -129,11 +145,17 @@ public class ProfileNotificationService {
                     user.getEmail());
             return;
         }
-        String subject = "Profile submitted: " + user.getFullName();
-        String body = buildSubmissionBody(user, c);
+        // Slice-5 fold-in — template-first via PROFILE_SUBMITTED. The
+        // rebrand-safe fallback shape below matches the pre-migration
+        // subject/body so a fresh deploy or a manually-deleted template
+        // row still notifies with the same content.
+        String fallbackSubject = "Profile submitted: " + user.getFullName();
+        String fallbackBody = buildSubmissionBody(user, c);
         for (User erm : recipients) {
-            sendEmailAndInApp(erm, subject, body, user.getId(),
-                    "PROFILE_SUBMITTED", "/careers/erm/applications");
+            Map<String, Object> vars = submissionVars(erm, user, c);
+            sendEmailAndInApp(erm, "PROFILE_SUBMITTED", vars,
+                    fallbackSubject, fallbackBody,
+                    user.getId(), "PROFILE_SUBMITTED", ERM_APPLICATIONS_PATH);
         }
         log.info("[ProfileNotify] submission-ack fired for intern={} to {} ERM(s)",
                 user.getEmail(), recipients.size());
@@ -162,11 +184,17 @@ public class ProfileNotificationService {
 
         List<User> recipients = activeErms();
         if (recipients.isEmpty()) return;
-        String subject = "Profile updated: " + user.getFullName();
-        String body = buildEditBody(user, c, changedField);
+        // Slice-5 fold-in — template-first via PROFILE_EDITED. Rebrand-
+        // safe fallback preserves the pre-migration subject/body so the
+        // ERM still gets an actionable alert if the template row is
+        // absent.
+        String fallbackSubject = "Profile updated: " + user.getFullName();
+        String fallbackBody = buildEditBody(user, c, changedField);
         for (User erm : recipients) {
-            sendEmailAndInApp(erm, subject, body, user.getId(),
-                    "PROFILE_EDITED", "/careers/erm/applications");
+            Map<String, Object> vars = editVars(erm, user, c, changedField);
+            sendEmailAndInApp(erm, "PROFILE_EDITED", vars,
+                    fallbackSubject, fallbackBody,
+                    user.getId(), "PROFILE_EDITED", ERM_APPLICATIONS_PATH);
         }
         log.info("[ProfileNotify] edit-notify fired for intern={} field={} to {} ERM(s)",
                 user.getEmail(), changedField, recipients.size());
@@ -185,9 +213,42 @@ public class ProfileNotificationService {
                 .toList();
     }
 
-    private void sendEmailAndInApp(User recipient, String subject, String body,
+    /**
+     * Slice-5 template-first send. Renders {@code templateKey} against
+     * {@code vars} and hands the rendered subject/body to
+     * {@link EmailProvider#sendRendered}. When the template is absent,
+     * falls back to the caller-supplied {@code fallbackSubject} /
+     * {@code fallbackBody} — the pre-migration inline copy — so a fresh
+     * deploy or a manually-deleted row still gets a real alert.
+     *
+     * <p>The in-app dispatch always uses the rendered (or fallback)
+     * subject/body so the bell row matches whatever the ERM's email
+     * actually said. {@code emailSent=true} whenever the email leg
+     * succeeded — suppresses the dispatcher's own email hook so we
+     * don't double-send if PROFILE_SUBMITTED / PROFILE_EDITED are ever
+     * added to {@code EMAIL_ENABLED_EVENT_TYPES}.</p>
+     */
+    private void sendEmailAndInApp(User recipient, String templateKey,
+                                   Map<String, Object> vars,
+                                   String fallbackSubject, String fallbackBody,
                                    java.util.UUID subjectUserId, String eventType,
                                    String actionUrl) {
+        String subject = fallbackSubject;
+        String body = fallbackBody;
+        try {
+            var rendered = templateService.render(templateKey, "EMAIL", vars)
+                    .orElse(null);
+            if (rendered != null) {
+                subject = rendered.subject() != null ? rendered.subject() : fallbackSubject;
+                body = rendered.body() != null ? rendered.body() : fallbackBody;
+            } else {
+                log.info("[ProfileNotify] template {} missing — using fallback copy",
+                        templateKey);
+            }
+        } catch (Exception e) {
+            log.warn("[ProfileNotify] {} render failed (non-fatal): {}",
+                    templateKey, e.getMessage());
+        }
         // Stamp ERM sender role so BridgingEmailProvider routes internal
         // when the recipient is on an activated company mailbox.
         NotificationSenderContext.set(NotificationSenderRoles.ERM);
@@ -202,9 +263,10 @@ public class ProfileNotificationService {
             NotificationSenderContext.clear();
         }
         // In-app row — even if email failed, the ERM still sees it in the
-        // bell + Messages page. emailSent=true suppresses the dispatcher's
-        // own email hook so we don't double-send when the event ever gets
-        // added to that allow-list.
+        // bell + Messages page. emailSent=emailed suppresses the
+        // dispatcher's own email hook when the mail went out here, so
+        // we don't double-send should the event ever get added to
+        // EMAIL_ENABLED_EVENT_TYPES.
         try {
             userNotificationDispatcher.dispatch(
                     recipient.getId(), eventType, subjectUserId,
@@ -213,6 +275,55 @@ public class ProfileNotificationService {
             log.warn("[ProfileNotify] in-app dispatch to {} failed (non-fatal): {}",
                     recipient.getId(), e.getMessage());
         }
+    }
+
+    /**
+     * Build the var map for the PROFILE_SUBMITTED template. Field order
+     * matches the seeded template so the render is grep-obviously
+     * correct.
+     */
+    private Map<String, Object> submissionVars(User erm, User intern, Candidate c) {
+        Map<String, Object> vars = new LinkedHashMap<>();
+        vars.put("ermName", erm.getFullName() != null && !erm.getFullName().isBlank()
+                ? erm.getFullName() : brand.getName() + " ERM");
+        vars.put("internName", nullSafe(intern.getFullName()));
+        vars.put("internEmail", nullSafe(intern.getEmail()));
+        vars.put("internPhone", nullSafe(intern.getPhoneNumber()));
+        vars.put("workAuth", describeWorkAuth(intern, c));
+        vars.put("skillset", nullSafe(c.getSkillset()));
+        vars.put("fullAddress", formatAddress(c));
+        vars.put("submittedAtLocal", c.getProfileSubmittedAt() != null
+                ? DateTimeFormatter.ISO_INSTANT.format(c.getProfileSubmittedAt())
+                : "—");
+        vars.put("deepLink", absoluteLink(ERM_APPLICATIONS_PATH));
+        return vars;
+    }
+
+    /**
+     * Build the var map for the PROFILE_EDITED template.
+     */
+    private Map<String, Object> editVars(User erm, User intern, Candidate c,
+                                          String changedField) {
+        Map<String, Object> vars = new LinkedHashMap<>();
+        vars.put("ermName", erm.getFullName() != null && !erm.getFullName().isBlank()
+                ? erm.getFullName() : brand.getName() + " ERM");
+        vars.put("internName", nullSafe(intern.getFullName()));
+        vars.put("internEmail", nullSafe(intern.getEmail()));
+        vars.put("internPhone", nullSafe(intern.getPhoneNumber()));
+        vars.put("changedField", changedField != null && !changedField.isBlank()
+                ? changedField : "profile field");
+        vars.put("skillset", nullSafe(c.getSkillset()));
+        vars.put("fullAddress", formatAddress(c));
+        vars.put("workAuth", describeWorkAuth(intern, c));
+        vars.put("deepLink", absoluteLink(ERM_APPLICATIONS_PATH));
+        return vars;
+    }
+
+    private String absoluteLink(String path) {
+        if (path == null || path.isBlank()) return "";
+        if (path.startsWith("http://") || path.startsWith("https://")) return path;
+        String base = frontendBaseUrl == null ? "" : frontendBaseUrl.replaceAll("/+$", "");
+        return base + path;
     }
 
     /**
