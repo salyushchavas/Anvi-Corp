@@ -190,3 +190,18 @@ function mix(from: [number, number, number], to: [number, number, number], t: nu
   ];
   return '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('');
 }
+
+/**
+ * All-caps marketing shorthand for the brand name. Used by the four
+ * services marketing pages (headings + meta descriptions) which lean
+ * on an "ANVI Cloud Solutions" / "ANVI IT Consulting" typographic
+ * style. Derived from the first whitespace-delimited word of
+ * {@link BRAND.name}, uppercased — for `"Anvi Corp"` this resolves
+ * to `"ANVI"` (byte-identical to the pre-migration literal); for a
+ * per-brand clone with `NEXT_PUBLIC_BRAND_NAME="Acme Tech"` it
+ * resolves to `"ACME"`. Kept as a derived helper (not a separate env
+ * field) so operators only need to override BRAND_NAME to get both
+ * the display form and the shorthand in lock-step.
+ */
+export const BRAND_SHORT: string =
+  (BRAND.name || 'Anvi Corp').split(/\s+/)[0].toUpperCase();
