@@ -18,7 +18,7 @@ const SERVICE_LINKS: ReadonlyArray<{ label: string; href: string }> = [
 ];
 
 const LEGAL_LINKS: ReadonlyArray<{ label: string; href: string }> = [
-  { label: 'Privacy Policy', href: '/privacy-policy' },
+  { label: 'Privacy Policy', href: '/privacy' },
   // /terms doesn't exist on the Anvi site yet — dropped rather than linking to a 404.
 ];
 
