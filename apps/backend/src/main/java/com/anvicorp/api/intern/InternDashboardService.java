@@ -77,14 +77,7 @@ public class InternDashboardService {
         boolean emailVerified = Boolean.TRUE.equals(caller.getEmailVerified());
         // Phase 6: Step 8 "Evaluation Cycle" completes on first PUBLISHED /
         // ACKNOWLEDGED / AMENDED evaluation for this intern.
-        boolean hasPublishedEval = false;
-        try {
-            hasPublishedEval = internEvaluationService
-                    .internHasPublishedEvaluation(caller.getId());
-        } catch (Exception e) {
-            log.warn("evaluation check failed (non-fatal) for {}: {}",
-                    caller.getId(), e.getMessage());
-        }
+        boolean hasPublishedEval = safeHasPublishedEvaluation(caller.getId(), status);
 
         // Phase 8 — exit summary block only when intern is INACTIVE.
         ExitSummary exitSummary = "INACTIVE".equals(mode) ? loadExitSummary(caller) : null;
@@ -117,6 +110,37 @@ public class InternDashboardService {
                 applyReadiness,
                 Instant.now()
         );
+    }
+
+    /**
+     * Pattern-D fix — the terminal "Evaluation Cycle" step depends on the
+     * evaluator service reporting whether the intern has any PUBLISHED
+     * evaluation. When that lookup transiently fails (network / DB blip),
+     * a naive catch-and-return-false regresses the terminal step to
+     * UPCOMING for an intern who is already INACTIVE — because
+     * {@code done[7] = hasPublishedEval || s == INACTIVE_INTERN} is
+     * computed downstream and the caller has no way to distinguish
+     * "no eval + inactive" from "lookup failed + inactive".
+     *
+     * <p>Belt-and-suspenders: an INACTIVE intern is past the evaluation
+     * cycle by definition (exited before or after any eval), so a lookup
+     * FAILURE for an INACTIVE intern is safe to treat as "cycle done".
+     * Any non-INACTIVE status still returns {@code false} on failure —
+     * an ACTIVE intern whose lookup blips must not falsely render the
+     * terminal step done.</p>
+     *
+     * <p>Package-private so
+     * {@code InternDashboardServiceExceptionSafetyTest} can verify the
+     * INACTIVE-vs-ACTIVE branching without spinning the full dashboard.</p>
+     */
+    boolean safeHasPublishedEvaluation(UUID userId, InternLifecycleStatus status) {
+        try {
+            return internEvaluationService.internHasPublishedEvaluation(userId);
+        } catch (Exception e) {
+            log.warn("[Dashboard] evaluation check failed (non-fatal) for {}: {}",
+                    userId, e.getMessage());
+            return status == InternLifecycleStatus.INACTIVE_INTERN;
+        }
     }
 
     // ── Selection-acknowledgment context ────────────────────────────────────
