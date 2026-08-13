@@ -999,7 +999,39 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "past week so your Manager and ERM stay aligned.\n\n"
                             + "Open your dashboard:\n{{deepLink}}\n\n"
                             + "— Anvi Corp",
-                    "firstName,weekStart,deepLink")
+                    "firstName,weekStart,deepLink"),
+            // ── Slice-6c OnboardingTrackerService fold-ins (Category C).
+            // INTERN_ONBOARDING_ANNOUNCED — staff-facing (trainer /
+            // evaluator / manager) alert when an ERM notifies the team
+            // that a new intern joined. Fired 3× (once per role) from
+            // OnboardingTrackerService.notifyTeam. Var {{firstName}} is
+            // the STAFF recipient's first name (the intern is
+            // {{internName}}).
+            new Seed(
+                    "INTERN_ONBOARDING_ANNOUNCED", "EMAIL",
+                    "New intern joined — {{internName}}",
+                    "Hi {{firstName}},\n\n"
+                            + "{{internName}} has accepted their offer with {{brandName}} "
+                            + "and their onboarding is in progress. They'll appear in "
+                            + "your dashboard once activated.\n\n"
+                            + "View your active-interns list:\n{{deepLink}}\n\n"
+                            + "— Anvi Corp ERM",
+                    "firstName,internName,deepLink"),
+            // OFFER_SIGN_REMINDER — intern-facing lightweight nudge that
+            // their offer letter is awaiting e-signature. Distinct from
+            // OFFER_REMINDER (the offer-service's dedicated periodic
+            // reminder) — this one fires ad-hoc from the tracker's
+            // Signature Reminder action button. {{ermName}} names the
+            // ERM sending it; empty when the caller is unresolved.
+            new Seed(
+                    "OFFER_SIGN_REMINDER", "EMAIL",
+                    "Reminder: please sign your {{brandName}} offer",
+                    "Hi {{firstName}},\n\n"
+                            + "Your offer letter is waiting for your e-signature. "
+                            + "Sign in to view and sign your offer:\n{{deepLink}}\n\n"
+                            + "This is a friendly reminder from {{ermName}}.\n\n"
+                            + "— Anvi Corp",
+                    "firstName,ermName,deepLink")
     );
 
     @Override
