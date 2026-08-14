@@ -1090,7 +1090,170 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "before the deadline so onboarding stays on track.\n\n"
                             + "Open the I-9 page to complete it:\n{{deepLink}}\n\n"
                             + "{{signoffBlock}}",
-                    "firstName,dueDate,deepLink")
+                    "firstName,dueDate,deepLink"),
+            // ── Slice-6e Category-A final subset seeds (11 templates).
+            // Post-Batch-7 convention: {{signoffBlock}} + {{brandName}}
+            // as render-time placeholders instead of literal "Anvi Corp"
+            // in the source (Option B). No brandify() rewrite needed.
+            //
+            // OFFER_ACCEPTED_OPS — ops-facing heads-up when an offer signs.
+            new Seed(
+                    "OFFER_ACCEPTED_OPS", "EMAIL",
+                    "Offer signed: {{applicantName}} — {{jobTitle}}",
+                    "An offer has just been signed by {{applicantName}} "
+                            + "({{applicantEmail}}).\n\n"
+                            + "  · Role: {{jobTitle}}\n"
+                            + "  · Entity: {{entityName}}\n"
+                            + "  · Start date: {{startDate}}\n\n"
+                            + "Kick off onboarding provisioning as usual.\n\n"
+                            + "— {{brandName}} Operations",
+                    "applicantName,applicantEmail,jobTitle,entityName,startDate"),
+            // I983_PLAN_NEEDED — intern-facing STEM-OPT training-plan
+            // nudge fired when the engagement is active.
+            new Seed(
+                    "I983_PLAN_NEEDED", "EMAIL",
+                    "Draft your I-983 Training Plan",
+                    "Hello {{firstName}},\n\n"
+                            + "As a STEM-OPT intern you're required to draft an I-983 "
+                            + "Training Plan describing your role, learning objectives, "
+                            + "and how they map to your degree. Please start it in your "
+                            + "dashboard so we can review, sign, and file it in time.\n\n"
+                            + "Open your dashboard:\n{{deepLink}}\n\n"
+                            + "{{signoffBlock}}",
+                    "firstName,deepLink"),
+            // I983_PLAN_READY — HR-facing alert when the intern signs the
+            // plan and it's ready for DSO submission.
+            new Seed(
+                    "I983_PLAN_READY", "EMAIL",
+                    "I-983 plan ready for DSO submission — {{internName}}",
+                    "Hi HR team,\n\n"
+                            + "{{internName}} has signed their I-983 Training Plan. It's "
+                            + "ready for your review and DSO submission.\n\n"
+                            + "Open the HR dashboard:\n{{deepLink}}\n\n"
+                            + "— {{brandName}} Ops",
+                    "internName,deepLink"),
+            // PROJECT_SUBMITTED — supervisor-facing "intern submitted a
+            // project" alert. NOTE: PROJECT_ASSIGNED already exists (used
+            // by ProjectNotificationDispatcher's trainer-path bridge) and
+            // is REUSED for sendProjectAssigned's legacy leg here — no
+            // new seed for it.
+            new Seed(
+                    "PROJECT_SUBMITTED", "EMAIL",
+                    "Ready to review: {{internName}} submitted \"{{projectTitle}}\"",
+                    "Hi {{supervisorName}},\n\n"
+                            + "{{internName}} just submitted \"{{projectTitle}}\" for "
+                            + "your review.\n\n"
+                            + "Open the review workspace:\n{{deepLink}}\n\n"
+                            + "{{signoffBlock}}",
+                    "supervisorName,internName,projectTitle,deepLink"),
+            // PROJECT_RETURNED — intern-facing "reviewer sent it back"
+            // alert. {{reviewNotesLine}} is empty when the reviewer left
+            // no notes (no orphan "Reviewer notes:" leak).
+            new Seed(
+                    "PROJECT_RETURNED", "EMAIL",
+                    "Project returned for changes: {{projectTitle}}",
+                    "Hello {{firstName}},\n\n"
+                            + "Your project \"{{projectTitle}}\" was returned with "
+                            + "review feedback. Please apply the corrections and "
+                            + "resubmit when ready."
+                            + "{{reviewNotesLine}}\n\n"
+                            + "Open the project:\n{{deepLink}}\n\n"
+                            + "{{signoffBlock}}",
+                    "firstName,projectTitle,reviewNotesLine,deepLink"),
+            // PROJECT_COMPLETED — intern-facing congratulations on project
+            // completion.
+            new Seed(
+                    "PROJECT_COMPLETED", "EMAIL",
+                    "Project completed: {{projectTitle}}",
+                    "Hello {{firstName}},\n\n"
+                            + "Congratulations — \"{{projectTitle}}\" has been marked "
+                            + "complete. Nice work.\n\n"
+                            + "Open your project history:\n{{deepLink}}\n\n"
+                            + "{{signoffBlock}}",
+                    "firstName,projectTitle,deepLink"),
+            // PROJECT_TECH_APPROVED — intern-facing "technical review
+            // passed" alert (two-role workflow, TE approves).
+            new Seed(
+                    "PROJECT_TECH_APPROVED", "EMAIL",
+                    "Technical review passed: {{projectTitle}}",
+                    "Hello {{firstName}},\n\n"
+                            + "Your project \"{{projectTitle}}\" passed technical "
+                            + "review. Your Reporting Manager will schedule the viva "
+                            + "next — watch for calendar details.\n\n"
+                            + "Open the project:\n{{deepLink}}\n\n"
+                            + "{{signoffBlock}}",
+                    "firstName,projectTitle,deepLink"),
+            // PROJECT_RETURNED_FOR_REVISIONS — two-role variant of
+            // PROJECT_RETURNED. {{reasonBlock}} is empty when no reason
+            // was supplied.
+            new Seed(
+                    "PROJECT_RETURNED_FOR_REVISIONS", "EMAIL",
+                    "Revisions requested: {{projectTitle}}",
+                    "Hello {{firstName}},\n\n"
+                            + "Your project \"{{projectTitle}}\" needs revisions before "
+                            + "it can move forward."
+                            + "{{reasonBlock}}\n\n"
+                            + "Iterate and resubmit when ready:\n{{deepLink}}\n\n"
+                            + "{{signoffBlock}}",
+                    "firstName,projectTitle,reasonBlock,deepLink"),
+            // PROJECT_PENDING_VIVA — intern-facing "viva scheduled" alert
+            // after RM marks the project ready.
+            new Seed(
+                    "PROJECT_PENDING_VIVA", "EMAIL",
+                    "Viva scheduled: {{projectTitle}}",
+                    "Hello {{firstName}},\n\n"
+                            + "Your Reporting Manager has marked \"{{projectTitle}}\" "
+                            + "ready for the viva. Calendar details will follow — "
+                            + "prepare to walk through your approach, results, and "
+                            + "any tradeoffs.\n\n"
+                            + "Open the project:\n{{deepLink}}\n\n"
+                            + "{{signoffBlock}}",
+                    "firstName,projectTitle,deepLink"),
+            // EVALUATION_DUE — evaluator-facing scheduler reminder for a
+            // stale DRAFT evaluation (legacy Evaluation entity, distinct
+            // from EvaluationNotificationFanout's InternEvaluation flow).
+            new Seed(
+                    "EVALUATION_DUE", "EMAIL",
+                    "Evaluation draft pending: {{internName}}",
+                    "Hi {{supervisorName}},\n\n"
+                            + "The {{evaluationType}} evaluation for {{internName}} "
+                            + "has been in DRAFT for {{daysInDraft}} day"
+                            + "{{daysPluralSuffix}}. Please finalize when ready so the "
+                            + "intern receives their feedback.\n\n"
+                            + "Open the review workspace:\n{{deepLink}}\n\n"
+                            + "{{signoffBlock}}",
+                    "supervisorName,internName,evaluationType,daysInDraft,"
+                            + "daysPluralSuffix,deepLink"),
+            // EVALUATION_FINALIZED — intern-facing "your evaluation was
+            // published" alert (legacy Evaluation entity — distinct from
+            // EvaluationNotificationFanout's InternEvaluation flow which
+            // uses EVALUATION_PUBLISHED).
+            new Seed(
+                    "EVALUATION_FINALIZED", "EMAIL",
+                    "Evaluation feedback available",
+                    "Hello {{firstName}},\n\n"
+                            + "Your {{evaluationType}} evaluation was published"
+                            + "{{supervisorLine}}. Overall rating: {{overallRating}}.\n\n"
+                            + "Open the evaluation:\n{{deepLink}}\n\n"
+                            + "{{signoffBlock}}",
+                    "firstName,evaluationType,supervisorLine,overallRating,deepLink"),
+            // I9_SECTION2_PENDING — HR-facing alert when the intern
+            // completes I-9 §1 and §2 is awaiting HR verification.
+            // Missed by Slice 6d/6e's target subset — added here to
+            // truly close Category A (minus the deferred dedup pair).
+            new Seed(
+                    "I9_SECTION2_PENDING", "EMAIL",
+                    "I-9 Section 2 pending: {{internName}}",
+                    "Hi HR team,\n\n"
+                            + "{{internName}} has completed I-9 Section 1. Section 2 "
+                            + "is now awaiting your verification of the intern's "
+                            + "identity + work-authorization documents. Federal "
+                            + "requirement: complete within 3 business days of the "
+                            + "intern's start date.\n\n"
+                            + "  · Due: {{dueDate}}\n\n"
+                            + "Open the HR dashboard to review + verify:\n{{deepLink}}\n\n"
+                            + "— {{brandName}} Ops",
+                    "internName,dueDate,deepLink")
     );
 
     @Override
