@@ -57,7 +57,7 @@ class EmailSlice6eCategoryAFinalTest {
 
     @Test
     void slice6e_templates_are_all_registered() {
-        // 11 new seeds
+        // 12 new seeds (11 initial + I9_SECTION2_PENDING follow-up)
         assertSeedExists("OFFER_ACCEPTED_OPS");
         assertSeedExists("I983_PLAN_NEEDED");
         assertSeedExists("I983_PLAN_READY");
@@ -69,8 +69,24 @@ class EmailSlice6eCategoryAFinalTest {
         assertSeedExists("PROJECT_PENDING_VIVA");
         assertSeedExists("EVALUATION_DUE");
         assertSeedExists("EVALUATION_FINALIZED");
+        assertSeedExists("I9_SECTION2_PENDING");
         // Reused template (must still be present).
         assertSeedExists("PROJECT_ASSIGNED");
+    }
+
+    @Test
+    void i9_section2_pending_renders_with_wiring_vars() {
+        Map<String, Object> vars = new LinkedHashMap<>();
+        vars.put("internName", "Alice Intern");
+        vars.put("dueDate", "2026-09-05");
+        vars.put("deepLink", "https://x/hr/i9");
+        var r = renderSeeded("I9_SECTION2_PENDING", vars);
+        assertRenderClean(r, "I9_SECTION2_PENDING");
+        assertTrue(r.subject().contains("Alice Intern"));
+        assertTrue(r.body().contains("Alice Intern"));
+        assertTrue(r.body().contains("2026-09-05"));
+        assertTrue(r.body().contains("3 business days"),
+                "body must state the federal 3-business-day rule");
     }
 
     // ── Per-template render smoke tests ───────────────────────────────
@@ -294,7 +310,8 @@ class EmailSlice6eCategoryAFinalTest {
                 "I983_PLAN_READY", "PROJECT_SUBMITTED", "PROJECT_RETURNED",
                 "PROJECT_COMPLETED", "PROJECT_TECH_APPROVED",
                 "PROJECT_RETURNED_FOR_REVISIONS", "PROJECT_PENDING_VIVA",
-                "EVALUATION_DUE", "EVALUATION_FINALIZED")) {
+                "EVALUATION_DUE", "EVALUATION_FINALIZED",
+                "I9_SECTION2_PENDING")) {
             CommunicationTemplateSeeder.Seed raw = allSeeds().stream()
                     .filter(s -> key.equals(s.key()) && "EMAIL".equals(s.channel()))
                     .findFirst()
@@ -314,7 +331,7 @@ class EmailSlice6eCategoryAFinalTest {
     // ── Grep-proof: NotificationService renders all 12 templates ──────
 
     @Test
-    void notification_service_renders_all_twelve_slice6e_templates() throws IOException {
+    void notification_service_renders_all_thirteen_slice6e_templates() throws IOException {
         String source = readSource(
                 "apps/backend/src/main/java/com/anvicorp/api/notification/"
                         + "NotificationService.java");
@@ -324,7 +341,7 @@ class EmailSlice6eCategoryAFinalTest {
                 "PROJECT_RETURNED", "PROJECT_COMPLETED",
                 "PROJECT_TECH_APPROVED", "PROJECT_RETURNED_FOR_REVISIONS",
                 "PROJECT_PENDING_VIVA", "EVALUATION_DUE",
-                "EVALUATION_FINALIZED")) {
+                "EVALUATION_FINALIZED", "I9_SECTION2_PENDING")) {
             assertTrue(stripped.contains("templateService.render(\"" + key + "\""),
                     "NotificationService must render template " + key
                             + " (Slice-6e invariant).");
@@ -348,7 +365,8 @@ class EmailSlice6eCategoryAFinalTest {
                 "emailProvider.sendProjectReturnedForRevisions",
                 "emailProvider.sendProjectPendingViva",
                 "emailProvider.sendEvaluationDue",
-                "emailProvider.sendEvaluationFinalized")) {
+                "emailProvider.sendEvaluationFinalized",
+                "emailProvider.sendI9Section2Pending")) {
             assertTrue(source.contains(typed),
                     "NotificationService must retain " + typed + " as fallback.");
         }

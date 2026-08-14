@@ -597,9 +597,29 @@ public class NotificationService {
         // Single ledger row keyed on the form; the email goes to all HR users
         // via the To: list so we don't fan-out per recipient.
         String to = String.join(", ", hrRecipients);
+        final String finalTo2 = to;
+        final String finalInternName2 = internName;
+        // Slice-6e follow-up — template-first via new I9_SECTION2_PENDING.
+        // Missed by the initial Slice-6e target subset; added here to
+        // truly close Category A.
         deliver(NotificationEventType.I9_SECTION2_PENDING, targetId, to,
-                () -> emailProvider.sendI9Section2Pending(
-                        to, internName, form.getSection2DueDate(), hrDashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("internName", nz(finalInternName2));
+                    vars.put("dueDate", form.getSection2DueDate() != null
+                            ? form.getSection2DueDate().toString() : "3 business days after start");
+                    vars.put("deepLink", hrDashboardUrl != null ? hrDashboardUrl : "");
+                    var rendered = templateService.render(
+                            "I9_SECTION2_PENDING", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(finalTo2,
+                                rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendI9Section2Pending(
+                                finalTo2, finalInternName2,
+                                form.getSection2DueDate(), hrDashboardUrl);
+                    }
+                });
 
         // Staff-only event (no applicant in-app row). ERM slot on the intern's
         // lifecycle drives the in-app fan-out; mirrors the HR To: list above.

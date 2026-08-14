@@ -1236,7 +1236,24 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "{{supervisorLine}}. Overall rating: {{overallRating}}.\n\n"
                             + "Open the evaluation:\n{{deepLink}}\n\n"
                             + "{{signoffBlock}}",
-                    "firstName,evaluationType,supervisorLine,overallRating,deepLink")
+                    "firstName,evaluationType,supervisorLine,overallRating,deepLink"),
+            // I9_SECTION2_PENDING — HR-facing alert when the intern
+            // completes I-9 §1 and §2 is awaiting HR verification.
+            // Missed by Slice 6d/6e's target subset — added here to
+            // truly close Category A (minus the deferred dedup pair).
+            new Seed(
+                    "I9_SECTION2_PENDING", "EMAIL",
+                    "I-9 Section 2 pending: {{internName}}",
+                    "Hi HR team,\n\n"
+                            + "{{internName}} has completed I-9 Section 1. Section 2 "
+                            + "is now awaiting your verification of the intern's "
+                            + "identity + work-authorization documents. Federal "
+                            + "requirement: complete within 3 business days of the "
+                            + "intern's start date.\n\n"
+                            + "  · Due: {{dueDate}}\n\n"
+                            + "Open the HR dashboard to review + verify:\n{{deepLink}}\n\n"
+                            + "— {{brandName}} Ops",
+                    "internName,dueDate,deepLink")
     );
 
     @Override
