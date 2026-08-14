@@ -1,5 +1,6 @@
 package com.anvicorp.api.bootstrap;
 
+import com.anvicorp.api.config.BrandConfig;
 import com.anvicorp.api.entity.JobPosting;
 import com.anvicorp.api.entity.StaffingEntity;
 import com.anvicorp.api.enums.EmploymentType;
@@ -17,8 +18,8 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Seeds the canonical StaffingEntity ("Anvi Corp USA") + sample job postings
- * on first boot.
+ * Seeds the canonical StaffingEntity (BrandConfig.legalName — "Anvi Corp
+ * USA" by default) + sample job postings on first boot.
  *
  * Body is wrapped in try/catch so a seeding failure logs a WARN and never
  * crashes startup. No class-level {@code @Transactional}: {@code saveAll}
@@ -32,10 +33,9 @@ import java.util.List;
 @Slf4j
 public class SeedJobPostingsRunner implements CommandLineRunner {
 
-    private static final String CANONICAL_ENTITY_NAME = "Anvi Corp USA";
-
     private final StaffingEntityRepository staffingEntityRepository;
     private final JobPostingRepository jobPostingRepository;
+    private final BrandConfig brand;
 
     @Override
     public void run(String... args) {
@@ -52,14 +52,15 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
             return;
         }
         Instant now = Instant.now();
+        String brandLegalName = entity.getName();
 
         List<JobPosting> samples = List.of(
                 JobPosting.builder()
                         .entity(entity)
                         .slug("backend-developer-intern")
                         .title("Backend Developer Intern")
-                        .description("""
-                                Join the Anvi Corp USA backend team and ship production code in Java and Spring Boot. \
+                        .description(String.format("""
+                                Join the %s backend team and ship production code in Java and Spring Boot. \
                                 You'll work alongside senior engineers building REST APIs, designing PostgreSQL schemas, \
                                 and integrating with cloud services.
 
@@ -69,7 +70,7 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
 
                                 We're looking for builders who enjoy clean code, pragmatic design, and learning the \
                                 "why" behind framework conventions, not just the "how".
-                                """)
+                                """, brandLegalName))
                         .requirements("""
                                 - Currently enrolled in or recently completed a Computer Science / Software \
                                 Engineering degree program
@@ -88,8 +89,8 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
                         .entity(entity)
                         .slug("frontend-developer-intern")
                         .title("Frontend Developer Intern")
-                        .description("""
-                                Build user-facing experiences with React and Next.js on the Anvi Corp USA product team. \
+                        .description(String.format("""
+                                Build user-facing experiences with React and Next.js on the %s product team. \
                                 You'll own components end-to-end: design hand-off, implementation, accessibility, \
                                 and shipping behind feature flags.
 
@@ -99,7 +100,7 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
 
                                 Internship is 12 weeks, paid, US remote. You'll graduate with at least one shipped \
                                 feature in production and a portfolio of merged PRs.
-                                """)
+                                """, brandLegalName))
                         .requirements("""
                                 - Working knowledge of React (hooks, context) and TypeScript
                                 - Familiarity with Next.js or another React meta-framework is a plus
@@ -117,8 +118,8 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
                         .entity(entity)
                         .slug("cloud-engineer-intern")
                         .title("Cloud Engineer Intern")
-                        .description("""
-                                Help Anvi Corp USA's platform team operate the infrastructure that runs every customer \
+                        .description(String.format("""
+                                Help %s's platform team operate the infrastructure that runs every customer \
                                 workload. You'll work in AWS — ECS, RDS, S3, CloudWatch — and learn what it takes \
                                 to keep a 24x7 service reliable.
 
@@ -127,7 +128,7 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
 
                                 This is a 12-week paid, US-remote internship. Strong interns are routinely converted \
                                 to full-time offers at the end of the program.
-                                """)
+                                """, brandLegalName))
                         .requirements("""
                                 - Exposure to a major cloud provider (AWS preferred, GCP/Azure also welcome)
                                 - Familiarity with Linux, shell scripting, and Docker fundamentals
@@ -148,22 +149,24 @@ public class SeedJobPostingsRunner implements CommandLineRunner {
     }
 
     /**
-     * Look up "Anvi Corp USA" by NAME (not {@code findAll().get(0)}). The
-     * old first-row lookup was non-deterministic — if a legacy dev DB had
-     * a stray "Stellar USA" row it would win over the canonical entity
-     * and postings would be seeded under the wrong parent.
+     * Look up the canonical entity by NAME (not {@code findAll().get(0)}).
+     * The old first-row lookup was non-deterministic — if a legacy dev DB
+     * had a stray "Stellar USA" row it would win over the canonical entity
+     * and postings would be seeded under the wrong parent. Name = brand
+     * legal name, so a clone seeds under its own entity.
      */
     private StaffingEntity ensureStaffingEntity() {
-        return staffingEntityRepository.findByName(CANONICAL_ENTITY_NAME)
+        String canonicalEntityName = brand.getLegalName();
+        return staffingEntityRepository.findByName(canonicalEntityName)
                 .orElseGet(() -> {
                     StaffingEntity entity = StaffingEntity.builder()
-                            .name(CANONICAL_ENTITY_NAME)
+                            .name(canonicalEntityName)
                             .country("USA")
                             .isActive(true)
                             .build();
                     entity = staffingEntityRepository.save(entity);
                     log.info("INFO Default StaffingEntity '{}' seeded",
-                            CANONICAL_ENTITY_NAME);
+                            canonicalEntityName);
                     return entity;
                 });
     }

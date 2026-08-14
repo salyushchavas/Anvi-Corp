@@ -85,7 +85,7 @@ public class OfferLifecycleListener {
             vars.put("ermName", ermName(e.getActorUserId()));
             vars.put("signingLink", signingLink);
             renderAndSend("OFFER_REMINDER", vars, applicant,
-                    "Reminder: your Anvi Corp offer is awaiting signature",
+                    "Reminder: your " + brand.getName() + " offer is awaiting signature",
                     "Hello " + vars.get("firstName") + ",\n\nThis is a reminder that your "
                             + "offer for " + vars.get("roleTitle") + " is awaiting your "
                             + "signature.\n\nOpen your offer: " + signingLink
@@ -113,7 +113,7 @@ public class OfferLifecycleListener {
             vars.put("voidReasonHuman", humanReason(e.getReasonCode()));
             vars.put("ermName", ermName(e.getActorUserId()));
             renderAndSend("OFFER_VOIDED", vars, applicant,
-                    "Your Anvi Corp offer has been withdrawn",
+                    "Your " + brand.getName() + " offer has been withdrawn",
                     "Hello " + vars.get("firstName") + ",\n\nWe regret to inform you that "
                             + "the offer extended to you for " + vars.get("roleTitle")
                             + " has been withdrawn.\n\n" + vars.get("voidReasonHuman")
@@ -161,7 +161,7 @@ public class OfferLifecycleListener {
             vars.put("employeeId", employeeId != null ? employeeId : "(pending)");
             vars.put("tentativeStartDate", startDate);
             renderAndSend("REPORTING_STRUCTURE_ASSIGNED", vars, u,
-                    "You've been assigned to a new intern at Anvi Corp",
+                    "You've been assigned to a new intern at " + brand.getName(),
                     "Hello " + vars.get("recipientFirstName") + ",\n\nYou've been assigned "
                             + "as the " + role + " for " + internName + ".",
                     "REPORTING_STRUCTURE_ASSIGNED",
@@ -184,7 +184,7 @@ public class OfferLifecycleListener {
             vars.put("newDate", e.getNewDate() != null ? e.getNewDate().toString() : "TBD");
             vars.put("ermName", ermName(e.getUpdatedByUserId()));
             renderAndSend("START_DATE_UPDATED", vars, applicant,
-                    "Your Anvi Corp start date has been updated",
+                    "Your " + brand.getName() + " start date has been updated",
                     "Hello " + vars.get("firstName") + ",\n\nYour tentative start date is "
                             + "now " + vars.get("newDate") + ".\n\n" + brand.signoffErm(),
                     "START_DATE_UPDATED",

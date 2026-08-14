@@ -124,6 +124,19 @@ public class BrandConfig {
     }
 
     /**
+     * First word of the brand name — the short-form label the account
+     * seeders use as a display-name prefix (e.g. "Anvi" → "Anvi ERM",
+     * "Anvi Trainer", "Anvi (No Reply)"). Mirrors the frontend's
+     * {@code BRAND_SHORT = BRAND.name.split(/\s+/)[0]}. Derived (no
+     * @Value, no constructor change) so BrandConfigTest and every
+     * existing caller stay untouched.
+     */
+    public String getShortName() {
+        if (name == null || name.isBlank()) return "";
+        return name.trim().split("\\s+", 2)[0];
+    }
+
+    /**
      * ERM-suffixed signoff used by the pre-hire funnel emails (ERM is
      * the applicant-facing role from apply → offer). Same shape as
      * {@link #signoff()} but adds " ERM" so the copy stays true to

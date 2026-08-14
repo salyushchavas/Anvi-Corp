@@ -1,5 +1,6 @@
 package com.anvicorp.api.bootstrap;
 
+import com.anvicorp.api.config.BrandConfig;
 import com.anvicorp.api.dto.project.CreateProjectRequest;
 import com.anvicorp.api.entity.Application;
 import com.anvicorp.api.entity.Candidate;
@@ -90,7 +91,12 @@ public class TestAccountSeeder implements CommandLineRunner {
     private static final String RM_PASSWORD     = "Rm@1234";
     private static final String INTERN_PASSWORD = "Intern@1";
 
-    private static final String TEST_ENTITY_NAME = "Anvi Corp Test Entity (Seeder)";
+    // TEST_ENTITY_NAME + TEST_UNIVERSITY_NAME are composed at run() time
+    // from BrandConfig.getName() so a clone seeds "{Brand} Test Entity
+    // (Seeder)" + "{Brand} Test University" — for Anvi (name="Anvi Corp")
+    // this renders byte-identically to the previous hardcoded literals.
+    private static final String TEST_ENTITY_NAME_SUFFIX = " Test Entity (Seeder)";
+    private static final String TEST_UNIVERSITY_NAME_SUFFIX = " Test University";
     private static final String TEST_POSTING_SLUG = "skyzen-test-seeder-posting";
     private static final String TEST_PROJECT_TITLE = "Test Workspace Project";
 
@@ -99,6 +105,7 @@ public class TestAccountSeeder implements CommandLineRunner {
     // ── Wiring ───────────────────────────────────────────────────────────────
 
     private final boolean enabled;
+    private final BrandConfig brand;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final CandidateRepository candidateRepository;
@@ -113,6 +120,7 @@ public class TestAccountSeeder implements CommandLineRunner {
 
     public TestAccountSeeder(
             @Value("${app.seed.test-accounts-enabled:false}") boolean enabled,
+            BrandConfig brand,
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             CandidateRepository candidateRepository,
@@ -125,6 +133,7 @@ public class TestAccountSeeder implements CommandLineRunner {
             ProjectService projectService,
             I983PlanRepository i983PlanRepository) {
         this.enabled = enabled;
+        this.brand = brand;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.candidateRepository = candidateRepository;
@@ -211,16 +220,17 @@ public class TestAccountSeeder implements CommandLineRunner {
     private StaffingEntity findOrCreateEntity() {
         // No name-uniqueness constraint on entities — match-by-name still works
         // because we control the test fixture's name string.
+        String testEntityName = brand.getName() + TEST_ENTITY_NAME_SUFFIX;
         return staffingEntityRepository.findAll().stream()
-                .filter(e -> TEST_ENTITY_NAME.equals(e.getName()))
+                .filter(e -> testEntityName.equals(e.getName()))
                 .findFirst()
                 .orElseGet(() -> {
                     StaffingEntity e = StaffingEntity.builder()
-                            .name(TEST_ENTITY_NAME)
+                            .name(testEntityName)
                             .isActive(true)
                             .build();
                     e = staffingEntityRepository.save(e);
-                    log.info("{}   staffing entity \"{}\" → CREATED", LOG_TAG, TEST_ENTITY_NAME);
+                    log.info("{}   staffing entity \"{}\" → CREATED", LOG_TAG, testEntityName);
                     return e;
                 });
     }
@@ -413,7 +423,7 @@ public class TestAccountSeeder implements CommandLineRunner {
                 .uscisNumber("123456789")
                 .degreeAwarded("Master of Science in Computer Science")
                 .degreeLevel(DegreeLevel.MASTERS)
-                .universityName("Anvi Corp Test University")
+                .universityName(brand.getName() + TEST_UNIVERSITY_NAME_SUFFIX)
                 .universityCipCode("11.0701") // Computer Science CIP code
                 .dateOfDegreeAward(today.minusMonths(3))
                 .optStartDate(today.minusMonths(1))
@@ -424,7 +434,7 @@ public class TestAccountSeeder implements CommandLineRunner {
                 .employerName(entity.getName())
                 .employerEin("12-3456789")
                 .employerAddress("100 Test Street, Suite 200\nSan Francisco, CA 94105")
-                .employerWebsite("https://www.anvicorp.com")
+                .employerWebsite(brand.getWebsiteUrl())
                 .employerNaicsCode("541512") // Computer Systems Design Services
                 .employerNumberOfFullTimeEmployees(45)
                 .employerOfficialName(creator.getFullName())

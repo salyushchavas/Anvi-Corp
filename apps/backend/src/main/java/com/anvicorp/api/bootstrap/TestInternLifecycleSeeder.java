@@ -1,5 +1,6 @@
 package com.anvicorp.api.bootstrap;
 
+import com.anvicorp.api.config.BrandConfig;
 import com.anvicorp.api.entity.Candidate;
 import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.entity.Project;
@@ -85,16 +86,17 @@ public class TestInternLifecycleSeeder implements CommandLineRunner {
     /** Documented dev/test password — mirrors the RoleAccountSeeder pattern. */
     private static final String INTERN_PASSWORD = "TestIntern@123";
 
-    // Accounts from RoleAccountSeeder — must exist first.
-    private static final String TRAINER_EMAIL = "trainer@anvicorp.com";
-    private static final String EVALUATOR_EMAIL = "evaluator@anvicorp.com";
-    private static final String MANAGER_EMAIL = "manager@anvicorp.com";
-    private static final String ERM_EMAIL = "erm@anvicorp.com";
-
-    // Canonical staffing entity — same lookup SeedJobPostingsRunner uses.
-    private static final String CANONICAL_ENTITY_NAME = "Anvi Corp USA";
+    // Local-parts of the accounts RoleAccountSeeder creates — kept in
+    // lock-step with that seeder. The domain is composed from
+    // BrandConfig.getEmailDomain() at run() time so a clone looks up
+    // its own "@brand.com" staff accounts.
+    private static final String TRAINER_LOCAL = "trainer";
+    private static final String EVALUATOR_LOCAL = "evaluator";
+    private static final String MANAGER_LOCAL = "manager";
+    private static final String ERM_LOCAL = "erm";
 
     private final boolean enabled;
+    private final BrandConfig brand;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final CandidateRepository candidateRepository;
@@ -108,6 +110,7 @@ public class TestInternLifecycleSeeder implements CommandLineRunner {
 
     public TestInternLifecycleSeeder(
             @Value("${app.bootstrap.seed-test-interns-enabled:false}") boolean enabled,
+            BrandConfig brand,
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             CandidateRepository candidateRepository,
@@ -119,6 +122,7 @@ public class TestInternLifecycleSeeder implements CommandLineRunner {
             JdbcTemplate jdbc,
             PlatformTransactionManager txManager) {
         this.enabled = enabled;
+        this.brand = brand;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.candidateRepository = candidateRepository;
@@ -139,11 +143,12 @@ public class TestInternLifecycleSeeder implements CommandLineRunner {
         }
         log.info("{} SEED_TEST_INTERNS=true — seeding 3 active test interns", LOG_TAG);
 
+        String emailDomain = brand.getEmailDomain();
         // Resolve prerequisites. Bail (no partial writes) if any are missing.
-        User trainer = userRepository.findByEmail(TRAINER_EMAIL).orElse(null);
-        User evaluator = userRepository.findByEmail(EVALUATOR_EMAIL).orElse(null);
-        User manager = userRepository.findByEmail(MANAGER_EMAIL).orElse(null);
-        User erm = userRepository.findByEmail(ERM_EMAIL).orElse(null);
+        User trainer = userRepository.findByEmail(TRAINER_LOCAL + "@" + emailDomain).orElse(null);
+        User evaluator = userRepository.findByEmail(EVALUATOR_LOCAL + "@" + emailDomain).orElse(null);
+        User manager = userRepository.findByEmail(MANAGER_LOCAL + "@" + emailDomain).orElse(null);
+        User erm = userRepository.findByEmail(ERM_LOCAL + "@" + emailDomain).orElse(null);
 
         if (trainer == null || evaluator == null || manager == null || erm == null) {
             log.warn("{} Missing prerequisite staff account(s): trainer={} evaluator={} "
@@ -160,13 +165,16 @@ public class TestInternLifecycleSeeder implements CommandLineRunner {
                 trainer.getEmail(), evaluator.getEmail(),
                 manager.getEmail(), erm.getEmail());
 
-        // Spec: (email, fullName, projectCount, statusForEachProject)
+        // Spec: (email, fullName, projectCount, statusForEachProject).
+        // Intern emails composed from brand.getEmailDomain() so a clone
+        // seeds "intern-a@brand.com" etc. — Anvi (emailDomain="anvicorp.com")
+        // renders byte-identically.
         List<InternSpec> specs = List.of(
-                new InternSpec("intern-a@anvicorp.com", "Test Intern A",
+                new InternSpec("intern-a@" + emailDomain, "Test Intern A",
                         1, ProjectStatus.COMPLETED),
-                new InternSpec("intern-b@anvicorp.com", "Test Intern B",
+                new InternSpec("intern-b@" + emailDomain, "Test Intern B",
                         2, ProjectStatus.COMPLETED),
-                new InternSpec("intern-c@anvicorp.com", "Test Intern C",
+                new InternSpec("intern-c@" + emailDomain, "Test Intern C",
                         1, ProjectStatus.SUBMITTED)
         );
 
@@ -368,16 +376,20 @@ public class TestInternLifecycleSeeder implements CommandLineRunner {
     }
 
     private StaffingEntity ensureCanonicalEntity() {
-        return staffingEntityRepository.findByName(CANONICAL_ENTITY_NAME)
+        // Canonical entity name = brand.getLegalName() — same lookup key
+        // SeedJobPostingsRunner uses, keeping both seeders in agreement
+        // on which entity the seeded interns / postings attach to.
+        String canonicalEntityName = brand.getLegalName();
+        return staffingEntityRepository.findByName(canonicalEntityName)
                 .orElseGet(() -> {
                     StaffingEntity e = StaffingEntity.builder()
-                            .name(CANONICAL_ENTITY_NAME)
+                            .name(canonicalEntityName)
                             .country("USA")
                             .isActive(true)
                             .build();
                     e = staffingEntityRepository.save(e);
                     log.info("{}   StaffingEntity \"{}\" → CREATED",
-                            LOG_TAG, CANONICAL_ENTITY_NAME);
+                            LOG_TAG, canonicalEntityName);
                     return e;
                 });
     }

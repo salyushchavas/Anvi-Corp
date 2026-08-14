@@ -1,5 +1,6 @@
 package com.anvicorp.api.bootstrap;
 
+import com.anvicorp.api.config.BrandConfig;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.repository.UserRepository;
@@ -52,6 +53,7 @@ public class RoleAccountSeeder implements CommandLineRunner {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final BrandConfig brand;
 
     @Value("${app.bootstrap.seed-role-accounts-enabled:false}")
     private boolean enabled;
@@ -60,14 +62,19 @@ public class RoleAccountSeeder implements CommandLineRunner {
      * A single staff seed. Passwords are encoded via {@link PasswordEncoder}
      * before persistence — nothing plaintext ever hits the DB.
      */
-    private record RoleAccount(String email, String password, String fullName, UserRole role) {}
+    private record RoleAccount(String localPart, String password, String displayRoleSuffix, UserRole role) {}
 
+    // Local-parts + password strings are STATIC (deterministic dev/bootstrap
+    // credentials); the domain and display-name prefix come from BrandConfig
+    // at run() time so a clone gets its own "@brand.com" + "Brand ERM" etc.
+    // For Anvi (name="Anvi Corp", emailDomain="anvicorp.com") this renders
+    // byte-identically to the previous hardcoded ACCOUNTS list.
     private static final List<RoleAccount> ACCOUNTS = List.of(
-            new RoleAccount("erm@anvicorp.com",               "Erm@Anvi2026",       "Anvi ERM",               UserRole.ERM),
-            new RoleAccount("trainer@anvicorp.com",           "Trainer@Anvi2026",   "Anvi Trainer",           UserRole.TRAINER),
-            new RoleAccount("evaluator@anvicorp.com",         "Evaluator@Anvi2026", "Anvi Evaluator",         UserRole.EVALUATOR),
-            new RoleAccount("manager@anvicorp.com",           "Manager@Anvi2026",   "Anvi Manager",           UserRole.MANAGER),
-            new RoleAccount("reporting-manager@anvicorp.com", "Rm@Anvi2026",        "Anvi Reporting Manager", UserRole.REPORTING_MANAGER)
+            new RoleAccount("erm",               "Erm@Anvi2026",       "ERM",               UserRole.ERM),
+            new RoleAccount("trainer",           "Trainer@Anvi2026",   "Trainer",           UserRole.TRAINER),
+            new RoleAccount("evaluator",         "Evaluator@Anvi2026", "Evaluator",         UserRole.EVALUATOR),
+            new RoleAccount("manager",           "Manager@Anvi2026",   "Manager",           UserRole.MANAGER),
+            new RoleAccount("reporting-manager", "Rm@Anvi2026",        "Reporting Manager", UserRole.REPORTING_MANAGER)
     );
 
     @Override
@@ -78,11 +85,13 @@ public class RoleAccountSeeder implements CommandLineRunner {
                 return;
             }
 
+            String emailDomain = brand.getEmailDomain();
+            String shortName = brand.getShortName();
             int scanned = 0, created = 0, skipped = 0, failed = 0;
             for (RoleAccount acct : ACCOUNTS) {
                 scanned++;
                 try {
-                    String email = acct.email().trim().toLowerCase();
+                    String email = (acct.localPart() + "@" + emailDomain).trim().toLowerCase();
                     Optional<User> existing = userRepository.findByEmail(email);
                     if (existing.isPresent()) {
                         skipped++;
@@ -94,7 +103,7 @@ public class RoleAccountSeeder implements CommandLineRunner {
                     User user = User.builder()
                             .email(email)
                             .passwordHash(passwordEncoder.encode(acct.password()))
-                            .fullName(acct.fullName())
+                            .fullName(shortName + " " + acct.displayRoleSuffix())
                             .roles(EnumSet.of(acct.role()))
                             .active(true)
                             .emailVerified(true)
@@ -105,8 +114,9 @@ public class RoleAccountSeeder implements CommandLineRunner {
                     log.info("{} Seeded role account: {} ({})", LOG_TAG, email, acct.role());
                 } catch (Exception perAccount) {
                     failed++;
-                    log.warn("{} failed to seed {} ({}): {} — continuing with next account",
-                            LOG_TAG, acct.email(), acct.role(), perAccount.getMessage(), perAccount);
+                    log.warn("{} failed to seed {}@{} ({}): {} — continuing with next account",
+                            LOG_TAG, acct.localPart(), emailDomain, acct.role(),
+                            perAccount.getMessage(), perAccount);
                 }
             }
             log.info("{} done — scanned={} created={} skipped_existing={} failed={}",

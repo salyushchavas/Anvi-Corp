@@ -41,25 +41,29 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
     }
 
     /**
-     * Wave-1 email-refinement — rewrite hardcoded brand/signoff tokens
-     * in the source seed strings into template PLACEHOLDERS
-     * ({@code {{brandName}}}, {@code {{signoffBlock}}}, etc.) so the
-     * DB rows are white-label-ready and every render at runtime picks
-     * up the current {@link BrandConfig} values via
-     * {@link CommunicationTemplateService#render} auto-injection.
+     * DEFENSE-IN-DEPTH only. Phase-0 Batch-7 converted the source
+     * {@link #SEEDS} list from hardcoded brand tokens (literal
+     * {@code "Anvi Corp"}, {@code "— Anvi Corp ERM"}, etc.) directly to
+     * the placeholder shape ({@code {{brandName}}} / {@code {{signoffBlock}}}
+     * / {@code {{brandName}} ERM}), so {@link #brandify} is a no-op on
+     * the current seed content — there are no literal tokens left to
+     * rewrite. The method and its literal find-patterns are preserved
+     * because {@link #rebrandifyExistingRowsIfLiteralBrandLeaks} still
+     * calls {@link #rewrite} to migrate pre-Wave-1 DB rows on any old
+     * cluster that never ran the migration once. Dropping the literal
+     * patterns would strand those rows in their legacy shape.
      *
      * <p>Order matters — the longest / most-specific tokens go first so
      * the shorter tokens don't accidentally match the longer ones'
-     * prefixes. Signoff patterns run before the bare {@code Anvi Corp}
+     * prefixes. Signoff patterns run before the bare brand-name
      * substitution so the three signoff shapes collapse to a single
      * {@code {{signoffBlock}}} placeholder.</p>
      *
-     * <p>Legacy "Skyzen ERM" is legacy pre-rebrand text that a fresh
-     * DB will never see; kept for defence-in-depth. The
-     * {@code {{ermName}}} in the offer-family templates collapses to
-     * {@code {{signoffBlock}}} too (the render-time resolver detects
-     * {@code vars.ermName} and prefers the personalised line —
-     * behaviour is preserved).</p>
+     * <p>{@code "Skyzen ERM"} is legacy pre-rebrand text that a fresh
+     * DB will never see; kept for defence-in-depth. {@code — {{ermName}}}
+     * collapses to {@code {{signoffBlock}}} too (the render-time
+     * resolver detects {@code vars.ermName} and prefers the personalised
+     * line — behaviour is preserved).</p>
      */
     private Seed brandify(Seed s) {
         return new Seed(
@@ -94,33 +98,33 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
     private static final List<Seed> SEEDS = List.of(
             new Seed(
                     "APPLICATION_REJECT", "EMAIL",
-                    "Update on your Anvi Corp application",
+                    "Update on your {{brandName}} application",
                     "Hello {{firstName}},\n\n"
-                            + "Thank you for applying to {{jobTitle}} at Anvi Corp. After careful "
+                            + "Thank you for applying to {{jobTitle}} at {{brandName}}. After careful "
                             + "review, we have decided not to proceed with your application at "
                             + "this time. We appreciate your interest and wish you the best.\n\n"
                             + "If you'd like feedback or have questions, reach out to "
                             + "{{supportEmail}}. We keep candidate records for 6 months and "
                             + "welcome a fresh application after that window — new roles are "
                             + "posted regularly, so watch our openings page.\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle"),
             new Seed(
                     "APPLICATION_HOLD", "EMAIL",
-                    "Your Anvi Corp application — under review",
+                    "Your {{brandName}} application — under review",
                     "Hello {{firstName}},\n\n"
                             + "Thank you for applying to {{jobTitle}}. Your application is "
                             + "currently under extended review. We will reach out when we have "
-                            + "an update.\n\n— Anvi Corp ERM",
+                            + "an update.\n\n{{signoffBlock}}",
                     "firstName,jobTitle"),
             new Seed(
                     "APPLICATION_REQUEST_INFO", "EMAIL",
-                    "Anvi Corp application — additional information needed",
+                    "{{brandName}} application — additional information needed",
                     "Hello {{firstName}},\n\n"
                             + "We are reviewing your application for {{jobTitle}} and need the "
                             + "following information: {{infoRequested}}.\n\n"
-                            + "Please update your application in your Anvi Corp dashboard.\n\n"
-                            + "— Anvi Corp ERM",
+                            + "Please update your application in your {{brandName}} dashboard.\n\n"
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle,infoRequested"),
             // Intern Email Wave 1 — #11. ERM shortlists an application →
             // the applicant gets both an in-app dispatch AND this email so
@@ -128,15 +132,15 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
             // managers were notified (in-app); the applicant heard nothing.
             new Seed(
                     "APPLICATION_SHORTLIST", "EMAIL",
-                    "Your Anvi Corp application has been shortlisted",
+                    "Your {{brandName}} application has been shortlisted",
                     "Hello {{firstName}},\n\n"
                             + "Great news — your application for {{jobTitle}} has been "
                             + "shortlisted for the next stage. A recruiter will reach out to "
                             + "schedule your interview shortly.\n\n"
                             + "You can track the status of your application at any time in "
-                            + "your Anvi Corp dashboard: {{dashboardUrl}}\n\n"
+                            + "your {{brandName}} dashboard: {{dashboardUrl}}\n\n"
                             + "Questions in the meantime? Reach out to {{supportEmail}}.\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle,dashboardUrl"),
             // Intern Email Wave 1 — #13 is already covered by the
             // existing INTERVIEW_SELECTED template below, which
@@ -156,17 +160,17 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
             // DocumentInstanceService.readFinalPdfBytes).
             new Seed(
                     "OFFER_LETTER_EXECUTED", "EMAIL",
-                    "Your Anvi Corp offer letter has been executed",
+                    "Your {{brandName}} offer letter has been executed",
                     "Hello {{firstName}},\n\n"
-                            + "Your Anvi Corp offer letter for {{jobTitle}} has been "
+                            + "Your {{brandName}} offer letter for {{jobTitle}} has been "
                             + "countersigned and executed. Welcome aboard!\n\n"
                             + "Download the fully-signed PDF from your dashboard:\n"
                             + "{{pdfDownloadUrl}}\n\n"
                             + "Keep a copy for your records — the same PDF is stored in "
-                            + "your Anvi Corp dashboard and can be re-downloaded any time "
+                            + "your {{brandName}} dashboard and can be re-downloaded any time "
                             + "under Documents.\n\n"
                             + "Your onboarding lead will reach out with next steps.\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle,pdfDownloadUrl"),
             // Intern Email Wave 1 — #8 is already fully implemented by
             // ProfileNotificationService.maybeFireSubmissionAck, called
@@ -181,35 +185,35 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
             // needed; documented here so the audit trail is obvious.
             new Seed(
                     "INTERVIEW_SELECTED", "EMAIL",
-                    "Great news from your Anvi Corp interview",
+                    "Great news from your {{brandName}} interview",
                     "Hello {{firstName}},\n\n"
                             + "We enjoyed speaking with you and would like to move forward. "
-                            + "Your offer letter will land in your Anvi Corp dashboard within "
+                            + "Your offer letter will land in your {{brandName}} dashboard within "
                             + "the next 2 business days — you'll get a separate email the "
                             + "moment it's ready with a direct link to review and sign.\n\n"
                             + "In the meantime, sign in to see your candidate timeline: "
                             + "{{dashboardUrl}}\n\n"
-                            + "Questions? Reach out to {{supportEmail}}.\n\n— Anvi Corp ERM",
+                            + "Questions? Reach out to {{supportEmail}}.\n\n{{signoffBlock}}",
                     "firstName,dashboardUrl"),
             new Seed(
                     "INTERVIEW_HOLD", "EMAIL",
-                    "Anvi Corp interview — under consideration",
+                    "{{brandName}} interview — under consideration",
                     "Hello {{firstName}},\n\n"
                             + "Thank you for interviewing with us. We are still in the decision "
                             + "phase — expect to hear back within the next 5 business days. If "
                             + "you don't hear from us by then, reach out to {{supportEmail}} "
-                            + "and we'll follow up.\n\n— Anvi Corp ERM",
+                            + "and we'll follow up.\n\n{{signoffBlock}}",
                     "firstName"),
             new Seed(
                     "INTERVIEW_REJECTED", "EMAIL",
-                    "Anvi Corp interview decision",
+                    "{{brandName}} interview decision",
                     "Hello {{firstName}},\n\n"
                             + "Thank you for interviewing for {{jobTitle}}. After careful "
                             + "consideration, we have decided not to proceed at this time. We "
                             + "appreciate your time and interest.\n\n"
                             + "If you'd like specific feedback on the interview or have any "
                             + "questions, please email {{supportEmail}} — we're happy to share "
-                            + "what we can.\n\n— Anvi Corp ERM",
+                            + "what we can.\n\n{{signoffBlock}}",
                     "firstName,jobTitle"),
             new Seed(
                     "OFFER_DOC_REJECTED", "EMAIL",
@@ -217,39 +221,39 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                     "Hello {{firstName}},\n\n"
                             + "The {{documentName}} you submitted needs correction: "
                             + "{{ermComments}}. Please update and resubmit from your "
-                            + "dashboard.\n\n— Anvi Corp ERM",
+                            + "dashboard.\n\n{{signoffBlock}}",
                     "firstName,documentName,ermComments"),
             new Seed(
                     "EXIT_COMPLETED", "EMAIL",
-                    "Your Anvi Corp internship has concluded",
+                    "Your {{brandName}} internship has concluded",
                     "Hello {{firstName}},\n\n"
-                            + "Your internship at Anvi Corp concluded on {{exitDate}}. Thank you "
+                            + "Your internship at {{brandName}} concluded on {{exitDate}}. Thank you "
                             + "for your contributions. Your records remain accessible in your "
                             + "dashboard. Please share your exit feedback when you have a "
-                            + "moment.\n\n— Anvi Corp ERM",
+                            + "moment.\n\n{{signoffBlock}}",
                     "firstName,exitDate"),
             new Seed(
                     "EXIT_TERMINATED", "EMAIL",
-                    "Your Anvi Corp employment status",
+                    "Your {{brandName}} employment status",
                     "Hello {{firstName}},\n\n"
-                            + "This message confirms that your engagement with Anvi Corp ended "
+                            + "This message confirms that your engagement with {{brandName}} ended "
                             + "on {{exitDate}}. You will receive separate communications about "
                             + "next steps from your ERM. Records remain accessible in your "
-                            + "dashboard.\n\n— Anvi Corp ERM",
+                            + "dashboard.\n\n{{signoffBlock}}",
                     "firstName,exitDate"),
             new Seed(
                     "EXIT_RESIGNED", "EMAIL",
                     "Confirmation of your resignation",
                     "Hello {{firstName}},\n\n"
-                            + "This confirms your resignation from Anvi Corp effective "
+                            + "This confirms your resignation from {{brandName}} effective "
                             + "{{exitDate}}. Thank you for your contributions. Records remain "
                             + "accessible in your dashboard; please share your exit feedback "
-                            + "when you have a moment.\n\n— Anvi Corp ERM",
+                            + "when you have a moment.\n\n{{signoffBlock}}",
                     "firstName,exitDate"),
             // ── ERM Phase 3 — interview lifecycle templates ─────────────────
             new Seed(
                     "INTERVIEW_SCHEDULED", "EMAIL",
-                    "Your Anvi Corp interview is scheduled for {{scheduledForLocal}}",
+                    "Your {{brandName}} interview is scheduled for {{scheduledForLocal}}",
                     "Hello {{firstName}},\n\n"
                             + "Your interview for {{jobTitle}} is scheduled for "
                             + "{{scheduledForLocal}} {{timezone}}.\n\n"
@@ -257,86 +261,86 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Interviewer: {{interviewerName}}\n\n"
                             + "Prep: {{prepInstructions}}\n\n"
                             + "Reply to this email if you need to reschedule.\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle,scheduledForLocal,timezone,zoomJoinUrl,"
                             + "interviewerName,prepInstructions"),
             new Seed(
                     "INTERVIEW_RESCHEDULED", "EMAIL",
-                    "Your Anvi Corp interview has been rescheduled",
+                    "Your {{brandName}} interview has been rescheduled",
                     "Hello {{firstName}},\n\n"
                             + "Your interview for {{jobTitle}} has been rescheduled to "
                             + "{{newScheduledForLocal}} {{timezone}}.\n\n"
                             + "Reason: {{rescheduleReasonHuman}}\n"
                             + "Updated link: {{zoomJoinUrl}}\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle,newScheduledForLocal,timezone,"
                             + "rescheduleReasonHuman,zoomJoinUrl"),
             new Seed(
                     "INTERVIEW_CANCELLED", "EMAIL",
-                    "Your Anvi Corp interview has been cancelled",
+                    "Your {{brandName}} interview has been cancelled",
                     "Hello {{firstName}},\n\n"
                             + "Your interview for {{jobTitle}} has been cancelled.\n\n"
                             + "{{cancellationMessage}}\n\n"
                             + "We will follow up shortly with next steps.\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle,cancellationMessage"),
             // ── ERM Phase 4 — offer + new-hire templates ────────────────────
             new Seed(
                     "OFFER_LETTER", "EMAIL",
-                    "Your offer from Anvi Corp — {{roleTitle}}",
+                    "Your offer from {{brandName}} — {{roleTitle}}",
                     "Hello {{firstName}},\n\n"
                             + "We're delighted to extend an offer for the {{roleTitle}} role at "
-                            + "Anvi Corp.\n\n"
+                            + "{{brandName}}.\n\n"
                             + "Tentative start: {{tentativeStartDate}}\n"
                             + "Compensation: {{compensationSummary}}\n"
                             + "Worksite: {{worksite}}\n"
                             + "Expected hours: {{expectedHoursPerWeek}}/week\n\n"
                             + "{{contingencies}}\n\n"
                             + "Please review and sign your offer within {{expiryDays}} days. "
-                            + "The link below opens the signing page directly on your Anvi Corp "
+                            + "The link below opens the signing page directly on your {{brandName}} "
                             + "dashboard — there's no separate signing email or third-party "
                             + "tool to install.\n\n"
                             + "{{signingLink}}\n\n"
-                            + "— {{ermName}}",
+                            + "{{signoffBlock}}",
                     "firstName,roleTitle,tentativeStartDate,compensationSummary,"
                             + "worksite,expectedHoursPerWeek,contingencies,expiryDays,"
                             + "ermName,signingLink"),
             new Seed(
                     "OFFER_REMINDER", "EMAIL",
-                    "Reminder: your Anvi Corp offer is awaiting signature",
+                    "Reminder: your {{brandName}} offer is awaiting signature",
                     "Hello {{firstName}},\n\n"
                             + "This is a reminder that your offer for {{roleTitle}} is awaiting "
                             + "your signature. The offer expires on {{expiryDate}}.\n\n"
-                            + "Open the link below to review and sign directly on your Anvi Corp "
+                            + "Open the link below to review and sign directly on your {{brandName}} "
                             + "dashboard (no separate signing email to look for).\n\n"
                             + "{{signingLink}}\n\n"
-                            + "— {{ermName}}",
+                            + "{{signoffBlock}}",
                     "firstName,roleTitle,expiryDate,ermName,signingLink"),
             new Seed(
                     "OFFER_VOIDED", "EMAIL",
-                    "Your Anvi Corp offer has been withdrawn",
+                    "Your {{brandName}} offer has been withdrawn",
                     "Hello {{firstName}},\n\n"
                             + "We regret to inform you that the offer extended to you for "
                             + "{{roleTitle}} has been withdrawn.\n\n"
                             + "{{voidReasonHuman}}\n\n"
                             + "If you have questions, please reach out.\n\n"
-                            + "— {{ermName}}",
+                            + "{{signoffBlock}}",
                     "firstName,roleTitle,voidReasonHuman,ermName"),
             new Seed(
                     "REPORTING_STRUCTURE_ASSIGNED", "EMAIL",
-                    "You've been assigned to a new intern at Anvi Corp",
+                    "You've been assigned to a new intern at {{brandName}}",
                     "Hello {{recipientFirstName}},\n\n"
                             + "You've been assigned as the {{role}} for {{internName}} "
                             + "({{employeeId}}). Internship starts {{tentativeStartDate}}.\n\n"
                             + "Open your dashboard to view their profile and prepare for "
-                            + "onboarding.\n\n— Anvi Corp ERM",
+                            + "onboarding.\n\n{{signoffBlock}}",
                     "recipientFirstName,role,internName,employeeId,tentativeStartDate"),
             new Seed(
                     "START_DATE_UPDATED", "EMAIL",
-                    "Your Anvi Corp start date has been updated",
+                    "Your {{brandName}} start date has been updated",
                     "Hello {{firstName}},\n\n"
                             + "Your tentative start date is now {{newDate}}. Please update "
-                            + "your calendar.\n\n— {{ermName}}",
+                            + "your calendar.\n\n{{signoffBlock}}",
                     "firstName,newDate,ermName"),
             // ── ERM Phase 5 — onboarding review + compliance templates ───────
             new Seed(
@@ -346,7 +350,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Your {{documentName}} submission has been reviewed and "
                             + "accepted. No further action is needed for this item.\n\n"
                             + "Open your dashboard to track the remaining onboarding "
-                            + "documents.\n\n— Anvi Corp ERM",
+                            + "documents.\n\n{{signoffBlock}}",
                     "firstName,documentName"),
             new Seed(
                     "ONBOARDING_ITEM_REJECTED", "EMAIL",
@@ -356,7 +360,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "can be accepted.\n\n"
                             + "Reviewer comments: {{ermComments}}\n\n"
                             + "Please update and resubmit from your dashboard.\n\n"
-                            + "— {{ermName}}",
+                            + "{{signoffBlock}}",
                     "firstName,documentName,ermComments,ermName"),
             new Seed(
                     "ONBOARDING_ITEM_RESEND", "EMAIL",
@@ -365,16 +369,16 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "We need a fresh copy of your {{documentName}}.\n\n"
                             + "Reason: {{ermComments}}\n\n"
                             + "Please re-upload from your dashboard at your earliest "
-                            + "convenience.\n\n— {{ermName}}",
+                            + "convenience.\n\n{{signoffBlock}}",
                     "firstName,documentName,ermComments,ermName"),
             new Seed(
                     "ONBOARDING_PACKET_ACCEPTED", "EMAIL",
-                    "Your Anvi Corp onboarding packet is complete",
+                    "Your {{brandName}} onboarding packet is complete",
                     "Hello {{firstName}},\n\n"
                             + "All required onboarding documents have been accepted. "
                             + "Welcome aboard — your first day is {{firstDayOfEmployment}}.\n\n"
                             + "Your reporting team will reach out with project details "
-                            + "shortly.\n\n— Anvi Corp ERM",
+                            + "shortly.\n\n{{signoffBlock}}",
                     "firstName,firstDayOfEmployment"),
             new Seed(
                     "EVERIFY_CASE_OPENED", "EMAIL",
@@ -383,7 +387,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "A federal E-Verify case has been opened to confirm your "
                             + "employment eligibility. No action is required from you at "
                             + "this time — we will contact you only if additional "
-                            + "verification is needed.\n\n— Anvi Corp ERM",
+                            + "verification is needed.\n\n{{signoffBlock}}",
                     "firstName"),
             new Seed(
                     "EVERIFY_TENTATIVE_NONCONFIRMATION", "EMAIL",
@@ -394,14 +398,14 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "additional information.\n\n"
                             + "Please reach out to {{ermName}} within 10 federal "
                             + "business days to decide whether to contest. We will guide "
-                            + "you through the next steps.\n\n— Anvi Corp ERM",
+                            + "you through the next steps.\n\n{{signoffBlock}}",
                     "firstName,ermName"),
             new Seed(
                     "EVERIFY_AUTHORIZED", "EMAIL",
                     "Your E-Verify case is closed — employment authorized",
                     "Hello {{firstName}},\n\n"
                             + "Your E-Verify case has been closed with Employment "
-                            + "Authorized. No further action is needed.\n\n— Anvi Corp ERM",
+                            + "Authorized. No further action is needed.\n\n{{signoffBlock}}",
                     "firstName"),
             new Seed(
                     "WORK_AUTH_EXPIRING", "EMAIL",
@@ -411,7 +415,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "{{expirationDate}} ({{daysUntilExpiration}} days away).\n\n"
                             + "Please connect with {{ermName}} as soon as possible to "
                             + "share updated documentation or discuss extension "
-                            + "options.\n\n— Anvi Corp ERM",
+                            + "options.\n\n{{signoffBlock}}",
                     "firstName,workAuthType,expirationDate,daysUntilExpiration,ermName"),
             // Parity-gap fill — ERM-facing counterpart for the work-auth
             // expiring alert. The intern already gets WORK_AUTH_EXPIRING
@@ -438,7 +442,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "the intern to collect updated documentation or discuss "
                             + "extension options before the deadline:\n"
                             + "{{deepLink}}\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "ermName,internName,workAuthType,expirationDate,"
                             + "daysUntilExpiration,deepLink"),
             // Parity-gap fill — intern-facing "your IDMS document was
@@ -462,7 +466,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "{{commentsBlock}}"
                             + "\n\nOpen the document to review the feedback, apply "
                             + "the corrections, and re-submit:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,ermName,templateTitle,reasonBlock,"
                             + "commentsBlock,deepLink"),
             // ── Trainer Phase 0 — doc §10 + §8 notification matrix (7 templates).
@@ -474,7 +478,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "{{projectTitle}} ({{technologyArea}}).\n\n"
                             + "Due: {{dueDateLocal}}\n\n"
                             + "Open your dashboard to view instructions, attached files, "
-                            + "and GitHub setup:\n{{deepLink}}\n\n— Anvi Corp",
+                            + "and GitHub setup:\n{{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,trainerName,projectTitle,technologyArea,dueDateLocal,deepLink"),
             // Trainer Phase 2 — staff-side variant used when the trainer
             // flips on "notify stakeholders" so Evaluator / Manager / ERM
@@ -489,7 +493,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "  · Due {{dueDateLocal}}\n"
                             + "  · Slot: Project {{projectNumber}} for {{monthYear}}\n\n"
                             + "Open the project to review instructions and attached "
-                            + "files:\n{{deepLink}}\n\n— Anvi Corp",
+                            + "files:\n{{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,trainerName,internName,projectTitle,technologyArea,"
                             + "dueDateLocal,projectNumber,monthYear,deepLink"),
             new Seed(
@@ -499,7 +503,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Your trainer {{trainerName}} has scheduled a weekly support "
                             + "meeting on {{meetingDateLocal}} {{timezone}}.\n\n"
                             + "Topic: {{topic}}\nAgenda: {{agenda}}\n\n"
-                            + "Join: {{zoomJoinUrl}}\n\n— Anvi Corp",
+                            + "Join: {{zoomJoinUrl}}\n\n{{signoffBlock}}",
                     "firstName,trainerName,meetingDateLocal,timezone,topic,zoomJoinUrl,agenda"),
             new Seed(
                     "WEEKLY_MEETING_COMPLETED", "EMAIL",
@@ -509,7 +513,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "{{trainerName}} has been recorded.\n\n"
                             + "Attendance: {{attendance}}\n"
                             + "Notes: {{notes}}\n"
-                            + "Action items: {{actionItems}}\n\n— Anvi Corp",
+                            + "Action items: {{actionItems}}\n\n{{signoffBlock}}",
                     "firstName,trainerName,meetingDateLocal,attendance,notes,actionItems"),
             new Seed(
                     "WEEKLY_MEETING_MISSED", "EMAIL",
@@ -519,7 +523,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "{{trainerName}} was marked missed.\n\n"
                             + "Reason: {{missedReason}}\n\n"
                             + "Please contact {{trainerName}} to reschedule.\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,trainerName,meetingDateLocal,missedReason"),
             // Email-slice-2 — scheduler/host "you scheduled this meeting"
             // email. Dual-use: TrainerMeetingNotificationDispatcher sends
@@ -542,7 +546,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "You scheduled \"{{meetingTitle}}\"{{participantLine}} "
                             + "for {{scheduledForLocal}} ({{timezone}}).\n\n"
                             + "{{hostAccessBlock}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "subjectPrefix,meetingTitle,recipientName,participantLine,"
                             + "scheduledForLocal,timezone,hostAccessBlock"),
             new Seed(
@@ -551,7 +555,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                     "Hello {{trainerFirstName}},\n\n"
                             + "{{internName}} has submitted work on {{projectTitle}}.\n\n"
                             + "Open the Pending Reviews queue:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "trainerFirstName,internName,projectTitle,deepLink"),
             new Seed(
                     "FEEDBACK_PUBLISHED", "EMAIL",
@@ -565,7 +569,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Notes: {{reviewNotes}}\n\n"
                             + "{{nextActionBlurb}}\n\n"
                             + "View full feedback:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,trainerName,projectTitle,decisionLabel,technicalScore,"
                             + "communicationScore,reviewNotes,nextActionBlurb,deepLink"),
             new Seed(
@@ -576,7 +580,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "has not been submitted.\n\n"
                             + "Please submit, or contact your trainer {{trainerName}}. "
                             + "Escalation may follow if not resolved.\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,trainerName,projectTitle,dueDateLocal"),
             // ── ERM Phase 8 — Document packet workflow ──────────────────────
             new Seed(
@@ -594,7 +598,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "pages into a single PDF.\n"
                             + "  4. Upload the scanned PDF from your dashboard.\n\n"
                             + "Open your dashboard to get started:\n"
-                            + "{{deepLink}}\n\n— Anvi Corp ERM",
+                            + "{{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,ermName,templateCount,templateTitlesList,deepLink"),
             new Seed(
                     "DOCUMENT_TASK_ACCEPTED", "EMAIL",
@@ -602,7 +606,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                     "Hello {{firstName}},\n\n"
                             + "Your submission for {{templateTitle}} has been reviewed "
                             + "and accepted by {{ermName}}.\n\n"
-                            + "{{remainingTasksBlurb}}\n\n— Anvi Corp ERM",
+                            + "{{remainingTasksBlurb}}\n\n{{signoffBlock}}",
                     "firstName,templateTitle,ermName,remainingTasksBlurb"),
             new Seed(
                     "DOCUMENT_TASK_REJECTED", "EMAIL",
@@ -613,7 +617,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "ERM comments: {{ermComments}}\n\n"
                             + "Please correct the issue and re-scan all pages into a "
                             + "single PDF, then upload again from your dashboard:\n"
-                            + "{{deepLink}}\n\n— Anvi Corp ERM",
+                            + "{{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,templateTitle,reasonHuman,ermComments,deepLink"),
             new Seed(
                     "DOCUMENT_TASK_RESEND", "EMAIL",
@@ -624,11 +628,11 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "ERM comments: {{ermComments}}\n\n"
                             + "Re-scan all pages into a single PDF and resubmit from your "
                             + "dashboard:\n"
-                            + "{{deepLink}}\n\n— Anvi Corp ERM",
+                            + "{{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,templateTitle,reasonHuman,ermComments,deepLink"),
             new Seed(
                     "DOCUMENT_PACKET_COMPLETED", "EMAIL",
-                    "Onboarding complete — welcome to Anvi Corp!",
+                    "Onboarding complete — welcome to {{brandName}}!",
                     "Hello {{firstName}},\n\n"
                             + "All your onboarding documents have been accepted. "
                             + "Your tentative start date is {{tentativeStartDate}}.\n\n"
@@ -636,7 +640,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + " · Trainer: {{trainerName}}\n"
                             + " · Evaluator: {{evaluatorName}}\n"
                             + " · Manager: {{managerName}}\n\n"
-                            + "See you soon!\n\n— Anvi Corp ERM",
+                            + "See you soon!\n\n{{signoffBlock}}",
                     "firstName,tentativeStartDate,trainerName,evaluatorName,managerName"),
             // ── Evaluator Phase 0 — scaffolded templates; workflows ship in
             // Phases 2-4. Seeded here so production templates exist before
@@ -652,7 +656,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Join: {{zoomLink}}\n\n"
                             + "Come prepared to discuss your recent projects, your goals, "
                             + "and any blockers. We'll capture the outcome in your dashboard "
-                            + "right after.\n\n— Anvi Corp",
+                            + "right after.\n\n{{signoffBlock}}",
                     "firstName,evaluationType,evaluatorName,scheduledDateLocal,"
                             + "timezone,zoomLink"),
             new Seed(
@@ -663,7 +667,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "evaluation. Please review it in your dashboard and acknowledge "
                             + "within {{ackDays}} days.\n\n"
                             + "Summary: {{summaryLine}}\n\n"
-                            + "Open evaluation: {{deepLink}}\n\n— Anvi Corp",
+                            + "Open evaluation: {{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,evaluatorName,evaluationType,ackDays,summaryLine,deepLink"),
             new Seed(
                     "EVALUATION_AMENDED", "EMAIL",
@@ -673,7 +677,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "acknowledged on {{previousAckDate}}. Please review the updated "
                             + "version and re-acknowledge.\n\n"
                             + "What changed: {{changeSummary}}\n\n"
-                            + "Open evaluation: {{deepLink}}\n\n— Anvi Corp",
+                            + "Open evaluation: {{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,evaluatorName,previousAckDate,changeSummary,deepLink"),
             new Seed(
                     "EVALUATION_REMINDER_TO_INTERN", "EMAIL",
@@ -683,7 +687,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "acknowledgment for {{daysWaiting}} days.\n\n"
                             + "It takes less than a minute — open your dashboard and click "
                             + "Acknowledge so we can mark this cycle complete:\n"
-                            + "{{deepLink}}\n\n— Anvi Corp",
+                            + "{{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,evaluationType,daysWaiting,deepLink"),
             new Seed(
                     "EVALUATION_OVERDUE_ALERT", "EMAIL",
@@ -693,7 +697,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "evaluation for {{monthYear}}. The Evaluator hasn't scheduled "
                             + "or completed one yet.\n\n"
                             + "Open the dashboard to follow up:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "ermName,internName,employeeId,monthYear,deepLink"),
             new Seed(
                     "I983_EVALUATION_DUE", "EMAIL",
@@ -704,7 +708,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "must be submitted by {{dueDate}}.\n\n"
                             + "Open the I-983 workspace: {{deepLink}}\n\n"
                             + "ERM is CC'd. Please coordinate scheduling with the intern.\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "evaluatorName,internName,employeeId,windowStartDate,dueDate,deepLink"),
             new Seed(
                     "I983_EVALUATION_PUBLISHED", "EMAIL",
@@ -714,7 +718,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "evaluation. Please review the form and confirm the student "
                             + "signature section in your dashboard so we can complete the DSO "
                             + "submission.\n\n"
-                            + "Open evaluation: {{deepLink}}\n\n— Anvi Corp",
+                            + "Open evaluation: {{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,evaluatorName,evaluationType,deepLink"),
             // ── Wave-1 email-refinement — two new high-value receipts ─────
             // APPLICATION_RECEIVED — applicant-facing confirmation on apply.
@@ -729,9 +733,9 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
             // has re-seeded).
             new Seed(
                     "APPLICATION_RECEIVED", "EMAIL",
-                    "We received your Anvi Corp application — {{jobTitle}}",
+                    "We received your {{brandName}} application — {{jobTitle}}",
                     "Hello {{firstName}},\n\n"
-                            + "Thanks for applying to {{jobTitle}} at Anvi Corp — we've "
+                            + "Thanks for applying to {{jobTitle}} at {{brandName}} — we've "
                             + "received your application and it's now with our recruiting "
                             + "team.\n\n"
                             + "What happens next:\n"
@@ -741,9 +745,9 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "an initial interview.\n"
                             + "  · If it's not a match, we'll let you know via email — we "
                             + "close the loop either way.\n\n"
-                            + "You can track the status any time in your Anvi Corp "
+                            + "You can track the status any time in your {{brandName}} "
                             + "dashboard. Reach out to {{supportEmail}} with any "
-                            + "questions.\n\n— Anvi Corp ERM",
+                            + "questions.\n\n{{signoffBlock}}",
                     "firstName,jobTitle"),
             // OFFER_ACCEPTED — applicant-facing confirmation when they
             // sign the offer through IDMS. Previously only ERM got an
@@ -754,11 +758,11 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
             // of what they signed + the onboarding next steps.
             new Seed(
                     "OFFER_ACCEPTED", "EMAIL",
-                    "Welcome to Anvi Corp — offer for {{jobTitle}} accepted",
+                    "Welcome to {{brandName}} — offer for {{jobTitle}} accepted",
                     "Hello {{firstName}},\n\n"
                             + "Congratulations — we've received your signed offer for "
-                            + "{{jobTitle}} at Anvi Corp. This email is your record; a copy "
-                            + "of the executed PDF is available any time in your Anvi Corp "
+                            + "{{jobTitle}} at {{brandName}}. This email is your record; a copy "
+                            + "of the executed PDF is available any time in your {{brandName}} "
                             + "dashboard.\n\n"
                             + "What happens next:\n"
                             + "  · Your ERM will reach out within 2 business days to kick "
@@ -769,11 +773,11 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "assigned and you'll get an intro email from each.\n\n"
                             + "Save the entity name for your records: {{brandLegalEntity}}. "
                             + "Reach out to {{supportEmail}} with any questions.\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle,tentativeStartDate"),
             // ── Slice-1 evaluation migration — templates the fanout was
-            // constructing inline. Rebrand-safe: literal "Anvi Corp" and
-            // the "— Anvi Corp" signoff are rewritten by brandify() to
+            // constructing inline. Rebrand-safe: literal "{{brandName}}" and
+            // the "{{signoffBlock}}" signoff are rewritten by brandify() to
             // {{brandName}} / {{signoffBlock}} at seed time.
             new Seed(
                     "EVALUATION_ACK_REQUESTED", "EMAIL",
@@ -785,7 +789,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "and click Acknowledge — that confirms you've reviewed the "
                             + "ratings and lets your Manager and ERM know you're aware.\n\n"
                             + "Open it to acknowledge: {{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,evaluatorName,deepLink"),
             new Seed(
                     "I983_EVALUATION_SCHEDULED", "EMAIL",
@@ -795,7 +799,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "{{evaluationType}} I-983 evaluation.\n\n"
                             + "Window: {{windowStartDate}}  →  Due: {{dueDate}}\n\n"
                             + "Open your I-983 evaluations: {{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,evaluatorName,evaluationType,windowStartDate,dueDate,deepLink"),
             new Seed(
                     "I983_DSO_SUBMITTED", "EMAIL",
@@ -806,7 +810,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Submission method: {{submissionMethod}}.\n\n"
                             + "Keep this confirmation for your STEM-OPT records.\n"
                             + "Open your I-983: {{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,actorName,submissionMethod,deepLink"),
             new Seed(
                     "I983_EVALUATION_AMENDED", "EMAIL",
@@ -818,7 +822,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "window.\n\n"
                             + "What changed: {{changeSummary}}\n\n"
                             + "Open your I-983: {{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,evaluatorName,changeSummary,deepLink"),
             // ── Slice-3 manager-hire-decision fold-ins — ERM-facing.
             // Recipient for all three: the ERM who owns the applicant.
@@ -836,7 +840,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "candidate is now SELECTED; once they acknowledge the "
                             + "selection, you can send the offer.\n\n"
                             + "Open the decision center:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "ermName,internName,deepLink"),
             new Seed(
                     "MANAGER_HIRE_HOLD", "EMAIL",
@@ -845,7 +849,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "A Manager placed the hire for {{internName}} ON HOLD — "
                             + "no final decision yet.{{noteBlock}}\n\n"
                             + "Check the interview and follow up as needed:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "ermName,internName,noteBlock,deepLink"),
             new Seed(
                     "MANAGER_HIRE_DECLINED", "EMAIL",
@@ -854,7 +858,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "A Manager declined the hire for {{internName}}. The "
                             + "application has been moved to REJECTED.\n\n"
                             + "Open the interview:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "ermName,internName,deepLink"),
             // ── Slice-5 profile + I-983 self-eval fold-ins.
             // PROFILE_SUBMITTED — ERM-facing one-shot alert when an intern
@@ -877,7 +881,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "  · Full address: {{fullAddress}}\n"
                             + "  · Submitted: {{submittedAtLocal}}\n\n"
                             + "Open the ERM applications dashboard to review:\n"
-                            + "{{deepLink}}\n\n— Anvi Corp ERM",
+                            + "{{deepLink}}\n\n{{signoffBlock}}",
                     "ermName,internName,internEmail,internPhone,workAuth,"
                             + "skillset,fullAddress,submittedAtLocal,deepLink"),
             // PROFILE_EDITED — ERM-facing throttled alert (max 1/15min) when
@@ -900,7 +904,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "{{deepLink}}\n\n"
                             + "(Note: further edits by this intern in the next 15 "
                             + "minutes will not trigger additional notifications.)\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "ermName,internName,internEmail,internPhone,changedField,"
                             + "skillset,fullAddress,workAuth,deepLink"),
             // I983_SELF_EVAL_DUE — intern-facing STEM-OPT compliance nudge
@@ -919,7 +923,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "before your supervisor finalizes their side — the two "
                             + "halves sign the same federal STEM-OPT record.\n\n"
                             + "Open your evaluations dashboard:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,evaluationType,deepLink"),
             // ── Slice-6b Category A migration — template-first-with-typed-
             // fallback for high-priority NotificationService legacy methods.
@@ -941,7 +945,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "onboarding items so we can lock in your start:\n"
                             + "{{deepLink}}\n\n"
                             + "Reach out to {{supportEmail}} with any questions.\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle,entityName,startDate,deepLink"),
             // INTERVIEW_REMINDER — 24h-before scheduler reminder.
             new Seed(
@@ -958,7 +962,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "  · Join link: {{meetingUrl}}\n\n"
                             + "Please be online 2-3 minutes early so any connection "
                             + "issues don't eat into your interview time.\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle,entityName,scheduledAtLocal,"
                             + "durationMinutes,interviewType,interviewerName,meetingUrl"),
             // COMPLIANCE_TASK_REMINDER — one row per overdue task, fired by
@@ -974,7 +978,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "{{overdueLine}}\n\n"
                             + "Open your onboarding dashboard to complete it:\n"
                             + "{{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,taskTitle,dueDate,overdueLine,deepLink"),
             // TIMESHEET_DUE — weekly-scheduler reminder to intern to submit
             // their timesheet for {{weekStart}}.
@@ -986,7 +990,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "due. Head to your dashboard to log your hours before "
                             + "your Manager's review cycle closes.\n\n"
                             + "Open your dashboard:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,weekStart,deepLink"),
             // WEEKLY_REPORT_DUE — weekly-scheduler reminder to intern to
             // submit their weekly report for {{weekStart}}.
@@ -998,7 +1002,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "due. Share the wins, blockers, and progress from the "
                             + "past week so your Manager and ERM stay aligned.\n\n"
                             + "Open your dashboard:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,weekStart,deepLink"),
             // ── Slice-6c OnboardingTrackerService fold-ins (Category C).
             // INTERN_ONBOARDING_ANNOUNCED — staff-facing (trainer /
@@ -1015,7 +1019,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "and their onboarding is in progress. They'll appear in "
                             + "your dashboard once activated.\n\n"
                             + "View your active-interns list:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,internName,deepLink"),
             // OFFER_SIGN_REMINDER — intern-facing lightweight nudge that
             // their offer letter is awaiting e-signature. Distinct from
@@ -1030,7 +1034,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Your offer letter is waiting for your e-signature. "
                             + "Sign in to view and sign your offer:\n{{deepLink}}\n\n"
                             + "This is a friendly reminder from {{ermName}}.\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,ermName,deepLink"),
             // ── Slice-6d Category A next-subset seeds ────────────────────
             // OFFER_EXTENDED — applicant-facing offer-ready alert fired
@@ -1049,7 +1053,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Open the Offer page to review the full letter and sign:\n"
                             + "{{deepLink}}\n\n"
                             + "Reach out to {{supportEmail}} with any questions.\n\n"
-                            + "— Anvi Corp ERM",
+                            + "{{signoffBlock}}",
                     "firstName,jobTitle,entityName,compensationLine,startDate,"
                             + "expiresAt,deepLink"),
             // WEEKLY_REPORT_RETURNED — intern-facing "needs revisions"
@@ -1063,7 +1067,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "returned with review feedback. Please open it, apply the "
                             + "corrections, and re-submit."
                             + "{{reviewNotesLine}}\n\n"
-                            + "Open the report:\n{{deepLink}}\n\n— Anvi Corp",
+                            + "Open the report:\n{{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,weekStart,reviewNotesLine,deepLink"),
             // WEEKLY_REPORT_APPROVED — intern-facing "approved" ack.
             new Seed(
@@ -1073,7 +1077,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Your weekly report for the week of {{weekStart}} was "
                             + "approved. Nice work — no further action needed for this "
                             + "week.\n\n"
-                            + "Open your dashboard:\n{{deepLink}}\n\n— Anvi Corp",
+                            + "Open your dashboard:\n{{deepLink}}\n\n{{signoffBlock}}",
                     "firstName,weekStart,deepLink"),
             // I9_SECTION1_REMINDER — intern-facing prompt to complete
             // I-9 §1 before the due date.
@@ -1085,7 +1089,7 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "federal employment-eligibility form — please complete it "
                             + "before the deadline so onboarding stays on track.\n\n"
                             + "Open the I-9 page to complete it:\n{{deepLink}}\n\n"
-                            + "— Anvi Corp",
+                            + "{{signoffBlock}}",
                     "firstName,dueDate,deepLink")
     );
 
