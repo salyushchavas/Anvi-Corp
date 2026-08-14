@@ -1,5 +1,6 @@
 package com.anvicorp.api.bootstrap;
 
+import com.anvicorp.api.config.BrandConfig;
 import com.anvicorp.api.entity.JobPosting;
 import com.anvicorp.api.entity.StaffingEntity;
 import com.anvicorp.api.enums.EmploymentType;
@@ -53,6 +54,7 @@ public class TestJobPostingSeeder implements ApplicationRunner {
 
     private final StaffingEntityRepository staffingEntityRepository;
     private final JobPostingRepository jobPostingRepository;
+    private final BrandConfig brand;
 
     @Value("${app.bootstrap.seed-test-jobs-enabled:true}")
     private boolean enabled;
@@ -136,25 +138,26 @@ public class TestJobPostingSeeder implements ApplicationRunner {
                 .build();
     }
 
-    private static final String CANONICAL_ENTITY_NAME = "Anvi Corp USA";
-
     /**
-     * Look up "Anvi Corp USA" by NAME. The old {@code findAll().get(0)}
-     * lookup was non-deterministic: if a legacy dev DB had a stray
-     * "Stellar USA" row it would win and this seeder would attach the
-     * sample "Senior Engineer" posting to the wrong parent.
+     * Look up the canonical entity by NAME (= BrandConfig.legalName). The
+     * old {@code findAll().get(0)} lookup was non-deterministic: if a
+     * legacy dev DB had a stray "Stellar USA" row it would win and this
+     * seeder would attach the sample "Senior Engineer" posting to the
+     * wrong parent. Both this seeder and SeedJobPostingsRunner route
+     * through the same brand-derived name so they always agree.
      */
     private StaffingEntity ensureStaffingEntity() {
-        return staffingEntityRepository.findByName(CANONICAL_ENTITY_NAME)
+        String canonicalEntityName = brand.getLegalName();
+        return staffingEntityRepository.findByName(canonicalEntityName)
                 .orElseGet(() -> {
                     StaffingEntity entity = StaffingEntity.builder()
-                            .name(CANONICAL_ENTITY_NAME)
+                            .name(canonicalEntityName)
                             .country("USA")
                             .isActive(true)
                             .build();
                     entity = staffingEntityRepository.save(entity);
                     log.info("{} created default StaffingEntity '{}'",
-                            LOG_TAG, CANONICAL_ENTITY_NAME);
+                            LOG_TAG, canonicalEntityName);
                     return entity;
                 });
     }

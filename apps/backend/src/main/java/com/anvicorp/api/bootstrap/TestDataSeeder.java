@@ -1,5 +1,6 @@
 package com.anvicorp.api.bootstrap;
 
+import com.anvicorp.api.config.BrandConfig;
 import com.anvicorp.api.entity.Application;
 import com.anvicorp.api.entity.Candidate;
 import com.anvicorp.api.entity.InternLifecycle;
@@ -97,10 +98,15 @@ public class TestDataSeeder implements CommandLineRunner {
     private static final String EVALUATOR_EMAIL = "test-evaluator@anvicorp.test";
     private static final String MANAGER_EMAIL = "test-manager@anvicorp.test";
 
-    private static final String TEST_ENTITY_NAME = "Anvi Corp Test Entity (Phase 8.3)";
+    // Suffix; the "{Brand}" prefix comes from BrandConfig.getName() at
+    // run() time. For Anvi (name="Anvi Corp") the composed name is
+    // "Anvi Corp Test Entity (Phase 8.3)" — byte-identical to the prior
+    // hardcoded literal.
+    private static final String TEST_ENTITY_NAME_SUFFIX = " Test Entity (Phase 8.3)";
     private static final String TEST_POSTING_SLUG = "skyzen-test-java-fullstack-intern";
 
     private final boolean enabled;
+    private final BrandConfig brand;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final CandidateRepository candidateRepository;
@@ -121,6 +127,7 @@ public class TestDataSeeder implements CommandLineRunner {
 
     public TestDataSeeder(
             @Value("${app.seed.test-data-enabled:${SEED_TEST_DATA:false}}") boolean enabled,
+            BrandConfig brand,
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             CandidateRepository candidateRepository,
@@ -134,6 +141,7 @@ public class TestDataSeeder implements CommandLineRunner {
             JdbcTemplate jdbc,
             PlatformTransactionManager txManager) {
         this.enabled = enabled;
+        this.brand = brand;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.candidateRepository = candidateRepository;
@@ -280,16 +288,17 @@ public class TestDataSeeder implements CommandLineRunner {
     }
 
     private StaffingEntity findOrCreateEntity() {
+        String testEntityName = brand.getName() + TEST_ENTITY_NAME_SUFFIX;
         return staffingEntityRepository.findAll().stream()
-                .filter(e -> TEST_ENTITY_NAME.equals(e.getName()))
+                .filter(e -> testEntityName.equals(e.getName()))
                 .findFirst()
                 .orElseGet(() -> {
                     StaffingEntity e = StaffingEntity.builder()
-                            .name(TEST_ENTITY_NAME)
+                            .name(testEntityName)
                             .isActive(true)
                             .build();
                     e = staffingEntityRepository.save(e);
-                    log.info("{}   staffing entity \"{}\" → CREATED", LOG_TAG, TEST_ENTITY_NAME);
+                    log.info("{}   staffing entity \"{}\" → CREATED", LOG_TAG, testEntityName);
                     return e;
                 });
     }
