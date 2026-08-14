@@ -1,5 +1,6 @@
 package com.anvicorp.api.bootstrap;
 
+import com.anvicorp.api.config.BrandConfig;
 import com.anvicorp.api.mail.entity.MailDomain;
 import com.anvicorp.api.mail.repository.MailDomainRepository;
 import lombok.RequiredArgsConstructor;
@@ -73,31 +74,35 @@ import java.util.UUID;
 public class MailRoleAccountSeeder implements CommandLineRunner {
 
     private static final String LOG_TAG = "[MailRoleAccountSeeder]";
-    private static final String DEFAULT_DOMAIN = "anvicorp.com";
     /** 1 GiB — matches {@code MailAccount}'s @Builder.Default. Set
      *  explicitly here so the row is safe even if a DDL migration ever
      *  drops the column default. */
     private static final long DEFAULT_QUOTA_BYTES = 1_073_741_824L;
 
-    // Literal local-parts — MUST STAY IN LOCK-STEP with
+    // Local-parts + display-role suffixes — MUST STAY IN LOCK-STEP with
     // com.anvicorp.api.notification.NotificationSenderRoles constants
     // ("noreply" / "erm" / "trainer" / "evaluator" / "manager"). Not
     // imported from that class because those constants are package-
-    // private in the notification package.
+    // private in the notification package. The display-name prefix
+    // (e.g. "Anvi") is derived at run() time from BrandConfig.getShortName()
+    // so a clone renders "{Brand} ERM" etc. — for Anvi (shortName="Anvi")
+    // the rendered display names are byte-identical to the previous
+    // hardcoded values.
     private static final List<RoleMailbox> ROLE_MAILBOXES = List.of(
-            new RoleMailbox("noreply",           "Anvi (No Reply)"),
-            new RoleMailbox("erm",               "Anvi ERM"),
-            new RoleMailbox("trainer",           "Anvi Trainer"),
-            new RoleMailbox("evaluator",         "Anvi Evaluator"),
-            new RoleMailbox("manager",           "Anvi Manager"),
-            new RoleMailbox("reporting-manager", "Anvi Reporting Manager"));
+            new RoleMailbox("noreply",           "(No Reply)"),
+            new RoleMailbox("erm",               "ERM"),
+            new RoleMailbox("trainer",           "Trainer"),
+            new RoleMailbox("evaluator",         "Evaluator"),
+            new RoleMailbox("manager",           "Manager"),
+            new RoleMailbox("reporting-manager", "Reporting Manager"));
 
-    private record RoleMailbox(String localPart, String displayName) {}
+    private record RoleMailbox(String localPart, String displayRoleSuffix) {}
 
     private final MailDomainRepository domainRepository;
     private final PasswordEncoder passwordEncoder;
     private final PlatformTransactionManager transactionManager;
     private final JdbcTemplate jdbcTemplate;
+    private final BrandConfig brand;
 
     @Value("${app.bootstrap.seed-role-mailboxes-enabled:true}")
     private boolean enabled;
@@ -122,12 +127,14 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 
+        String defaultDomain = brand.getEmailDomain();
+        String shortName = brand.getShortName();
         MailDomain domain;
         try {
-            domain = resolveOrSeedDefaultDomain(tx);
+            domain = resolveOrSeedDefaultDomain(tx, defaultDomain);
         } catch (Throwable e) {
             log.warn("{} could not resolve/seed default domain '{}' — skipping (non-fatal): {}",
-                    LOG_TAG, DEFAULT_DOMAIN, e.getMessage(), e);
+                    LOG_TAG, defaultDomain, e.getMessage(), e);
             return;
         }
         if (domain == null) {
@@ -164,6 +171,7 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
                 // mirrors MailAccount's @Column names exactly; the schema's
                 // defaults handle status/must_change columns even where
                 // the entity's @Builder.Default doesn't apply.
+                String displayName = shortName + " " + rm.displayRoleSuffix();
                 tx.executeWithoutResult(status -> {
                     UUID newId = UUID.randomUUID();
                     String randomPassword = UUID.randomUUID().toString();
@@ -176,7 +184,7 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
                             newId,
                             domainId,
                             rm.localPart(),
-                            rm.displayName(),
+                            displayName,
                             passwordEncoder.encode(randomPassword),
                             "USER",
                             "ACTIVE",
@@ -203,25 +211,25 @@ public class MailRoleAccountSeeder implements CommandLineRunner {
      * the SAME entrypoint the bridge uses ({@code findByName}) so both
      * always resolve to the exact same UUID row.
      */
-    private MailDomain resolveOrSeedDefaultDomain(TransactionTemplate tx) {
+    private MailDomain resolveOrSeedDefaultDomain(TransactionTemplate tx, String defaultDomain) {
         Optional<MailDomain> byName = tx.execute(status ->
-                domainRepository.findByName(DEFAULT_DOMAIN));
+                domainRepository.findByName(defaultDomain));
         if (byName != null && byName.isPresent()) return byName.get();
         try {
             MailDomain seeded = tx.execute(status ->
                     domainRepository.save(MailDomain.builder()
-                            .name(DEFAULT_DOMAIN)
-                            .displayName(DEFAULT_DOMAIN)
+                            .name(defaultDomain)
+                            .displayName(defaultDomain)
                             .active(true)
                             .build()));
             if (seeded != null) {
-                log.warn("{} seeded default mail domain '{}'", LOG_TAG, DEFAULT_DOMAIN);
+                log.warn("{} seeded default mail domain '{}'", LOG_TAG, defaultDomain);
             }
             return seeded;
         } catch (Throwable e) {
             log.info("{} default domain seed threw ({}) — re-reading", LOG_TAG, e.getMessage());
             Optional<MailDomain> retry = tx.execute(status ->
-                    domainRepository.findByName(DEFAULT_DOMAIN));
+                    domainRepository.findByName(defaultDomain));
             return retry != null ? retry.orElse(null) : null;
         }
     }
