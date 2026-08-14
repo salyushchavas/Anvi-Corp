@@ -1031,7 +1031,62 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "Sign in to view and sign your offer:\n{{deepLink}}\n\n"
                             + "This is a friendly reminder from {{ermName}}.\n\n"
                             + "— Anvi Corp",
-                    "firstName,ermName,deepLink")
+                    "firstName,ermName,deepLink"),
+            // ── Slice-6d Category A next-subset seeds ────────────────────
+            // OFFER_EXTENDED — applicant-facing offer-ready alert fired
+            // by OfferService.extendOffer. Compensation vars are inline
+            // placeholders (empty when missing) so the render stays
+            // coherent whether or not the ERM populated them.
+            new Seed(
+                    "OFFER_EXTENDED", "EMAIL",
+                    "Your {{jobTitle}} offer from {{entityName}} is ready to view",
+                    "Hello {{firstName}},\n\n"
+                            + "We're delighted to extend an offer for the {{jobTitle}} "
+                            + "role at {{entityName}}.\n\n"
+                            + "  · Compensation: {{compensationLine}}\n"
+                            + "  · Start date: {{startDate}}\n"
+                            + "  · Offer expires: {{expiresAt}}\n\n"
+                            + "Open the Offer page to review the full letter and sign:\n"
+                            + "{{deepLink}}\n\n"
+                            + "Reach out to {{supportEmail}} with any questions.\n\n"
+                            + "— Anvi Corp ERM",
+                    "firstName,jobTitle,entityName,compensationLine,startDate,"
+                            + "expiresAt,deepLink"),
+            // WEEKLY_REPORT_RETURNED — intern-facing "needs revisions"
+            // alert from the reviewer. {{reviewNotesLine}} inlines the
+            // reviewer's notes when supplied (empty when blank).
+            new Seed(
+                    "WEEKLY_REPORT_RETURNED", "EMAIL",
+                    "Weekly report returned for changes — week of {{weekStart}}",
+                    "Hello {{firstName}},\n\n"
+                            + "Your weekly report for the week of {{weekStart}} was "
+                            + "returned with review feedback. Please open it, apply the "
+                            + "corrections, and re-submit."
+                            + "{{reviewNotesLine}}\n\n"
+                            + "Open the report:\n{{deepLink}}\n\n— Anvi Corp",
+                    "firstName,weekStart,reviewNotesLine,deepLink"),
+            // WEEKLY_REPORT_APPROVED — intern-facing "approved" ack.
+            new Seed(
+                    "WEEKLY_REPORT_APPROVED", "EMAIL",
+                    "Weekly report approved — week of {{weekStart}}",
+                    "Hello {{firstName}},\n\n"
+                            + "Your weekly report for the week of {{weekStart}} was "
+                            + "approved. Nice work — no further action needed for this "
+                            + "week.\n\n"
+                            + "Open your dashboard:\n{{deepLink}}\n\n— Anvi Corp",
+                    "firstName,weekStart,deepLink"),
+            // I9_SECTION1_REMINDER — intern-facing prompt to complete
+            // I-9 §1 before the due date.
+            new Seed(
+                    "I9_SECTION1_REMINDER", "EMAIL",
+                    "Action needed: complete your I-9 Section 1",
+                    "Hello {{firstName}},\n\n"
+                            + "Your I-9 Section 1 is due {{dueDate}}. This is a required "
+                            + "federal employment-eligibility form — please complete it "
+                            + "before the deadline so onboarding stays on track.\n\n"
+                            + "Open the I-9 page to complete it:\n{{deepLink}}\n\n"
+                            + "— Anvi Corp",
+                    "firstName,dueDate,deepLink")
     );
 
     @Override

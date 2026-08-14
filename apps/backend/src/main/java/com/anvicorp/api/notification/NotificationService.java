@@ -233,12 +233,40 @@ public class NotificationService {
         String interviewType = interview.getType() != null ? interview.getType().name() : null;
         String interviewerName = interview.getInterviewer() != null
                 ? interview.getInterviewer().getFullName() : null;
+        // Slice-6d fold-in — template-first via existing INTERVIEW_SCHEDULED
+        // (also used by InterviewEmailListener's event-driven path).
+        // Distinct entry-point from ErmInterviewService.schedule which
+        // publishes InterviewScheduledEvent; each fires ONE leg, no
+        // double-send.
         deliver(NotificationEventType.INTERVIEW_SCHEDULED, targetId, email,
-                () -> emailProvider.sendInterviewScheduled(
-                        email, name, jobTitle, entityName,
-                        interview.getScheduledAt(), interview.getDurationMinutes(),
-                        interviewType, interviewerName,
-                        interview.getMeetingUrl(), interview.getCandidateNotes()));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("jobTitle", nz(jobTitle));
+                    vars.put("scheduledForLocal", interview.getScheduledAt() != null
+                            ? interview.getScheduledAt().toString() : "your scheduled time");
+                    vars.put("timezone", "UTC");
+                    vars.put("zoomJoinUrl", interview.getMeetingUrl() != null
+                            ? interview.getMeetingUrl() : "(link will be shared)");
+                    vars.put("interviewerName", interviewerName != null
+                            ? interviewerName : "your interviewer");
+                    vars.put("prepInstructions", interview.getCandidateNotes() != null
+                            && !interview.getCandidateNotes().isBlank()
+                            ? interview.getCandidateNotes()
+                            : "Come prepared to discuss your background and the role.");
+                    var rendered = templateService.render(
+                            "INTERVIEW_SCHEDULED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendInterviewScheduled(
+                                email, name, jobTitle, entityName,
+                                interview.getScheduledAt(), interview.getDurationMinutes(),
+                                interviewType, interviewerName,
+                                interview.getMeetingUrl(), interview.getCandidateNotes());
+                    }
+                });
 
         dispatchInApp(applicantUserId(application),
                 NotificationEventType.INTERVIEW_SCHEDULED,
@@ -326,11 +354,40 @@ public class NotificationService {
         String frequency = offer.getCompensationFrequency() != null
                 ? offer.getCompensationFrequency().name() : null;
         String viewUrl = offerViewUrlTemplate.replace("{id}", offer.getId().toString());
+        // Slice-6d fold-in — template-first via new OFFER_EXTENDED template.
         deliver(NotificationEventType.OFFER_EXTENDED, targetId, email,
-                () -> emailProvider.sendOfferExtended(
-                        email, name, jobTitle, entityName,
-                        offer.getCompensationAmount(), currency, frequency,
-                        offer.getStartDate(), offer.getExpiresAt(), viewUrl));
+                () -> {
+                    String compensationLine;
+                    if (offer.getCompensationAmount() != null) {
+                        compensationLine = offer.getCompensationAmount()
+                                + (currency != null ? " " + currency : "")
+                                + (frequency != null ? " / "
+                                        + frequency.toLowerCase().replace('_', ' ') : "");
+                    } else {
+                        compensationLine = "See offer letter";
+                    }
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("jobTitle", nz(jobTitle));
+                    vars.put("entityName", nz(entityName));
+                    vars.put("compensationLine", compensationLine);
+                    vars.put("startDate", offer.getStartDate() != null
+                            ? offer.getStartDate().toString() : "TBD");
+                    vars.put("expiresAt", offer.getExpiresAt() != null
+                            ? offer.getExpiresAt().toString() : "See offer letter");
+                    vars.put("deepLink", viewUrl != null ? viewUrl : "");
+                    var rendered = templateService.render(
+                            "OFFER_EXTENDED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendOfferExtended(
+                                email, name, jobTitle, entityName,
+                                offer.getCompensationAmount(), currency, frequency,
+                                offer.getStartDate(), offer.getExpiresAt(), viewUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserId(application),
                 NotificationEventType.OFFER_EXTENDED,
@@ -480,9 +537,24 @@ public class NotificationService {
         }
         if (alreadySent(NotificationEventType.I9_SECTION1_REMINDER, targetId)) return;
 
+        // Slice-6d fold-in — template-first via new I9_SECTION1_REMINDER.
         deliver(NotificationEventType.I9_SECTION1_REMINDER, targetId, email,
-                () -> emailProvider.sendI9Section1Reminder(
-                        email, name, form.getSection1DueDate(), dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("dueDate", form.getSection1DueDate() != null
+                            ? form.getSection1DueDate().toString() : "soon");
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "I9_SECTION1_REMINDER", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendI9Section1Reminder(
+                                email, name, form.getSection1DueDate(), dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromForm(form),
                 NotificationEventType.I9_SECTION1_REMINDER,
@@ -586,8 +658,21 @@ public class NotificationService {
         }
         if (alreadySent(NotificationEventType.EVERIFY_CASE_OPENED, targetId)) return;
 
+        // Slice-6d fold-in — template-first via existing EVERIFY_CASE_OPENED
+        // (also used by ComplianceLifecycleListener's event-driven path).
         deliver(NotificationEventType.EVERIFY_CASE_OPENED, targetId, email,
-                () -> emailProvider.sendEVerifyCaseOpened(email, name, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    var rendered = templateService.render(
+                            "EVERIFY_CASE_OPENED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendEVerifyCaseOpened(email, name, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromForm(form),
                 NotificationEventType.EVERIFY_CASE_OPENED,
@@ -610,8 +695,23 @@ public class NotificationService {
         }
         if (alreadySent(NotificationEventType.EVERIFY_TNC_ALERT, targetId)) return;
 
+        // Slice-6d fold-in — template-first via existing
+        // EVERIFY_TENTATIVE_NONCONFIRMATION. Legacy path doesn't know
+        // the ERM; ermName defaults to "your ERM".
         deliver(NotificationEventType.EVERIFY_TNC_ALERT, targetId, email,
-                () -> emailProvider.sendEVerifyTncAlert(email, name, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("ermName", "your ERM");
+                    var rendered = templateService.render(
+                            "EVERIFY_TENTATIVE_NONCONFIRMATION", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendEVerifyTncAlert(email, name, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromForm(form),
                 NotificationEventType.EVERIFY_TNC_ALERT,
@@ -635,8 +735,20 @@ public class NotificationService {
         }
         if (alreadySent(NotificationEventType.EVERIFY_CLEARED, targetId)) return;
 
+        // Slice-6d fold-in — template-first via existing EVERIFY_AUTHORIZED.
         deliver(NotificationEventType.EVERIFY_CLEARED, targetId, email,
-                () -> emailProvider.sendEVerifyCleared(email, name, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    var rendered = templateService.render(
+                            "EVERIFY_AUTHORIZED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendEVerifyCleared(email, name, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromForm(form),
                 NotificationEventType.EVERIFY_CLEARED,
@@ -828,10 +940,32 @@ public class NotificationService {
         }
         if (alreadySent(NotificationEventType.WEEKLY_REPORT_RETURNED, targetId)) return;
 
+        // Slice-6d fold-in — template-first via new WEEKLY_REPORT_RETURNED.
+        // reviewNotesLine is empty when the reviewer left no notes (no
+        // orphan text).
         deliver(NotificationEventType.WEEKLY_REPORT_RETURNED, targetId, email,
-                () -> emailProvider.sendWeeklyReportReturned(
-                        email, name, report.getWeekStart(),
-                        report.getReviewNotes(), dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("weekStart", report.getWeekStart() != null
+                            ? report.getWeekStart().toString() : "TBD");
+                    vars.put("reviewNotesLine",
+                            report.getReviewNotes() != null
+                                    && !report.getReviewNotes().isBlank()
+                                    ? "\n\nReviewer notes: " + report.getReviewNotes()
+                                    : "");
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "WEEKLY_REPORT_RETURNED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendWeeklyReportReturned(
+                                email, name, report.getWeekStart(),
+                                report.getReviewNotes(), dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(c),
                 NotificationEventType.WEEKLY_REPORT_RETURNED,
@@ -854,9 +988,24 @@ public class NotificationService {
         if (email == null) return;
         if (alreadySent(NotificationEventType.WEEKLY_REPORT_APPROVED, targetId)) return;
 
+        // Slice-6d fold-in — template-first via new WEEKLY_REPORT_APPROVED.
         deliver(NotificationEventType.WEEKLY_REPORT_APPROVED, targetId, email,
-                () -> emailProvider.sendWeeklyReportApproved(
-                        email, name, report.getWeekStart(), dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("weekStart", report.getWeekStart() != null
+                            ? report.getWeekStart().toString() : "TBD");
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "WEEKLY_REPORT_APPROVED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendWeeklyReportApproved(
+                                email, name, report.getWeekStart(), dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(c),
                 NotificationEventType.WEEKLY_REPORT_APPROVED,
