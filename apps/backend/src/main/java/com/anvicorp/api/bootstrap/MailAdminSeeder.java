@@ -41,7 +41,11 @@ public class MailAdminSeeder implements CommandLineRunner {
     @Value("${app.webmail.seed.admin-password:}")
     private String adminPassword;
 
-    @Value("${app.webmail.seed.admin-domain:anvicorp.com}")
+    // Nested placeholder: if MAIL_ADMIN_DOMAIN isn't set, inherit from
+    // app.brand.email-domain (BRAND_EMAIL_DOMAIN, the Phase-0 field). If
+    // neither is set, fall through to Anvi's default so the current deploy
+    // renders byte-identically.
+    @Value("${app.webmail.seed.admin-domain:${app.brand.email-domain:anvicorp.com}}")
     private String adminDomain;
 
     @Override
