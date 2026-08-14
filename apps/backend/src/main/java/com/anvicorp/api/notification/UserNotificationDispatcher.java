@@ -98,6 +98,7 @@ public class UserNotificationDispatcher {
     private final UserNotificationRepository repository;
     private final UserRepository userRepository;
     private final EmailProvider emailProvider;
+    private final com.anvicorp.api.config.BrandConfig brand;
 
     /** Master kill-switch for the hook. Default ON. */
     @Value("${app.notifications.email-hook.enabled:true}")
@@ -177,7 +178,7 @@ public class UserNotificationDispatcher {
             }
             String subject = row.getTitle() != null && !row.getTitle().isBlank()
                     ? row.getTitle()
-                    : "Anvi Corp — notification";
+                    : brand.getName() + " — notification";
             String body = composeBody(row);
             // Stamp the sender-role context so BridgingEmailProvider can
             // route the send FROM the acting staff mailbox (erm@/trainer@/
@@ -221,7 +222,7 @@ public class UserNotificationDispatcher {
             if (sb.length() > 0) sb.append("\n\n");
             sb.append("Open in your dashboard:\n").append(absoluteLink(path));
         }
-        return sb.length() > 0 ? sb.toString() : "You have a new notification in your Anvi Corp dashboard.";
+        return sb.length() > 0 ? sb.toString() : "You have a new notification in your " + brand.getName() + " dashboard.";
     }
 
     /**

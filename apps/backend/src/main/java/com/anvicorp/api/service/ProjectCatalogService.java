@@ -361,7 +361,7 @@ public class ProjectCatalogService {
                     + projectLabel + "."
                     + (project.getKtMeetingLink() != null && !project.getKtMeetingLink().isBlank()
                         ? " The KT meeting link is available on the project page." : "")
-                    + "\n\nOpen your projects: /careers/intern/projects\n\n— Anvi Corp";
+                    + "\n\nOpen your projects: /careers/intern/projects\n\n" + brand.signoff();
             internNotifications.notifyIntern(internUserId,
                     com.anvicorp.api.notification.NotificationEventType.KT_COMPLETED,
                     mailSubject, mailPlain, null);
