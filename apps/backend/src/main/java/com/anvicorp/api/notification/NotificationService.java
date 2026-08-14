@@ -463,10 +463,27 @@ public class NotificationService {
                 nz(name) + " signed the offer for " + nz(jobTitle) + ".");
 
         if (alreadySent(NotificationEventType.OFFER_ACCEPTED_OPS, targetId)) return;
+        // Slice-6e fold-in — template-first via new OFFER_ACCEPTED_OPS.
         deliver(NotificationEventType.OFFER_ACCEPTED_OPS, targetId, opsNotificationEmail,
-                () -> emailProvider.sendOfferAcceptedToOps(
-                        opsNotificationEmail, name, email, jobTitle, entityName,
-                        offer.getStartDate()));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("applicantName", nz(name));
+                    vars.put("applicantEmail", nz(email));
+                    vars.put("jobTitle", nz(jobTitle));
+                    vars.put("entityName", nz(entityName));
+                    vars.put("startDate", offer.getStartDate() != null
+                            ? offer.getStartDate().toString() : "TBD");
+                    var rendered = templateService.render(
+                            "OFFER_ACCEPTED_OPS", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(opsNotificationEmail,
+                                rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendOfferAcceptedToOps(
+                                opsNotificationEmail, name, email, jobTitle, entityName,
+                                offer.getStartDate());
+                    }
+                });
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -607,8 +624,21 @@ public class NotificationService {
         }
         if (alreadySent(NotificationEventType.I983_PLAN_NEEDED, targetId)) return;
 
+        // Slice-6e fold-in — template-first via new I983_PLAN_NEEDED.
         deliver(NotificationEventType.I983_PLAN_NEEDED, targetId, email,
-                () -> emailProvider.sendI983PlanNeeded(email, name, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "I983_PLAN_NEEDED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendI983PlanNeeded(email, name, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserId(application),
                 NotificationEventType.I983_PLAN_NEEDED,
@@ -634,8 +664,23 @@ public class NotificationService {
             return;
         }
         String to = String.join(", ", hrRecipients);
+        final String finalTo = to;
+        final String finalInternName = internName;
+        // Slice-6e fold-in — template-first via new I983_PLAN_READY.
         deliver(NotificationEventType.I983_PLAN_READY, targetId, to,
-                () -> emailProvider.sendI983PlanReady(to, internName, hrDashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("internName", nz(finalInternName));
+                    vars.put("deepLink", hrDashboardUrl != null ? hrDashboardUrl : "");
+                    var rendered = templateService.render(
+                            "I983_PLAN_READY", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(finalTo,
+                                rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendI983PlanReady(finalTo, finalInternName, hrDashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(c),
                 NotificationEventType.I983_PLAN_READY,
@@ -1095,10 +1140,35 @@ public class NotificationService {
 
         User assignedBy = project.getAssignedBy();
         String by = assignedBy != null ? assignedBy.getFullName() : null;
+        // Slice-6e fold-in — template-first REUSING the existing
+        // PROJECT_ASSIGNED template (from Slice 4, also used by
+        // ProjectNotificationDispatcher's trainer-path bridge). Legacy
+        // path may have a non-trainer assigner; the trainer-framed
+        // template still renders coherently and the fallback preserves
+        // the original typed body.
         deliver(NotificationEventType.PROJECT_ASSIGNED, targetId, email,
-                () -> emailProvider.sendProjectAssigned(
-                        email, name, project.getTitle(), project.getDueDate(),
-                        by, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("trainerName", by != null ? by : "your supervisor");
+                    vars.put("projectTitle", nz(project.getTitle()));
+                    vars.put("technologyArea", project.getTechStack() != null
+                            && !project.getTechStack().isBlank()
+                            ? project.getTechStack() : "no tech tag");
+                    vars.put("dueDateLocal", project.getDueDate() != null
+                            ? project.getDueDate().toString() : "TBD");
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "PROJECT_ASSIGNED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendProjectAssigned(
+                                email, name, project.getTitle(), project.getDueDate(),
+                                by, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(intern),
                 NotificationEventType.PROJECT_ASSIGNED,
@@ -1135,10 +1205,27 @@ public class NotificationService {
         String internName = iu != null ? iu.getFullName() : null;
         final String supervisorEmail = email;
         final String supervisorName = name;
+        // Slice-6e fold-in — template-first via new PROJECT_SUBMITTED.
         deliver(NotificationEventType.PROJECT_SUBMITTED, targetId, supervisorEmail,
-                () -> emailProvider.sendProjectSubmitted(
-                        supervisorEmail, supervisorName, internName,
-                        project.getTitle(), supervisorDashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("supervisorName", supervisorName != null && !supervisorName.isBlank()
+                            ? supervisorName.split(" ")[0] : "there");
+                    vars.put("internName", nz(internName));
+                    vars.put("projectTitle", nz(project.getTitle()));
+                    vars.put("deepLink", supervisorDashboardUrl != null
+                            ? supervisorDashboardUrl : "");
+                    var rendered = templateService.render(
+                            "PROJECT_SUBMITTED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(supervisorEmail,
+                                rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendProjectSubmitted(
+                                supervisorEmail, supervisorName, internName,
+                                project.getTitle(), supervisorDashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(intern),
                 NotificationEventType.PROJECT_SUBMITTED,
@@ -1162,10 +1249,30 @@ public class NotificationService {
         if (email == null) return;
         if (alreadySent(NotificationEventType.PROJECT_RETURNED, targetId)) return;
 
+        // Slice-6e fold-in — template-first via new PROJECT_RETURNED.
+        // reviewNotesLine empty when no notes (no orphan label).
         deliver(NotificationEventType.PROJECT_RETURNED, targetId, email,
-                () -> emailProvider.sendProjectReturned(
-                        email, name, project.getTitle(),
-                        project.getReviewNotes(), dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("projectTitle", nz(project.getTitle()));
+                    vars.put("reviewNotesLine",
+                            project.getReviewNotes() != null
+                                    && !project.getReviewNotes().isBlank()
+                                    ? "\n\nReviewer notes: " + project.getReviewNotes()
+                                    : "");
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "PROJECT_RETURNED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendProjectReturned(
+                                email, name, project.getTitle(),
+                                project.getReviewNotes(), dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(intern),
                 NotificationEventType.PROJECT_RETURNED,
@@ -1189,9 +1296,23 @@ public class NotificationService {
         if (email == null) return;
         if (alreadySent(NotificationEventType.PROJECT_COMPLETED, targetId)) return;
 
+        // Slice-6e fold-in — template-first via new PROJECT_COMPLETED.
         deliver(NotificationEventType.PROJECT_COMPLETED, targetId, email,
-                () -> emailProvider.sendProjectCompleted(
-                        email, name, project.getTitle(), dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("projectTitle", nz(project.getTitle()));
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "PROJECT_COMPLETED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendProjectCompleted(
+                                email, name, project.getTitle(), dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(intern),
                 NotificationEventType.PROJECT_COMPLETED,
@@ -1224,10 +1345,33 @@ public class NotificationService {
         String type = evaluation.getType() != null ? evaluation.getType().name() : null;
         final String supervisorEmail = email;
         final String supervisorName = name;
+        // Slice-6e fold-in — template-first via new EVALUATION_DUE.
+        // Distinct from EvaluationNotificationFanout's InternEvaluation
+        // flow (which uses EVALUATION_SCHEDULED / EVALUATION_PUBLISHED).
         deliver(NotificationEventType.EVALUATION_DUE, targetId, supervisorEmail,
-                () -> emailProvider.sendEvaluationDue(
-                        supervisorEmail, supervisorName, internName, type,
-                        daysInDraft, supervisorDashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("supervisorName", supervisorName != null
+                            && !supervisorName.isBlank()
+                            ? supervisorName.split(" ")[0] : "there");
+                    vars.put("internName", nz(internName));
+                    vars.put("evaluationType", type != null
+                            ? type.replace('_', ' ') : "evaluation");
+                    vars.put("daysInDraft", daysInDraft);
+                    vars.put("daysPluralSuffix", daysInDraft == 1 ? "" : "s");
+                    vars.put("deepLink", supervisorDashboardUrl != null
+                            ? supervisorDashboardUrl : "");
+                    var rendered = templateService.render(
+                            "EVALUATION_DUE", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(supervisorEmail,
+                                rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendEvaluationDue(
+                                supervisorEmail, supervisorName, internName, type,
+                                daysInDraft, supervisorDashboardUrl);
+                    }
+                });
 
         // Staff-only nudge to the assigned evaluator.
         if (supervisor != null) {
@@ -1260,10 +1404,32 @@ public class NotificationService {
         User supervisor = evaluation.getEvaluator();
         String supervisorName = supervisor != null ? supervisor.getFullName() : null;
         String type = evaluation.getType() != null ? evaluation.getType().name() : null;
+        // Slice-6e fold-in — template-first via new EVALUATION_FINALIZED.
+        // Distinct from EvaluationNotificationFanout's InternEvaluation
+        // flow (which uses EVALUATION_PUBLISHED template).
         deliver(NotificationEventType.EVALUATION_FINALIZED, targetId, email,
-                () -> emailProvider.sendEvaluationFinalized(
-                        email, name, type, supervisorName,
-                        evaluation.getOverallRating(), dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("evaluationType", type != null
+                            ? type.replace('_', ' ') : "evaluation");
+                    vars.put("supervisorLine", supervisorName != null
+                            && !supervisorName.isBlank()
+                            ? " by " + supervisorName : "");
+                    vars.put("overallRating", evaluation.getOverallRating() != null
+                            ? evaluation.getOverallRating().toString() : "—");
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "EVALUATION_FINALIZED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendEvaluationFinalized(
+                                email, name, type, supervisorName,
+                                evaluation.getOverallRating(), dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(intern),
                 NotificationEventType.EVALUATION_FINALIZED,
@@ -1333,9 +1499,23 @@ public class NotificationService {
         if (email == null) return;
         if (alreadySent(NotificationEventType.PROJECT_TECH_APPROVED, targetId)) return;
 
+        // Slice-6e fold-in — template-first via new PROJECT_TECH_APPROVED.
         deliver(NotificationEventType.PROJECT_TECH_APPROVED, targetId, email,
-                () -> emailProvider.sendProjectTechApproved(
-                        email, name, project.getTitle(), dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("projectTitle", nz(project.getTitle()));
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "PROJECT_TECH_APPROVED", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendProjectTechApproved(
+                                email, name, project.getTitle(), dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(intern),
                 NotificationEventType.PROJECT_TECH_APPROVED,
@@ -1359,9 +1539,26 @@ public class NotificationService {
         if (email == null) return;
         if (alreadySent(NotificationEventType.PROJECT_RETURNED_FOR_REVISIONS, targetId)) return;
 
+        // Slice-6e fold-in — template-first via new
+        // PROJECT_RETURNED_FOR_REVISIONS. reasonBlock empty when null.
         deliver(NotificationEventType.PROJECT_RETURNED_FOR_REVISIONS, targetId, email,
-                () -> emailProvider.sendProjectReturnedForRevisions(
-                        email, name, project.getTitle(), reason, dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("projectTitle", nz(project.getTitle()));
+                    vars.put("reasonBlock", reason != null && !reason.isBlank()
+                            ? "\n\nReason: " + reason : "");
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "PROJECT_RETURNED_FOR_REVISIONS", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendProjectReturnedForRevisions(
+                                email, name, project.getTitle(), reason, dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(intern),
                 NotificationEventType.PROJECT_RETURNED_FOR_REVISIONS,
@@ -1386,9 +1583,23 @@ public class NotificationService {
         if (email == null) return;
         if (alreadySent(NotificationEventType.PROJECT_PENDING_VIVA, targetId)) return;
 
+        // Slice-6e fold-in — template-first via new PROJECT_PENDING_VIVA.
         deliver(NotificationEventType.PROJECT_PENDING_VIVA, targetId, email,
-                () -> emailProvider.sendProjectPendingViva(
-                        email, name, project.getTitle(), dashboardUrl));
+                () -> {
+                    Map<String, Object> vars = new LinkedHashMap<>();
+                    vars.put("firstName", nz(name).split(" ")[0]);
+                    vars.put("projectTitle", nz(project.getTitle()));
+                    vars.put("deepLink", dashboardUrl != null ? dashboardUrl : "");
+                    var rendered = templateService.render(
+                            "PROJECT_PENDING_VIVA", "EMAIL", vars);
+                    if (rendered.isPresent()) {
+                        emailProvider.sendRendered(
+                                email, rendered.get().subject(), rendered.get().body());
+                    } else {
+                        emailProvider.sendProjectPendingViva(
+                                email, name, project.getTitle(), dashboardUrl);
+                    }
+                });
 
         dispatchInApp(applicantUserIdFromCandidate(intern),
                 NotificationEventType.PROJECT_PENDING_VIVA,
