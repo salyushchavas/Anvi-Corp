@@ -6,24 +6,12 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { FloatingCircles } from "@/components/floating-circles";
 import { HeroSocialRail } from "@/components/hero-social-rail";
+// Hero copy lives in one obvious per-brand file (lib/careers/heroContent.ts)
+// so a clone edits it there without touching component logic. Anvi's current
+// three slides are preserved as the file's defaults.
+import { HERO_SLIDES } from "@/lib/careers/heroContent";
 
-const slides = [
-  {
-    line1: "Building",
-    line2: "Tomorrow's,",
-    line3: "Future Today!",
-  },
-  {
-    line1: "Dreaming",
-    line2: "Big, Building",
-    line3: "Bigger",
-  },
-  {
-    line1: "Transforming",
-    line2: "Dreams into",
-    line3: "Reality",
-  },
-];
+const slides = HERO_SLIDES;
 
 export function Hero() {
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true, duration: 35 });

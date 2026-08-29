@@ -57,6 +57,14 @@
   --ds-brand: #1D6299;         /* brand-700 = mix(#2A8CDB, black, 0.30) */
   --ds-brand-hover: #174D78;   /* brand-800 = mix(#2A8CDB, black, 0.45) */
   --ds-brand-ring: #2A8CDB;    /* brand-500 = Anvi blue */
+
+  /* Scrollbar thumb — neutral slate (matches --ds-text slate-900) with
+   * two static alpha steps. Extracted from inline rgba() so a per-brand
+   * clone can override the scrollbar tint via CSS-var override without
+   * editing this file. Anvi defaults byte-identical to the previous
+   * `rgba(15, 23, 42, 0.15)` / `rgba(15, 23, 42, 0.30)` values. */
+  --ds-scrollbar-thumb: rgba(15, 23, 42, 0.15);
+  --ds-scrollbar-thumb-hover: rgba(15, 23, 42, 0.30);
 }
 
 /* Focus ring — brand-colored for careers surfaces. Marketing pages
@@ -79,13 +87,13 @@
   height: 10px;
 }
 .ds *::-webkit-scrollbar-thumb {
-  background-color: rgba(15, 23, 42, 0.15);
+  background-color: var(--ds-scrollbar-thumb);
   border-radius: 9999px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 .ds *::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(15, 23, 42, 0.30);
+  background-color: var(--ds-scrollbar-thumb-hover);
 }
 .ds *::-webkit-scrollbar-track {
   background: transparent;

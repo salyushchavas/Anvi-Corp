@@ -41,10 +41,12 @@ export default function SiteFooter() {
               />
             </Link>
             <p className="max-w-[280px] text-sm leading-relaxed text-chrome-muted">
-              {/* From _legacy/index.html — hero tagline (slider 1, line 109) +
-                  the "Advanced IT solutions tailored to your needs" descriptor
-                  from the services section heading (line 223). */}
-              Building Tomorrow&apos;s Future, Today.
+              {/* Tagline comes from BRAND.siteTagline so a clone renders its
+                  own line here without touching this component. Default is
+                  the Anvi tagline ("Building Tomorrow's Future, Today") — a
+                  fresh build renders byte-identically to the previous
+                  hardcoded string. */}
+              {BRAND.siteTagline}.
               <br />
               Advanced IT solutions tailored to your needs.
             </p>
