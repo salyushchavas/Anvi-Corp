@@ -8,10 +8,12 @@ import com.anvicorp.api.entity.Candidate;
 import com.anvicorp.api.entity.Document;
 import com.anvicorp.api.entity.DocumentPacket;
 import com.anvicorp.api.entity.DocumentTask;
+import com.anvicorp.api.entity.Engagement;
 import com.anvicorp.api.entity.InternLifecycle;
 import com.anvicorp.api.entity.StaffingEntity;
 import com.anvicorp.api.entity.User;
 import com.anvicorp.api.entity.WorkAuthorizationRecord;
+import com.anvicorp.api.enums.EngagementStatus;
 import com.anvicorp.api.enums.InternLifecycleStatus;
 import com.anvicorp.api.enums.UserRole;
 import com.anvicorp.api.enums.WorkAuthTrack;
@@ -26,13 +28,13 @@ import com.anvicorp.api.repository.AuditLogRepository;
 import com.anvicorp.api.repository.CandidateRepository;
 import com.anvicorp.api.repository.DocumentPacketRepository;
 import com.anvicorp.api.repository.DocumentTaskRepository;
+import com.anvicorp.api.repository.EngagementRepository;
 import com.anvicorp.api.repository.InternLifecycleRepository;
 import com.anvicorp.api.repository.StaffingEntityRepository;
 import com.anvicorp.api.repository.UserRepository;
 import com.anvicorp.api.repository.WorkAuthorizationRecordRepository;
 import com.anvicorp.api.service.ApplicantIdGenerator;
 import com.anvicorp.api.service.EmployeeIdGenerator;
-import com.anvicorp.api.service.EngagementService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -108,7 +110,7 @@ public class DirectOnboardingService {
 
     private final ApplicantIdGenerator applicantIdGenerator;
     private final EmployeeIdGenerator employeeIdGenerator;
-    private final EngagementService engagementService;
+    private final EngagementRepository engagementRepository;
     private final DocumentVaultService documentVaultService;
     private final ReportingStructureAutoLinker reportingStructureAutoLinker;
     private final com.anvicorp.api.intern.InternLifecycleService internLifecycleService;
@@ -148,8 +150,14 @@ public class DirectOnboardingService {
      *       evaluator / manager overrides from the request take precedence
      *       (they're set BEFORE the linker, and the linker preserves
      *       existing non-null assignments).</li>
-     *   <li><b>Engagement</b> — via
-     *       {@link EngagementService#createForDirectHire}.</li>
+     *   <li><b>Engagement</b> — built + saved inline in the same
+     *       transaction (mirrors Skyzen's ErmDirectOnboardService). Was
+     *       previously a cross-bean call to
+     *       {@code EngagementService.createForDirectHire}; that path
+     *       tripped SQLSTATE 23503 on {@code engagements.candidate_id}
+     *       because the extra bean-boundary + idempotency query flushed
+     *       Hibernate's action queue before the fresh Candidate INSERT
+     *       had reached the DB.</li>
      *   <li><b>WorkAuthorizationRecord</b> — same upsert shape as
      *       {@code ErmComplianceService.updateWorkAuth} to keep exactly one
      *       write path.</li>
@@ -321,8 +329,29 @@ public class DirectOnboardingService {
         lc = internLifecycleRepository.save(lc);
 
         // ── Step 7 — Engagement (nullable app + offer FKs) ──────────────────
-        engagementService.createForDirectHire(intern, candidate, entity, track,
-                req.joiningDate(), caller);
+        // Build + save INLINE in the outer @Transactional (mirrors Skyzen's
+        // working ErmDirectOnboardService pattern). The earlier cross-service
+        // hop through EngagementService.createForDirectHire went through a
+        // Spring AOP proxy boundary AND ran an extra
+        // `findByCandidateId` idempotency query that flushed Hibernate's
+        // action queue at a bad moment — the fresh Candidate INSERT hadn't
+        // hit the DB yet, and Postgres rejected the engagement's FK on
+        // `engagements.candidate_id` (SQLSTATE 23503). Inlining eliminates
+        // both the proxy variable and the extra flush trigger, matching
+        // Skyzen's exact wire shape.
+        Engagement engagement = Engagement.builder()
+                .application(null)
+                .offer(null)
+                .candidate(candidate)
+                .entity(entity)
+                .track(track)
+                .status(EngagementStatus.PENDING_COMPLIANCE)
+                .plannedStartDate(req.joiningDate())
+                .actualStartDate(req.joiningDate())
+                .plannedEndDate(null)
+                .createdBy(caller.getId())
+                .build();
+        engagementRepository.save(engagement);
 
         // ── Step 8 — Seed WorkAuthorizationRecord (same upsert shape as
         //             ErmComplianceService.updateWorkAuth) ──────────────────
