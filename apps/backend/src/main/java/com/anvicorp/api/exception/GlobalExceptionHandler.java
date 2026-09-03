@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -42,6 +43,17 @@ import java.util.Map;
 @RestControllerAdvice
 @Slf4j
 public class GlobalExceptionHandler {
+
+    // Configured multipart caps — surfaced in the UPLOAD_TOO_LARGE
+    // response message so the ERM sees the exact limits they breached
+    // instead of a generic "too large" line. Field initializers give
+    // sane defaults so a `new GlobalExceptionHandler()` in standalone
+    // MockMvc still renders a readable message before Spring injects.
+    @Value("${spring.servlet.multipart.max-file-size:10MB}")
+    private String maxFileSize = "10MB";
+
+    @Value("${spring.servlet.multipart.max-request-size:60MB}")
+    private String maxRequestSize = "60MB";
 
     // ── Domain exceptions ────────────────────────────────────────────────
 
@@ -160,8 +172,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ErrorResponse> handleMaxUpload(MaxUploadSizeExceededException ex) {
-        return body(HttpStatus.BAD_REQUEST, "UPLOAD_TOO_LARGE",
-                "Uploaded file exceeds the maximum allowed size", null);
+        log.warn("[F4] Upload over cap (max-file-size={} max-request-size={}): {}",
+                maxFileSize, maxRequestSize, ex.getMessage());
+        return body(HttpStatus.PAYLOAD_TOO_LARGE, "UPLOAD_TOO_LARGE",
+                "Upload is too large. Each file must be under " + maxFileSize
+                        + " and the total request under " + maxRequestSize + ".", null);
     }
 
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
