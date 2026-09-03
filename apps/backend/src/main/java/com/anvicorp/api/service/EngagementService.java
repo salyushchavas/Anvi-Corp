@@ -143,11 +143,17 @@ public class EngagementService {
      * duplicate-lifecycle guarding happens upstream on
      * {@code intern_lifecycles.user_id UNIQUE}.
      *
-     * <p>Runs in {@code REQUIRES_NEW} to match the offer-flow shape — a
-     * creation blip here doesn't roll back the surrounding
-     * {@code DirectOnboardingService.directOnboard} transaction; the outer
-     * write still commits and the engagement can be healed later via
-     * {@link #healForUserEmail}.</p>
+     * <p>Participates in the outer {@code DirectOnboardingService.directOnboard}
+     * transaction (default {@code REQUIRED} propagation). The earlier
+     * {@code REQUIRES_NEW} setting was a bug: the fresh inner transaction
+     * couldn't see the {@code Candidate} row the outer transaction had just
+     * inserted (uncommitted), so PostgreSQL rejected the
+     * {@code engagements.candidate_id → candidates.id} foreign key with
+     * SQLSTATE 23503 on every direct-onboarding attempt. The whole
+     * create + activate flow is designed as one atomic unit (see
+     * {@code DirectOnboardingService}'s class javadoc), so any failure
+     * here correctly rolls the outer transaction back rather than
+     * leaving a half-created user/candidate without an engagement.</p>
      *
      * @param intern        the newly-created intern User (INTERN role, active)
      * @param candidate     the Candidate row for that user (created upstream in
@@ -163,7 +169,7 @@ public class EngagementService {
      * @param actor         the ERM user performing the direct onboarding —
      *                      stamped on {@code created_by} + the audit row
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public Engagement createForDirectHire(User intern,
                                           Candidate candidate,
                                           StaffingEntity entity,
