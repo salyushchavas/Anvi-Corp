@@ -118,6 +118,34 @@ export default function InternProfilePage() {
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
+  // W4 #18 — completion computation drives the hero progress meter.
+  // Same criteria the backend {@code ProfileNotificationService
+  // .meetsStricterSubmissionBar} enforces + a work-auth track (W4 #7),
+  // so the % here matches what ERM sees. Kept the simpler shape from
+  // main (booleans instead of {key,done} objects) since the completion
+  // fields aren't consumed by name anywhere yet.
+  //
+  // MUST stay above the loading/error early returns below — React's
+  // Rules of Hooks require every hook to run on every render in the
+  // same order. Previously this useMemo lived after the returns, so
+  // it ran on the "data loaded" render but not on the "loading" or
+  // "error" renders, tripping React error #310 (hook count differed
+  // between renders). The internal profile/resume nulls are handled
+  // inside the memo instead of by conditionally skipping the hook.
+  const completion = useMemo(() => {
+    const checks = [
+      !!profile?.fullName?.trim() && !!profile?.phone?.trim(),
+      educations.length > 0,
+      !!profile?.addressStreet && !!profile?.addressCity
+        && !!profile?.addressState && !!profile?.addressZip,
+      !!profile?.expectedTrack,
+      !!profile?.skillset?.trim(),
+      resume != null,
+    ];
+    const done = checks.filter(Boolean).length;
+    return { done, total: checks.length };
+  }, [profile, educations, resume]);
+
   if (loading) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-10">
@@ -198,25 +226,9 @@ export default function InternProfilePage() {
     toast.success('Resume removed');
   }
 
-  // W4 #18 — completion computation drives the hero progress meter.
-  // Same criteria the backend {@code ProfileNotificationService
-  // .meetsStricterSubmissionBar} enforces + a work-auth track (W4 #7),
-  // so the % here matches what ERM sees. Kept the simpler shape from
-  // main (booleans instead of {key,done} objects) since the completion
-  // fields aren't consumed by name anywhere yet.
-  const completion = useMemo(() => {
-    const checks = [
-      !!profile.fullName?.trim() && !!profile.phone?.trim(),
-      educations.length > 0,
-      !!profile.addressStreet && !!profile.addressCity
-        && !!profile.addressState && !!profile.addressZip,
-      !!profile.expectedTrack,
-      !!profile.skillset?.trim(),
-      resume != null,
-    ];
-    const done = checks.filter(Boolean).length;
-    return { done, total: checks.length };
-  }, [profile, educations, resume]);
+  // `completion` was hoisted above the loading/error returns (see the
+  // useMemo call earlier in this function) — hooks must run in the same
+  // order on every render.
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-8">
