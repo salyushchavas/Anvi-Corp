@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { CheckCircle2, Video } from 'lucide-react';
 import api from '@/lib/careers/api';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import RecordingUploader from '@/components/dashboard/RecordingUploader';
 
 /**
@@ -50,63 +52,72 @@ export default function ErmUploadInterviewRecordingPage() {
     />
   ) : null;
 
+  // Wrapped in ProtectedRoute + DashboardLayout (matches the pattern
+  // used by erm/interviews, erm/document-gallery, etc.). The parent
+  // (dashboard)/erm/layout.tsx is a provider-only shell that does NOT
+  // render the sidebar/topbar chrome — each ERM page opts in here so
+  // the page renders inside the dashboard instead of full-screen.
   return (
-    <div className="mx-auto max-w-2xl space-y-4 p-6">
-      <div>
-        <p className="text-xs text-slate-500">
-          <Link href="/careers/erm" className="hover:text-slate-700">← ERM home</Link>
-        </p>
-        <h1 className="mt-1 text-xl font-semibold text-slate-900">Upload Interview Recording</h1>
-        <p className="text-xs text-slate-500">
-          Pick the intern and drop the video. Visible to ERM + Manager
-          immediately — interview recordings don't require the
-          Manager approval gate that evaluation recordings do.
-        </p>
-      </div>
+    <ProtectedRoute requiredRoles={['ERM', 'SUPER_ADMIN']}>
+      <DashboardLayout>
+        <div className="mx-auto max-w-2xl space-y-4 p-6">
+          <div>
+            <p className="text-xs text-slate-500">
+              <Link href="/careers/erm" className="hover:text-slate-700">← ERM home</Link>
+            </p>
+            <h1 className="mt-1 text-xl font-semibold text-slate-900">Upload Interview Recording</h1>
+            <p className="text-xs text-slate-500">
+              Pick the intern and drop the video. Visible to ERM + Manager
+              immediately — interview recordings don't require the
+              Manager approval gate that evaluation recordings do.
+            </p>
+          </div>
 
-      {loadErr && (
-        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-          {loadErr}
-        </p>
-      )}
-
-      <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <label className="block">
-          <span className="text-xs font-semibold text-slate-700">Intern *</span>
-          <select
-            value={selected}
-            onChange={(e) => { setSelected(e.target.value); setUploaded(null); }}
-            className="mt-1 block w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
-          >
-            <option value="">— pick an intern —</option>
-            {interns.map((i) => (
-              <option key={i.lifecycleId} value={i.lifecycleId}>
-                {i.internName ?? '(unknown)'} {i.employeeId && ` · ${i.employeeId}`}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div>
-          <span className="text-xs font-semibold text-slate-700 inline-flex items-center gap-1">
-            <Video className="h-3.5 w-3.5" /> Video *
-          </span>
-          {selected ? (
-            <div className="mt-1">{uploader}</div>
-          ) : (
-            <p className="mt-2 rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-xs text-slate-500">
-              Pick an intern first.
+          {loadErr && (
+            <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+              {loadErr}
             </p>
           )}
-        </div>
 
-        {uploaded && (
-          <p className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
-            <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" />
-            Uploaded — visible in the Recording Gallery under this intern's Interview folder.
-          </p>
-        )}
-      </section>
-    </div>
+          <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <label className="block">
+              <span className="text-xs font-semibold text-slate-700">Intern *</span>
+              <select
+                value={selected}
+                onChange={(e) => { setSelected(e.target.value); setUploaded(null); }}
+                className="mt-1 block w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+              >
+                <option value="">— pick an intern —</option>
+                {interns.map((i) => (
+                  <option key={i.lifecycleId} value={i.lifecycleId}>
+                    {i.internName ?? '(unknown)'} {i.employeeId && ` · ${i.employeeId}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div>
+              <span className="text-xs font-semibold text-slate-700 inline-flex items-center gap-1">
+                <Video className="h-3.5 w-3.5" /> Video *
+              </span>
+              {selected ? (
+                <div className="mt-1">{uploader}</div>
+              ) : (
+                <p className="mt-2 rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-xs text-slate-500">
+                  Pick an intern first.
+                </p>
+              )}
+            </div>
+
+            {uploaded && (
+              <p className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
+                <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" />
+                Uploaded — visible in the Recording Gallery under this intern's Interview folder.
+              </p>
+            )}
+          </section>
+        </div>
+      </DashboardLayout>
+    </ProtectedRoute>
   );
 }
