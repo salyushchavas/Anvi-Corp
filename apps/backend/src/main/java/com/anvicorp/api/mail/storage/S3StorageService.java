@@ -31,10 +31,12 @@ import java.net.URI;
  * URL is never handed out.</p>
  *
  * <p>Env (reserved in A1): {@code AWS_S3_BUCKET}, {@code AWS_S3_REGION},
- * {@code AWS_S3_ACCESS_KEY_ID}, {@code AWS_S3_SECRET_ACCESS_KEY}, and the Anvi
- * {@code ANVI_MAIL_S3_PREFIX} key prefix (default {@code anvi-mail/}). Optional
- * {@code AWS_S3_ENDPOINT_OVERRIDE} + {@code AWS_S3_PATH_STYLE} target S3-compatible
- * providers.</p>
+ * {@code AWS_S3_ACCESS_KEY_ID}, {@code AWS_S3_SECRET_ACCESS_KEY}, and the
+ * brand-neutral {@code MAIL_S3_PREFIX} key prefix (falls back to the legacy
+ * {@code ANVI_MAIL_S3_PREFIX}, then the {@code anvi-mail/} default — see
+ * {@code app.webmail.storage.s3.key-prefix} in {@code application.properties}).
+ * Optional {@code AWS_S3_ENDPOINT_OVERRIDE} + {@code AWS_S3_PATH_STYLE}
+ * target S3-compatible providers.</p>
  */
 @Service
 @Slf4j

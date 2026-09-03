@@ -90,6 +90,13 @@ const ACCENT_LIGHT   = BRAND_ACCENT_ENV
 // never leaks through this key either.
 const PRIMARY_RAMP = BRAND_PRIMARY_ENV ? deriveRamp(BRAND_PRIMARY_ENV) : DEFAULT_BRAND_RAMP;
 
+// ── Ink neutral ramp — dark backdrop values shared between the `ink.*`
+// palette below AND the `ink-gradient` backgroundImage token. Extracted
+// here so the two references can't drift; ink is intentionally neutral
+// (not env-driven) so the values are literal.
+const INK_800 = "#0F0D1D";
+const INK_900 = "#020B18";
+
 function toRgbString(hex: string): string {
   const rgb = hexToRgb(hex) ?? ANVI_ACCENT_RGB;
   return `${rgb[0]},${rgb[1]},${rgb[2]}`;
@@ -136,8 +143,10 @@ const config: Config = {
         primary: PRIMARY_RAMP,
 
         // ── ink.* — Anvi neutral ramp (marketing chrome + body copy).
+        // Values 800/900 are shared with ink-gradient via INK_800/INK_900
+        // constants so the palette + backdrop can't drift.
         ink: {
-          DEFAULT: "#0F0D1D",
+          DEFAULT: INK_800,
           50:  "#F6F7F9",
           100: "#EAEBED",
           200: "#D2D4D8",
@@ -146,8 +155,8 @@ const config: Config = {
           500: "#55585B",
           600: "#33363A",
           700: "#1B1D22",
-          800: "#0F0D1D",
-          900: "#020B18",
+          800: INK_800,
+          900: INK_900,
         },
 
         // ── chrome.* — dark navy palette used by careers marketing chrome
@@ -196,8 +205,18 @@ const config: Config = {
         "ds-lg": "0 12px 24px rgba(15,23,42,0.10)",
       },
       backgroundImage: {
-        "brand-gradient": "linear-gradient(135deg, #2A8CDB 0%, #3C72FC 100%)",
-        "ink-gradient":   "linear-gradient(180deg, #0F0D1D 0%, #020B18 100%)",
+        // brand-gradient interpolates the env-derived primary (BRAND_RAMP[500])
+        // → env-derived accent (ACCENT_DEFAULT). For Anvi with env unset,
+        // resolves to the previous hardcoded pair (#2A8CDB → #3C72FC) so the
+        // gradient renders byte-identically; a clone with a different palette
+        // gets a gradient that matches its own primary/accent pair rather
+        // than clashing with Anvi's blues.
+        "brand-gradient": `linear-gradient(135deg, ${BRAND_RAMP[500]} 0%, ${ACCENT_DEFAULT} 100%)`,
+        // ink-gradient references INK_800/INK_900 constants shared with the
+        // ink.* palette above. Ink is intentionally neutral (not env-driven)
+        // so a clone's dark backdrop stays legible regardless of brand hue;
+        // extracted from the literal hex so the palette + backdrop can't drift.
+        "ink-gradient":   `linear-gradient(180deg, ${INK_800} 0%, ${INK_900} 100%)`,
       },
       ringColor: {
         DEFAULT: RING_DEFAULT,
