@@ -216,11 +216,18 @@ function RegisterPageInner() {
           {/* Left column — brand + value proposition. Desktop only. */}
           <aside className="hidden bg-gradient-to-br from-primary-700 to-primary-800 p-10 text-white lg:col-span-5 lg:flex lg:flex-col lg:justify-between">
             <div>
+              {/* Dark-navy aside: use the same white-pill treatment
+                  SiteFooter uses so a dark-wordmark logo (Anvi's) stays
+                  visible on the dark background. The previous
+                  `brightness-0 invert` filter assumed the logo was a
+                  black-on-transparent silhouette — Anvi's logo is a
+                  full-color wordmark, so the filter mashed it into a
+                  solid white rectangle. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={BRAND.logoUrl}
                 alt={BRAND.name}
-                className="h-9 w-auto brightness-0 invert"
+                className="h-10 w-auto rounded-md bg-white/95 px-2 py-1.5"
               />
               <h2 className="mt-10 text-3xl font-semibold leading-tight">
                 Start your {BRAND.name} career
