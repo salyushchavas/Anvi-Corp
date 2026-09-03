@@ -47,6 +47,20 @@ const WORK_AUTH_TYPES = [
   { value: 'OTHER', label: 'Other' },
 ] as const;
 
+// Multipart caps — kept in lock-step with the backend
+// `spring.servlet.multipart.max-file-size` (10MB) and `max-request-size`
+// (60MB) in apps/backend/src/main/resources/application.properties.
+// Client-side pre-flight so an over-cap packet never reaches the wire —
+// otherwise Tomcat rejects it with a connection reset and axios surfaces
+// a bare "Network Error" with no response body (the bug this fix is for).
+const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_UPLOAD_TOTAL_BYTES = 60 * 1024 * 1024;
+function fmtBytes(b: number): string {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 // Reserved document keys the wizard surfaces inline on the Work Auth
 // step for citizens + permanent residents. They travel through the same
 // `docFiles` map + `documents[]` submission as any other catalog doc, so
@@ -121,6 +135,7 @@ function DirectOnboardingWizard() {
   const router = useRouter();
   const [stepIdx, setStepIdx] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [success, setSuccess] = useState<DirectOnboardingResponse | null>(null);
 
@@ -326,7 +341,39 @@ function DirectOnboardingWizard() {
       toast.error('Resume upload is required.');
       return;
     }
+    // Pre-flight the multipart caps client-side. Without this the browser
+    // hands the packet to Tomcat, Tomcat resets the connection when it
+    // crosses `spring.servlet.multipart.max-request-size`, and axios
+    // reports a bare "Network Error" with no response body. Checking here
+    // gives a clear per-file / total message the ERM can act on.
+    const uploadFiles: { label: string; file: File }[] = [
+      { label: `resume (${resumeFile.name})`, file: resumeFile },
+    ];
+    for (const [k, f] of Object.entries(docFiles)) {
+      if (f) uploadFiles.push({ label: `${k} (${f.name})`, file: f });
+    }
+    for (const c of customDocs) {
+      if (c.file && c.title.trim()) {
+        uploadFiles.push({ label: `${c.title.trim()} (${c.file.name})`, file: c.file });
+      }
+    }
+    const oversized = uploadFiles.filter((u) => u.file.size > MAX_UPLOAD_FILE_BYTES);
+    if (oversized.length > 0) {
+      const list = oversized.map((u) => `${u.label} — ${fmtBytes(u.file.size)}`).join(', ');
+      const msg = `File(s) exceed the ${fmtBytes(MAX_UPLOAD_FILE_BYTES)} per-file cap: ${list}`;
+      setSubmitError(msg);
+      toast.error(msg);
+      return;
+    }
+    const totalBytes = uploadFiles.reduce((n, u) => n + u.file.size, 0);
+    if (totalBytes > MAX_UPLOAD_TOTAL_BYTES) {
+      const msg = `Total upload is ${fmtBytes(totalBytes)}, over the ${fmtBytes(MAX_UPLOAD_TOTAL_BYTES)} cap. Remove or shrink some files and try again.`;
+      setSubmitError(msg);
+      toast.error(msg);
+      return;
+    }
     setSubmitting(true);
+    setUploadPct(0);
     setSubmitError(null);
     try {
       // Enforce I-983 visibility rule client-side too: strip true for
@@ -406,18 +453,42 @@ function DirectOnboardingWizard() {
       const res = await api.post<DirectOnboardingResponse>(
         '/api/v1/erm/direct-onboarding',
         fd,
+        {
+          onUploadProgress: (ev) => {
+            if (ev.total && ev.total > 0) {
+              const pct = Math.min(99, Math.round((ev.loaded / ev.total) * 100));
+              setUploadPct(pct);
+            }
+          },
+        },
       );
       setSuccess(res.data);
       toast.success(`Onboarded ${res.data.employeeId}`);
     } catch (e) {
-      const ax = e as { response?: { data?: { error?: string; message?: string } } };
-      const msg = ax.response?.data?.error
-        ?? ax.response?.data?.message
-        ?? (e instanceof Error ? e.message : 'Direct onboarding failed');
+      const ax = e as {
+        response?: { data?: { error?: string; message?: string }; status?: number };
+        request?: unknown;
+      };
+      // Distinguish "the server returned an error body" (ax.response set)
+      // from "the connection died mid-upload" (ax.request set, no response).
+      // The latter now typically means a proxy limit BELOW the backend
+      // caps we just raised — surface it as its own message so the ERM
+      // doesn't confuse it with a validation failure.
+      let msg: string;
+      if (ax.response?.data?.error || ax.response?.data?.message) {
+        msg = (ax.response.data.error ?? ax.response.data.message) as string;
+      } else if (ax.request && !ax.response) {
+        msg = `Upload connection dropped before the server responded${
+          uploadPct != null ? ` (at ${uploadPct}%)` : ''
+        }. Check your network and retry; if it keeps failing, the packet may exceed a proxy cap.`;
+      } else {
+        msg = e instanceof Error ? e.message : 'Direct onboarding failed';
+      }
       setSubmitError(msg);
       toast.error(msg);
     } finally {
       setSubmitting(false);
+      setUploadPct(null);
     }
   }
 
@@ -605,7 +676,11 @@ function DirectOnboardingWizard() {
               disabled={submitting}
               className="inline-flex items-center gap-1.5 rounded-md bg-brand-700 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-60"
             >
-              {submitting ? 'Creating…' : 'Create + activate'}
+              {submitting
+                ? (uploadPct != null && uploadPct < 100
+                    ? `Uploading ${uploadPct}%…`
+                    : 'Creating…')
+                : 'Create + activate'}
             </button>
           )}
         </div>
