@@ -266,6 +266,284 @@ class CanonicalHtmlProfileCorrectorTest {
                 "Calibri must NOT be injected when Arial is already there: " + out);
     }
 
+    // ── Consumer 4 — list hanging indent (Stage 3) ───────────────────
+
+    /**
+     * ⭐ FLAGSHIP STAGE-3 TEST — proves the corrector now consumes the
+     * numbering geometry it has been extracting and discarding since
+     * Stage 1.
+     *
+     * <p>The ANVI duty list is {@code w:ind w:left="1080" w:hanging="360"}.
+     * Stage 1 normalises the hanging into a negative first-line indent,
+     * so the profile carries {@code left=+1080tw}, {@code
+     * firstLine=-360tw}. Those map onto the CSS hanging-indent pair:</p>
+     *
+     * <pre>
+     *   margin-left:  1080tw / 1440 =  0.75in   ← wrapped lines land here
+     *   text-indent:  -360tw / 1440 = -0.25in   ← marker pulled back to 0.50in
+     * </pre>
+     *
+     * <p>Before this consumer existed the {@code <p>} came out of the
+     * corrector with no horizontal geometry at all, which is why bullets
+     * sat flush on the left margin and wrapped lines slid underneath
+     * their own bullet.</p>
+     */
+    @Test
+    void applies_list_hanging_indent_from_profile() throws Exception {
+        String profileJson = mapper.writeValueAsString(
+                listProfile("40", 1080L, 360L, null, null));
+        String html = "<section class=\"docx\">"
+                + "<p class=\"docx-num-40-0\">Collect, clean, preprocess and "
+                + "analyze structured and unstructured data for use in AI/ML "
+                + "applications.</p></section>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertTrue(out.contains("margin-left:0.75in"),
+                "left indent 1080tw must become margin-left:0.75in — this is "
+                        + "what makes wrapped lines align under the TEXT: " + out);
+        assertTrue(out.contains("text-indent:-0.25in"),
+                "hanging 360tw must become text-indent:-0.25in — this is what "
+                        + "pulls the bullet marker back out to 0.50in: " + out);
+    }
+
+    /**
+     * The corrective values come from the profile, NOT from a constant.
+     * A template with a completely different list indent must get its
+     * own numbers — same guarantee the header consumer makes.
+     */
+    @Test
+    void list_indent_is_per_template_never_hardcoded() throws Exception {
+        // 2160tw = 1.50in left, 720tw hanging = -0.50in first line.
+        String profileJson = mapper.writeValueAsString(
+                listProfile("7", 2160L, 720L, null, null));
+        String html = "<p class=\"docx-num-7-0\">Deeply indented item</p>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertTrue(out.contains("margin-left:1.50in"),
+                "must use THIS template's 2160tw, not the ANVI 1080tw: " + out);
+        assertTrue(out.contains("text-indent:-0.50in"), out);
+        assertFalse(out.contains("0.75in"),
+                "no leakage of the other template's geometry: " + out);
+    }
+
+    /**
+     * Every item carries the numId class, so every item gets the
+     * indent — including the FIRST duty, which is the one that reads as
+     * an un-bulleted paragraph in the broken preview. No special-casing:
+     * the uniform pass covers it because it is an ordinary list item.
+     */
+    @Test
+    void all_list_items_including_the_first_get_the_same_indent() throws Exception {
+        String profileJson = mapper.writeValueAsString(
+                listProfile("40", 1080L, 360L, null, null));
+        String html = "<section class=\"docx\">"
+                + "<p class=\"docx-num-40-0\">Design, develop, and implement "
+                + "machine learning and artificial intelligence models.</p>"
+                + "<p class=\"docx-num-40-0\">Collect, clean, preprocess.</p>"
+                + "<p class=\"docx-num-40-0\">Develop, train, test, validate.</p>"
+                + "</section>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertEquals(3, out.split("margin-left:0.75in").length - 1,
+                "all three items must be indented — the first duty is not a "
+                        + "special case, it is just a list item: " + out);
+        assertEquals(3, out.split("text-indent:-0.25in").length - 1, out);
+    }
+
+    /**
+     * Unlike the font pass (which only fills gaps), the indent pass is
+     * AUTHORITATIVE: whatever docx-preview inferred is exactly the value
+     * we know to be wrong, so the profile must overwrite it rather than
+     * defer to it.
+     */
+    @Test
+    void overwrites_the_indent_docx_preview_inferred() throws Exception {
+        String profileJson = mapper.writeValueAsString(
+                listProfile("40", 1080L, 360L, null, null));
+        String html = "<p class=\"docx-num-40-0\" "
+                + "style=\"margin-left:0in;text-indent:0in;color:navy;\">Item</p>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertTrue(out.contains("margin-left:0.75in"),
+                "profile must win over docx-preview's 0in: " + out);
+        assertTrue(out.contains("text-indent:-0.25in"), out);
+        assertFalse(out.contains("margin-left:0in"),
+                "the wrong inferred value must be stripped, not stacked: " + out);
+        assertTrue(out.contains("color:navy"),
+                "unrelated declarations must survive the rewrite: " + out);
+    }
+
+    /** A padding-left expressing the same offset would stack on top of
+     *  the margin we set, so it is stripped along with the rest. */
+    @Test
+    void strips_padding_left_so_indents_do_not_stack() throws Exception {
+        String profileJson = mapper.writeValueAsString(
+                listProfile("40", 1080L, 360L, null, null));
+        String html = "<p class=\"docx-num-40-0\" style=\"padding-left:0.5in;\">Item</p>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertFalse(out.contains("padding-left"),
+                "padding-left must not survive alongside the new margin-left: " + out);
+        assertTrue(out.contains("margin-left:0.75in"), out);
+    }
+
+    /** A level with no {@code w:ind} at all — nothing to apply, so the
+     *  element must be left exactly as docx-preview emitted it. */
+    @Test
+    void level_without_indent_leaves_item_untouched() throws Exception {
+        FormattingProfile.LevelDefinition level =
+                new FormattingProfile.LevelDefinition(0, "bullet", "•", null, null);
+        FormattingProfile profile = new FormattingProfile(
+                2, null, null, null,
+                new FormattingProfile.BodyDefault(null, null, null),
+                Map.of("40", new FormattingProfile.ListDefinition(
+                        "0", List.of(level), null, null)));
+        String html = "<p class=\"docx-num-40-0\">Item</p>";
+
+        String out = corrector.correct(html, mapper.writeValueAsString(profile));
+
+        assertFalse(out.contains("margin-left"), out);
+        assertFalse(out.contains("text-indent"), out);
+    }
+
+    /** An item whose numId has no entry in the profile is left alone —
+     *  the corrector never invents geometry it wasn't given. */
+    @Test
+    void unknown_num_id_is_left_untouched() throws Exception {
+        String profileJson = mapper.writeValueAsString(
+                listProfile("40", 1080L, 360L, null, null));
+        String html = "<p class=\"docx-num-99-0\">Item from another list</p>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertFalse(out.contains("margin-left"),
+                "numId 99 is not in the profile — no indent may be applied: " + out);
+    }
+
+    /** Nested levels resolve independently: ilvl 1 must get the level-1
+     *  geometry, not level 0's. */
+    @Test
+    void resolves_the_correct_level_for_nested_items() throws Exception {
+        FormattingProfile.LevelDefinition l0 = new FormattingProfile.LevelDefinition(
+                0, "bullet", "•",
+                FormattingProfile.Length.fromTwips(1080),
+                FormattingProfile.Length.fromTwips(-360));
+        FormattingProfile.LevelDefinition l1 = new FormattingProfile.LevelDefinition(
+                1, "bullet", "o",
+                FormattingProfile.Length.fromTwips(1800),
+                FormattingProfile.Length.fromTwips(-360));
+        FormattingProfile profile = new FormattingProfile(
+                2, null, null, null,
+                new FormattingProfile.BodyDefault(null, null, null),
+                Map.of("40", new FormattingProfile.ListDefinition(
+                        "0", List.of(l0, l1), null, null)));
+        String html = "<p class=\"docx-num-40-0\">Top level</p>"
+                + "<p class=\"docx-num-40-1\">Nested</p>";
+
+        String out = corrector.correct(html, mapper.writeValueAsString(profile));
+
+        assertTrue(out.contains("margin-left:0.75in"), "level 0 = 1080tw: " + out);
+        assertTrue(out.contains("margin-left:1.25in"), "level 1 = 1800tw: " + out);
+    }
+
+    // ── Consumer 3 (Stage 3) — list font sourced from the list ───────
+
+    /**
+     * ⭐ The mis-probe fix. {@code BodyDefault} is filled from the first
+     * run in the document that names a font — on a letterhead document
+     * that is the date / address line (Calibri here). Injecting it into
+     * the bullets is what made them render in the wrong face. The list's
+     * own runs (Times New Roman) are authoritative and must win.
+     */
+    @Test
+    void prefers_the_lists_own_font_over_the_mis_probed_body_default() throws Exception {
+        String profileJson = mapper.writeValueAsString(listProfile(
+                "40", 1080L, 360L, "Times New Roman", "Calibri"));
+        String html = "<p class=\"docx-num-40-0\">Duty one</p>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertTrue(out.contains("font-family:Times New Roman"),
+                "the list's own run font must win — this is the bullets-in-the-"
+                        + "wrong-font fix: " + out);
+        assertFalse(out.contains("font-family:Calibri"),
+                "the letterhead font must NOT reach the bullets: " + out);
+    }
+
+    /**
+     * A list whose runs name no font (they inherit) still needs
+     * something sane — and a version-1 profile has no per-list font at
+     * all. Both fall back to the body default, i.e. exactly the
+     * pre-Stage-3 behaviour.
+     */
+    @Test
+    void falls_back_to_body_default_when_the_list_names_no_font() throws Exception {
+        String profileJson = mapper.writeValueAsString(listProfile(
+                "40", 1080L, 360L, null, "Calibri"));
+        String html = "<p class=\"docx-num-40-0\">Duty one</p>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertTrue(out.contains("font-family:Calibri"),
+                "body default remains the fallback when the list has no font "
+                        + "of its own — keeps v1 profiles behaving as before: " + out);
+    }
+
+    /** Both corrections land on the same element without clobbering
+     *  each other — the real-world shape for every duty bullet. */
+    @Test
+    void indent_and_font_are_applied_together_on_one_item() throws Exception {
+        String profileJson = mapper.writeValueAsString(listProfile(
+                "40", 1080L, 360L, "Times New Roman", "Calibri"));
+        String html = "<p class=\"docx-num-40-0\">Duty one</p>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertTrue(out.contains("margin-left:0.75in"), out);
+        assertTrue(out.contains("text-indent:-0.25in"), out);
+        assertTrue(out.contains("font-family:Times New Roman"), out);
+    }
+
+    /** {@code <li>} carrying the same class is corrected too, so a
+     *  converter change doesn't silently drop the fix. */
+    @Test
+    void corrects_li_elements_carrying_the_docx_num_class() throws Exception {
+        String profileJson = mapper.writeValueAsString(
+                listProfile("40", 1080L, 360L, "Times New Roman", null));
+        String html = "<ul><li class=\"docx-num-40-0\">Item</li></ul>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertTrue(out.contains("margin-left:0.75in"), out);
+        assertTrue(out.contains("font-family:Times New Roman"), out);
+    }
+
+    /**
+     * Stage-3 backward compatibility. A version-1 profile — no per-list
+     * font, no numbering map — must leave list items exactly as Stage 2
+     * left them: body-default font injected, no indent invented.
+     */
+    @Test
+    void version_1_profile_behaves_exactly_as_before_stage_3() throws Exception {
+        FormattingProfile v1 = new FormattingProfile(
+                1, null, null, null,
+                new FormattingProfile.BodyDefault("Calibri", null, null),
+                Map.of());
+        String html = "<p class=\"docx-num-1-0\">Legacy bullet</p>";
+
+        String out = corrector.correct(html, mapper.writeValueAsString(v1));
+
+        assertTrue(out.contains("font-family:Calibri"),
+                "Stage 2 behaviour preserved for v1 profiles: " + out);
+        assertFalse(out.contains("margin-left"),
+                "no numbering map means no indent may be invented: " + out);
+    }
+
     // ── Backward compatibility ───────────────────────────────────────
 
     /**
@@ -327,5 +605,28 @@ class CanonicalHtmlProfileCorrectorTest {
                 null, alignment, indent, spacing, false, null, null,
                 "header text", List.of());
         return new FormattingProfile.HeaderFooterProfile("default", List.of(p));
+    }
+
+    /**
+     * Build a profile carrying ONE numbering definition, shaped like the
+     * ANVI duty list. {@code hangingTwips} is given as Word writes it
+     * (positive) and stored the way Stage 1 normalises it (negative
+     * first-line), so the test reads the same way the DOCX does.
+     */
+    private FormattingProfile listProfile(String numId, long leftTwips,
+            Long hangingTwips, String listFont, String bodyFont) {
+        FormattingProfile.Length left = leftTwips == 0L
+                ? null : FormattingProfile.Length.fromTwips(leftTwips);
+        FormattingProfile.Length firstLine = hangingTwips == null
+                ? null : FormattingProfile.Length.fromTwips(-hangingTwips);
+        FormattingProfile.LevelDefinition level =
+                new FormattingProfile.LevelDefinition(
+                        0, "bullet", "•", left, firstLine);
+        FormattingProfile.ListDefinition def = new FormattingProfile.ListDefinition(
+                "0", List.of(level), listFont, null);
+        return new FormattingProfile(
+                2, null, null, null,
+                new FormattingProfile.BodyDefault(bodyFont, null, null),
+                Map.of(numId, def));
     }
 }

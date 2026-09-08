@@ -5,16 +5,23 @@ import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFHeader;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFAbstractNum;
+import org.apache.poi.xwpf.usermodel.XWPFNumbering;
 import org.apache.poi.xwpf.usermodel.XWPFRun;
 import org.apache.poi.wp.usermodel.HeaderFooterType;
 import org.junit.jupiter.api.Test;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTAbstractNum;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTInd;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTLvl;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTPageMar;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTPageSz;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSectPr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STNumberFormat;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.STPageOrientation;
 
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -153,6 +160,123 @@ class DocxFormattingExtractorTest {
                 "negative indent twips must be present in JSON: " + json);
     }
 
+    // ── Stage 3 — numbering geometry + list typography ───────────────
+
+    /**
+     * ⭐ THE Stage 3 flagship. The ANVI duty list is
+     * {@code w:ind w:left="1080" w:hanging="360"}. This pins BOTH the
+     * capture and the normalisation the corrector depends on: Word's
+     * POSITIVE {@code w:hanging} is stored as a NEGATIVE first-line
+     * indent, so a consumer can drop the two values straight into CSS
+     * {@code margin-left} / {@code text-indent} without re-deriving the
+     * sign. If this normalisation ever flips, bullets render with the
+     * marker pushed right instead of hanging left.
+     */
+    @Test
+    void captures_list_level_indent_with_hanging_as_negative_first_line()
+            throws Exception {
+        byte[] docxBytes = buildFixtureWithBulletList();
+        FormattingProfile profile = extractor.extractProfile(docxBytes);
+
+        assertNotNull(profile);
+        assertFalse(profile.lists().isEmpty(),
+                "the numbering definition the body actually uses must be captured");
+
+        FormattingProfile.ListDefinition def =
+                profile.lists().values().iterator().next();
+        assertNotNull(def.levels());
+        assertFalse(def.levels().isEmpty(), "level 0 must be captured");
+
+        FormattingProfile.LevelDefinition level = def.levels().get(0);
+        assertEquals(0, level.levelIndex());
+        assertNotNull(level.indentLeft(), "w:left must be captured");
+        assertEquals(1080L, level.indentLeft().twips(),
+                "left indent lost — the corrector's margin-left has no source");
+        assertEquals(0.75, level.indentLeft().inches(), 1e-6,
+                "1080 twips = 0.75in");
+
+        assertNotNull(level.indentFirstLine(), "w:hanging must be captured");
+        assertEquals(-360L, level.indentFirstLine().twips(),
+                "hanging MUST be normalised to a negative first-line indent — "
+                        + "the corrector maps it straight onto text-indent");
+        assertEquals(-0.25, level.indentFirstLine().inches(), 1e-6,
+                "-360 twips = -0.25in");
+    }
+
+    /**
+     * ⭐ The mis-probe fix, at its source. The fixture is shaped like a
+     * real offer letter: a Calibri date line FIRST, then Times New Roman
+     * bullets. {@code extractBodyDefault} walks document order, so it
+     * latches onto Calibri — and that Calibri is what used to be
+     * injected into the bullets. The per-list font must be tallied from
+     * the list's OWN runs and come back Times New Roman.
+     */
+    @Test
+    void sources_list_font_from_the_lists_own_runs_not_the_letterhead()
+            throws Exception {
+        byte[] docxBytes = buildFixtureWithBulletList();
+        FormattingProfile profile = extractor.extractProfile(docxBytes);
+
+        assertNotNull(profile);
+        assertEquals("Calibri", profile.bodyDefault().fontFamily(),
+                "precondition: the body-default probe still latches onto the "
+                        + "date line — this is exactly why lists need their own");
+
+        FormattingProfile.ListDefinition def =
+                profile.lists().values().iterator().next();
+        assertEquals("Times New Roman", def.fontFamily(),
+                "the list font must come from the numbered paragraphs' runs, "
+                        + "NOT from the letterhead the body-default probe found");
+    }
+
+    /**
+     * END-TO-END through the real pipeline: source DOCX → extractor →
+     * profile JSON → corrector → corrected HTML. Proves the whole chain
+     * closes, not just the two halves in isolation.
+     *
+     * <p>The input HTML is the shape docx-preview actually emits — a
+     * list {@code <p>} carrying the {@code docx-num-<numId>-<ilvl>}
+     * class and NO horizontal geometry whatsoever. That absence is the
+     * bug. After the corrector runs, the paragraph must carry the
+     * source document's own hanging indent and font.</p>
+     */
+    @Test
+    void end_to_end_docx_to_corrected_html_restores_indent_and_font()
+            throws Exception {
+        byte[] docxBytes = buildFixtureWithBulletList();
+        FormattingProfile profile = extractor.extractProfile(docxBytes);
+        assertNotNull(profile);
+        String numId = profile.lists().keySet().iterator().next();
+        String profileJson = extractor.extract(docxBytes);
+        assertNotNull(profileJson);
+
+        // Exactly what docx-preview hands us: class, text, no geometry.
+        String before = "<section class=\"docx\">"
+                + "<p class=\"docx-num-" + numId + "-0\">Collect, clean, "
+                + "preprocess, and analyze structured and unstructured data "
+                + "for use in AI/ML applications.</p>"
+                + "</section>";
+
+        assertFalse(before.contains("margin-left"),
+                "precondition: docx-preview emitted no indent — the defect");
+
+        CanonicalHtmlProfileCorrector corrector =
+                new CanonicalHtmlProfileCorrector(new ObjectMapper());
+        String after = corrector.correct(before, profileJson);
+
+        assertTrue(after.contains("margin-left:0.75in"),
+                "end-to-end: the source's 1080tw indent must reach the HTML: "
+                        + after);
+        assertTrue(after.contains("text-indent:-0.25in"),
+                "end-to-end: the source's 360tw hanging must reach the HTML: "
+                        + after);
+        assertTrue(after.contains("font-family:Times New Roman"),
+                "end-to-end: the LIST's font must reach the HTML: " + after);
+        assertFalse(after.contains("font-family:Calibri"),
+                "end-to-end: the letterhead font must not reach the bullets: "
+                        + after);
+    }
+
     // ── Fixture builders ─────────────────────────────────────────────
 
     /**
@@ -229,6 +353,60 @@ class DocxFormattingExtractorTest {
         try (XWPFDocument doc = new XWPFDocument()) {
             XWPFParagraph body = doc.createParagraph();
             body.createRun().setText("Just a body paragraph");
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            doc.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    /**
+     * Build a DOCX shaped like the ANVI offer letter's duty list: a
+     * Calibri date line FIRST (so the body-default probe latches onto
+     * it, reproducing the mis-probe), then Times New Roman bullets on a
+     * numbering definition carrying {@code w:ind w:left="1080"
+     * w:hanging="360"} — the exact geometry docx-preview drops.
+     */
+    private byte[] buildFixtureWithBulletList() throws Exception {
+        try (XWPFDocument doc = new XWPFDocument()) {
+            // Letterhead-ish lead paragraph in a DIFFERENT font. This is
+            // the run extractBodyDefault finds first, and the font that
+            // used to get injected into the bullets.
+            XWPFParagraph lead = doc.createParagraph();
+            XWPFRun leadRun = lead.createRun();
+            leadRun.setText("Date: 08/24/2026");
+            leadRun.setFontFamily("Calibri");
+            leadRun.setFontSize(11);
+
+            // Numbering definition: bullet, left 1080tw, hanging 360tw.
+            XWPFNumbering numbering = doc.createNumbering();
+            CTAbstractNum ctAbstractNum = CTAbstractNum.Factory.newInstance();
+            ctAbstractNum.setAbstractNumId(BigInteger.ZERO);
+            CTLvl lvl = ctAbstractNum.addNewLvl();
+            lvl.setIlvl(BigInteger.ZERO);
+            lvl.addNewNumFmt().setVal(STNumberFormat.BULLET);
+            lvl.addNewLvlText().setVal("•");
+            CTInd ind = lvl.addNewPPr().addNewInd();
+            ind.setLeft(BigInteger.valueOf(1080));
+            ind.setHanging(BigInteger.valueOf(360));
+
+            BigInteger abstractNumId = numbering.addAbstractNum(
+                    new XWPFAbstractNum(ctAbstractNum));
+            BigInteger numId = numbering.addNum(abstractNumId);
+
+            // Three duties — including the FIRST one, which is the item
+            // that reads as un-bulleted in the broken preview.
+            for (String duty : List.of(
+                    "Design, develop, and implement machine learning models.",
+                    "Collect, clean, preprocess, and analyze data.",
+                    "Develop, train, test, and validate models.")) {
+                XWPFParagraph p = doc.createParagraph();
+                p.setNumID(numId);
+                XWPFRun r = p.createRun();
+                r.setText(duty);
+                r.setFontFamily("Times New Roman");
+                r.setFontSize(12);
+            }
+
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             doc.write(out);
             return out.toByteArray();
