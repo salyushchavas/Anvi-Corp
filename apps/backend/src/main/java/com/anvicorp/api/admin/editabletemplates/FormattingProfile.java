@@ -54,7 +54,12 @@ import java.util.Map;
  */
 public record FormattingProfile(
         /** Bumped when the profile schema changes in a way consumers
-         *  need to detect. Stage 1 = 1. */
+         *  need to detect. Stage 1 = 1; Stage 3 = 2 (adds the
+         *  per-list {@code fontFamily} / {@code fontSizePt} on
+         *  {@link ListDefinition}). A version-1 profile deserialises
+         *  fine — the added components simply read back null — so
+         *  templates profiled before Stage 3 keep working and just
+         *  fall back to the body default for list typography. */
         int version,
         PageGeometry page,
         /** First / active header for the primary section, or {@code null}
@@ -183,7 +188,25 @@ public record FormattingProfile(
             /** The abstract numId this concrete definition references. */
             String abstractNumId,
             /** Level 0 = top-level bullets; level 1 = nested; etc. */
-            List<LevelDefinition> levels
+            List<LevelDefinition> levels,
+            /**
+             * Stage 3 — the DOMINANT font family across the runs of the
+             * body paragraphs that actually carry this numId, or {@code
+             * null} when none of them named a font.
+             *
+             * <p>Sourced from the list's OWN runs rather than from
+             * {@link BodyDefault}, because the body default is probed
+             * from the first body paragraph that happens to name a font
+             * — on a letterhead document that is the address / date
+             * line, whose font is NOT the list's. Consumers should
+             * prefer this over the body default when styling list
+             * items, and fall back to the body default when null.</p>
+             */
+            String fontFamily,
+            /** Dominant font size (points) across this list's runs, or
+             *  {@code null}. Same sourcing rationale as
+             *  {@link #fontFamily}. */
+            Double fontSizePt
     ) {}
 
     public record LevelDefinition(

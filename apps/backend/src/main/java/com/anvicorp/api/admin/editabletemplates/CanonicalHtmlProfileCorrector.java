@@ -13,6 +13,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Wave B — IDMS metadata layer Stage 2. Uses the Stage-1
@@ -69,9 +72,23 @@ import java.util.Locale;
  *   <li>{@link #correctListItemFont} — for {@code <p>} elements
  *       that carry a docx-preview list class (matching
  *       {@code /docx-num-\\d+/}) and have no inline font-family,
- *       inject the profile's body-default font-family so bullet /
- *       numbered items render in the correct font instead of
- *       cascading to the browser default.</li>
+ *       inject the list's OWN font-family (Stage 3), falling back
+ *       to the profile's body default, so bullet / numbered items
+ *       render in the correct font instead of cascading to the
+ *       browser default.</li>
+ * </ol>
+ *
+ * <h2>Consumer added in Stage 3</h2>
+ * <ol start="4">
+ *   <li>{@link #correctListIndent} — the numbering level's real
+ *       {@code w:ind} written back as the CSS hanging-indent pair
+ *       {@code margin-left} + {@code text-indent}. This is the fix for
+ *       the primary visual defect: docx-preview drops the list indent,
+ *       so bullets render flush against the left margin and wrapped
+ *       lines run back underneath the bullet instead of aligning under
+ *       the text. {@code profile.lists()} has been extracted at upload
+ *       since Stage 1 but was read by NO consumer until this one — the
+ *       authoritative values were already on the row, merely unused.</li>
  * </ol>
  */
 @Service
@@ -118,7 +135,8 @@ public class CanonicalHtmlProfileCorrector {
             correctHeader(doc, profile.header());
             correctFooter(doc, profile.footer());
             correctPageGeometry(doc, profile.page());
-            correctListItemFont(doc, profile.bodyDefault());
+            correctListIndent(doc, profile.lists());
+            correctListItemFont(doc, profile.bodyDefault(), profile.lists());
             return doc.body().html();
         } catch (Exception e) {
             log.warn("[CanonicalHtmlProfileCorrector] correction pass failed "
@@ -297,38 +315,183 @@ public class CanonicalHtmlProfileCorrector {
     // ── Consumer 3: list-item font ───────────────────────────────────
 
     /**
-     * For every {@code <p>} that docx-preview marked as a list item
-     * (class matching {@code /docx-num-\\d+/}) and doesn't already
-     * carry an inline {@code font-family}, inject the profile's
-     * body-default font-family. Fixes the "list items lose their font
-     * on save" bug docx-preview causes by not putting the run's font
-     * on the enclosing {@code <p>}.
+     * For every list item that doesn't already carry an inline
+     * {@code font-family}, inject the font the list's own runs use —
+     * falling back to the profile's body default when the list didn't
+     * name one. Fixes the "list items lose their font on save" bug
+     * docx-preview causes by not putting the run's font on the
+     * enclosing {@code <p>}.
      *
-     * <p>Conservative — we only ADD font-family, never override an
-     * explicit one docx-preview happened to emit. If the body default
-     * is missing from the profile too, do nothing.</p>
+     * <p><b>Stage 3 — why the list's own font, not the body default.</b>
+     * {@code BodyDefault} is probed by taking the first font named by
+     * ANY run in document order. On a letterhead document (every ANVI
+     * offer letter) that run is in the address or date line, whose font
+     * the bullets never use — so the body default injected here was
+     * actively WRONG for list items. {@link
+     * FormattingProfile.ListDefinition#fontFamily()} is tallied from the
+     * runs of the paragraphs that actually carry the numId, which is the
+     * only authoritative source for what the bullets should look like.
+     * The body default stays as the fallback so a list whose runs
+     * inherit their font (naming none explicitly) still gets something
+     * sane, and so version-1 profiles — which have no per-list font —
+     * behave exactly as before.</p>
+     *
+     * <p>Conservative — we only ADD, never override an explicit
+     * declaration docx-preview happened to emit.</p>
      */
-    void correctListItemFont(Document doc, FormattingProfile.BodyDefault bodyDefault) {
-        if (bodyDefault == null || bodyDefault.fontFamily() == null
-                || bodyDefault.fontFamily().isBlank()) {
-            return;
+    void correctListItemFont(Document doc, FormattingProfile.BodyDefault bodyDefault,
+            Map<String, FormattingProfile.ListDefinition> lists) {
+        String fallbackFont = null;
+        Double fallbackSizePt = null;
+        if (bodyDefault != null) {
+            if (bodyDefault.fontFamily() != null && !bodyDefault.fontFamily().isBlank()) {
+                fallbackFont = bodyDefault.fontFamily().trim();
+            }
+            fallbackSizePt = bodyDefault.fontSizePt();
         }
-        String font = bodyDefault.fontFamily().trim();
-        // docx-preview names list <p>s with a class like docx-num-3-0
-        // (list index + level). We match any class that starts with
-        // "docx-num-" via a CSS attribute-word selector.
-        Elements listParas = doc.select("p[class*=\"docx-num-\"]");
-        for (Element p : listParas) {
-            String existing = p.attr("style");
-            if (existing.toLowerCase(Locale.ROOT).contains("font-family")) continue;
+        for (Element item : listItems(doc)) {
+            FormattingProfile.ListDefinition def = resolveList(item, lists);
+
+            String font = (def != null && def.fontFamily() != null
+                    && !def.fontFamily().isBlank())
+                    ? def.fontFamily().trim() : fallbackFont;
+            Double sizePt = (def != null && def.fontSizePt() != null)
+                    ? def.fontSizePt() : fallbackSizePt;
+
+            String existing = item.attr("style");
+            String lower = existing.toLowerCase(Locale.ROOT);
+            boolean needsFont = font != null && !lower.contains("font-family");
+            boolean needsSize = sizePt != null && !lower.contains("font-size");
+            if (!needsFont && !needsSize) continue;
+
             StringBuilder next = new StringBuilder();
             if (!existing.isBlank()) {
                 next.append(existing.trim());
                 if (!next.toString().endsWith(";")) next.append(";");
             }
-            next.append("font-family:").append(font).append(";");
-            p.attr("style", next.toString());
+            if (needsFont) {
+                next.append("font-family:").append(font).append(";");
+            }
+            if (needsSize) {
+                next.append("font-size:")
+                        .append(String.format(Locale.ROOT, "%.1fpt", sizePt))
+                        .append(";");
+            }
+            item.attr("style", next.toString());
         }
+    }
+
+    // ── Consumer 4: list hanging indent (Stage 3) ────────────────────
+
+    /**
+     * Apply each list level's real {@code w:ind} to its items as the CSS
+     * hanging-indent pair.
+     *
+     * <p><b>The defect this fixes.</b> docx-preview drops the numbering
+     * level's indent entirely, so every bullet renders hard against the
+     * left margin and — worse — a wrapped line returns to the margin
+     * too, sliding underneath its own bullet instead of aligning with
+     * the text above it. The offer letter's duty list is the visible
+     * symptom: "AI/ML applications." wraps back under the bullet rather
+     * than lining up under "Collect, clean,".</p>
+     *
+     * <p><b>The mapping.</b> Word's model is an indent for the whole
+     * paragraph plus a first-line delta; CSS spells the same thing
+     * {@code margin-left} + {@code text-indent}. Stage 1 already
+     * normalises {@code w:hanging} into a NEGATIVE {@code
+     * indentFirstLine} (see {@code DocxFormattingExtractor.extractLists})
+     * so the two profile values drop straight into the two CSS
+     * properties with no sign juggling here. The ANVI list
+     * ({@code left=1080 hanging=360}) becomes
+     * {@code margin-left:0.75in; text-indent:-0.25in} — marker at
+     * 0.50in, wrapped text at 0.75in, which is exactly the source
+     * document's geometry.</p>
+     *
+     * <p><b>Authoritative, unlike the font pass.</b> Where the font
+     * consumer only fills a gap, this one OVERWRITES any existing
+     * horizontal indent: whatever docx-preview inferred is precisely
+     * the value we know to be wrong, and the profile carries the
+     * source's own number. Nothing is hardcoded — a template with a
+     * different indent gets its own, and a level with no {@code w:ind}
+     * at all is left completely alone.</p>
+     */
+    void correctListIndent(Document doc,
+            Map<String, FormattingProfile.ListDefinition> lists) {
+        if (lists == null || lists.isEmpty()) return;
+        for (Element item : listItems(doc)) {
+            FormattingProfile.LevelDefinition level = resolveLevel(item, lists);
+            if (level == null) continue;
+            FormattingProfile.Length left = level.indentLeft();
+            FormattingProfile.Length firstLine = level.indentFirstLine();
+            // Level carries no indent information — leave the element
+            // exactly as docx-preview emitted it.
+            if (left == null && firstLine == null) continue;
+
+            // padding-left goes too: it is the other way a converter can
+            // express the same horizontal offset, and leaving it would
+            // stack on top of the margin we are about to set.
+            String cleaned = stripInlineProperty(item.attr("style"),
+                    "margin-left", "text-indent", "padding-left");
+            StringBuilder next = new StringBuilder();
+            if (!cleaned.isBlank()) {
+                next.append(cleaned.trim());
+                if (!next.toString().endsWith(";")) next.append(";");
+            }
+            if (left != null) {
+                next.append("margin-left:")
+                        .append(formatInches(left.inches())).append(";");
+            }
+            if (firstLine != null) {
+                next.append("text-indent:")
+                        .append(formatInches(firstLine.inches())).append(";");
+            }
+            item.attr("style", next.toString());
+        }
+    }
+
+    // ── List helpers ─────────────────────────────────────────────────
+
+    /** docx-preview names a list paragraph
+     *  {@code docx-num-<numId>-<ilvl>} (e.g. {@code docx-num-40-0}).
+     *  Digit runs are length-capped so a malformed class can't overflow
+     *  {@link Integer#parseInt}. */
+    private static final Pattern NUM_CLASS =
+            Pattern.compile("docx-num-(\\d{1,9})-(\\d{1,9})");
+
+    /** Every element docx-preview marked as a list item. {@code <p>} is
+     *  what it emits today; {@code <li>} is matched too so a converter
+     *  change (or a hand-authored template) doesn't silently lose the
+     *  correction. */
+    private static Elements listItems(Document doc) {
+        return doc.select("p[class*=\"docx-num-\"], li[class*=\"docx-num-\"]");
+    }
+
+    /** Resolve the profile's list definition for an item from its
+     *  docx-preview class, or null when the class doesn't parse or the
+     *  profile has no entry for that numId. */
+    private static FormattingProfile.ListDefinition resolveList(
+            Element item, Map<String, FormattingProfile.ListDefinition> lists) {
+        if (lists == null || lists.isEmpty()) return null;
+        Matcher m = NUM_CLASS.matcher(item.className());
+        if (!m.find()) return null;
+        return lists.get(m.group(1));
+    }
+
+    /** Resolve the specific numbering LEVEL for an item — the numId
+     *  gives the definition, the ilvl selects the level within it.
+     *  Null when either lookup misses. */
+    private static FormattingProfile.LevelDefinition resolveLevel(
+            Element item, Map<String, FormattingProfile.ListDefinition> lists) {
+        if (lists == null || lists.isEmpty()) return null;
+        Matcher m = NUM_CLASS.matcher(item.className());
+        if (!m.find()) return null;
+        FormattingProfile.ListDefinition def = lists.get(m.group(1));
+        if (def == null || def.levels() == null) return null;
+        int ilvl = Integer.parseInt(m.group(2));
+        for (FormattingProfile.LevelDefinition level : def.levels()) {
+            if (level != null && level.levelIndex() == ilvl) return level;
+        }
+        return null;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────

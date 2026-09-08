@@ -66,7 +66,7 @@ public class DocxFormattingExtractor {
 
     /** The current profile schema version. Bump when the shape changes
      *  in a way consumers must detect. */
-    public static final int PROFILE_VERSION = 1;
+    public static final int PROFILE_VERSION = 2;
 
     private final ObjectMapper objectMapper;
 
@@ -355,6 +355,15 @@ public class DocxFormattingExtractor {
         Map<String, FormattingProfile.ListDefinition> out = new LinkedHashMap<>();
         XWPFNumbering numbering = doc.getNumbering();
         if (numbering == null) return out;
+        // Stage 3 — tally the typography of every list paragraph's runs
+        // BEFORE building the definitions, so each definition can carry
+        // the font its own items actually use. The definition walk below
+        // short-circuits on the first paragraph per numId (it only needs
+        // one to resolve the abstract num), which is too narrow a sample
+        // to pick a dominant font from — hence the separate full pass.
+        Map<String, Map<String, Integer>> fontTally = new LinkedHashMap<>();
+        Map<String, Map<Double, Integer>> sizeTally = new LinkedHashMap<>();
+        tallyListRunTypography(doc, fontTally, sizeTally);
         try {
             for (XWPFParagraph p : doc.getParagraphs()) {
                 BigInteger numId = p.getNumID();
@@ -406,13 +415,99 @@ public class DocxFormattingExtractor {
                             levelIndex, format, text, leftIn, firstLineIn));
                 }
                 out.put(numIdKey, new FormattingProfile.ListDefinition(
-                        abstractNumId, levels));
+                        abstractNumId, levels,
+                        dominant(fontTally.get(numIdKey)),
+                        dominant(sizeTally.get(numIdKey))));
             }
         } catch (Exception e) {
             log.debug("[DocxFormattingExtractor] numbering extraction "
                     + "partial: {}", e.getMessage());
         }
         return out;
+    }
+
+    /**
+     * Stage 3 — count the font family / size of every run belonging to
+     * each numId's paragraphs, so {@link #extractLists} can stamp each
+     * {@link FormattingProfile.ListDefinition} with the typography its
+     * items really use.
+     *
+     * <p>Why not reuse {@link #extractBodyDefault}: that probe returns
+     * the first font named by ANY run in document order, which on a
+     * letterhead document is the address or date line — a font the
+     * bullets never use. Injecting it into list items is the "wrong
+     * font on the bullets" defect. Tallying the list's own runs sources
+     * the value from the only paragraphs that can be authoritative
+     * about it.</p>
+     *
+     * <p>Fail-open like every other probe — a POI surprise leaves the
+     * tallies partial (or empty), and the caller falls back to the body
+     * default.</p>
+     */
+    private void tallyListRunTypography(
+            XWPFDocument doc,
+            Map<String, Map<String, Integer>> fontTally,
+            Map<String, Map<Double, Integer>> sizeTally) {
+        try {
+            for (XWPFParagraph p : doc.getParagraphs()) {
+                BigInteger numId = p.getNumID();
+                if (numId == null) continue;
+                String key = numId.toString();
+                for (XWPFRun r : p.getRuns()) {
+                    String font = r.getFontFamily();
+                    if (font != null && !font.isBlank()) {
+                        fontTally.computeIfAbsent(key, k -> new LinkedHashMap<>())
+                                .merge(font.trim(), 1, Integer::sum);
+                    }
+                    Double sizePt = runFontSizePt(r);
+                    if (sizePt != null) {
+                        sizeTally.computeIfAbsent(key, k -> new LinkedHashMap<>())
+                                .merge(sizePt, 1, Integer::sum);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[DocxFormattingExtractor] list typography tally "
+                    + "partial: {}", e.getMessage());
+        }
+    }
+
+    /** A run's font size in points, or {@code null} when the run does
+     *  not specify one. Mirrors the dual-API dance {@link
+     *  #extractBodyDefault} uses — POI 5.2.5's {@code
+     *  getFontSizeAsDouble()} throws (rather than returning null) on an
+     *  unspecified size in some run shapes. */
+    private static Double runFontSizePt(XWPFRun r) {
+        try {
+            double sz = r.getFontSizeAsDouble();
+            if (sz > 0) return sz;
+        } catch (Exception ignored) {
+            try {
+                int sz = r.getFontSize();
+                if (sz > 0) return (double) sz;
+            } catch (Exception alsoIgnored) { /* unspecified — null */ }
+        }
+        return null;
+    }
+
+    /**
+     * The most frequently occurring key in a tally, or {@code null} for
+     * a null / empty tally. Ties resolve to the first-inserted key
+     * because the tallies are {@link LinkedHashMap}s — so the result is
+     * deterministic for a given document rather than hash-order
+     * dependent.
+     */
+    private static <T> T dominant(Map<T, Integer> tally) {
+        if (tally == null || tally.isEmpty()) return null;
+        T best = null;
+        int bestCount = -1;
+        for (Map.Entry<T, Integer> e : tally.entrySet()) {
+            if (e.getValue() > bestCount) {
+                best = e.getKey();
+                bestCount = e.getValue();
+            }
+        }
+        return best;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
