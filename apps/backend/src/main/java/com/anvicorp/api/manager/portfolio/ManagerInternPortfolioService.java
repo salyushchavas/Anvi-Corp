@@ -362,21 +362,47 @@ public class ManagerInternPortfolioService {
     }
 
     private ManagerInternPortfolioDtos.WorkAuthSection loadWorkAuth(UUID userId, UUID lifecycleId) {
+        // Non-encrypted WAR fields the ERM captures at direct-onboard time
+        // (or the intern's own profile-page updates for funnel hires). The
+        // three AES-GCM-encrypted identifier columns (ead_card_number,
+        // sevis_number, h1_receipt_number) are DELIBERATELY OMITTED here:
+        // raw JDBC bypasses the JPA @Convert decryption path so we'd surface
+        // ciphertext, and Manager-role access to those sensitive identifier
+        // numbers is scoped to the ERM/compliance surfaces anyway.
         String workAuthType = null;
-        LocalDate authExpires = null;
+        LocalDate authorizedFrom = null;
+        LocalDate authorizedUntil = null;
+        LocalDate i20Expiration = null;
+        Boolean i983Required = null;
+        String dsoName = null;
+        String dsoEmail = null;
+        String dsoPhone = null;
+        LocalDate cptExpiration = null;
+        LocalDate h1ReceiptStart = null;
+        LocalDate h1ReceiptEnd = null;
+        String ermNotes = null;
         try {
-            // WorkAuthorizationRecord entity uses `authorized_until` for
-            // the single source-of-truth expiration date (see the entity's
-            // authorizedUntil field). The query used to reference
-            // `auth_expires_on` which doesn't exist → SQL exception →
-            // catch swallowed it → workAuthType stayed null → "No
-            // work-authorization record on file." for every intern.
             Map<String, Object> war = jdbc.queryForMap(
-                    "SELECT work_auth_type, authorized_until FROM work_authorization_records "
+                    "SELECT work_auth_type, authorized_from, authorized_until, "
+                            + "       i20_expiration, i983_required, "
+                            + "       dso_name, dso_email, dso_phone, "
+                            + "       cpt_expiration, h1_receipt_start, h1_receipt_end, "
+                            + "       erm_notes "
+                            + "  FROM work_authorization_records "
                             + " WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", userId);
             workAuthType = (String) war.get("work_auth_type");
-            java.sql.Date d = (java.sql.Date) war.get("authorized_until");
-            authExpires = d != null ? d.toLocalDate() : null;
+            authorizedFrom = localDateOf(war.get("authorized_from"));
+            authorizedUntil = localDateOf(war.get("authorized_until"));
+            i20Expiration = localDateOf(war.get("i20_expiration"));
+            Object i983 = war.get("i983_required");
+            i983Required = i983 instanceof Boolean b ? b : null;
+            dsoName = (String) war.get("dso_name");
+            dsoEmail = (String) war.get("dso_email");
+            dsoPhone = (String) war.get("dso_phone");
+            cptExpiration = localDateOf(war.get("cpt_expiration"));
+            h1ReceiptStart = localDateOf(war.get("h1_receipt_start"));
+            h1ReceiptEnd = localDateOf(war.get("h1_receipt_end"));
+            ermNotes = (String) war.get("erm_notes");
         } catch (Exception ignored) { /* no war row */ }
         String planStatus = null;
         try {
@@ -386,9 +412,18 @@ public class ManagerInternPortfolioService {
                             + " WHERE c.user_id = ? ORDER BY ip.created_at DESC LIMIT 1",
                     String.class, userId);
         } catch (Exception ignored) { /* no plan */ }
-        if (workAuthType == null && planStatus == null && authExpires == null) return null;
+        if (workAuthType == null && planStatus == null && authorizedUntil == null) return null;
         return new ManagerInternPortfolioDtos.WorkAuthSection(
-                workAuthType, authExpires, planStatus);
+                workAuthType, authorizedFrom, authorizedUntil, i20Expiration,
+                i983Required, dsoName, dsoEmail, dsoPhone,
+                cptExpiration, h1ReceiptStart, h1ReceiptEnd, ermNotes, planStatus);
+    }
+
+    private static LocalDate localDateOf(Object cell) {
+        if (cell == null) return null;
+        if (cell instanceof java.sql.Date d) return d.toLocalDate();
+        if (cell instanceof LocalDate ld) return ld;
+        return null;
     }
 
     private ManagerInternPortfolioDtos.ApplicationSummary loadApplicationSummary(UUID userId) {
