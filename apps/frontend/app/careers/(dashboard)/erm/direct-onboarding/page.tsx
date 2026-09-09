@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, FileUp, User as UserIcon } from 'lucide-react';
@@ -68,6 +68,15 @@ function fmtBytes(b: number): string {
 // enum-backed onboarding-document rows already seeded from OnboardingDocument.
 const US_CITIZEN_PROOF_KEY = 'US_CITIZEN_PROOF';
 const PERMANENT_RESIDENT_GREEN_CARD_KEY = 'PERMANENT_RESIDENT_GREEN_CARD';
+// F-1 OPT + F-1 STEM-OPT proofs. Same enum-backed pattern as the
+// citizenship / green-card keys above: file lands in docFiles[KEY], travels
+// through the same doc_<KEY> multipart part, backend seeds an inactive
+// template row the first time a file for this key arrives. STEM-OPT
+// accepts EITHER a fresh EAD card OR the I-797 receipt copy (whichever
+// the DSO has issued at hire time), captured as one upload with an
+// "either-is-accepted" helper label.
+const F1_OPT_EAD_KEY = 'F1_OPT_EAD';
+const F1_STEM_OPT_EAD_OR_RECEIPT_KEY = 'F1_STEM_OPT_EAD_OR_RECEIPT';
 
 interface CustomDoc {
   /** Client-generated key, prefixed CUSTOM_ so the server takes the
@@ -187,6 +196,144 @@ function DirectOnboardingWizard() {
   const [mailboxLocalPart, setMailboxLocalPart] = useState('');
   const [mailboxPassword, setMailboxPassword] = useState(() => generatePassword());
 
+  // ── Validation-UX state ─────────────────────────────────────────────────
+  // "touched" tracks fields the ERM has interacted with (focused-and-blurred
+  // OR started typing). "submitAttempted" latches true on the first Next/
+  // Submit click that failed validation. A field's error is only surfaced
+  // once EITHER it's been touched OR a submit was attempted — so a pristine
+  // wizard renders in the neutral state (no red on any input, no error
+  // banner). Valid required fields render with a subtle green border so
+  // the ERM sees positive progress instead of only nag copy.
+  const [touched, setTouched] = useState<Set<string>>(() => new Set());
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+  const markTouched = (name: string) =>
+    setTouched((prev) => {
+      if (prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.add(name);
+      return next;
+    });
+  const showFieldError = (name: string) => submitAttempted || touched.has(name);
+
+  // ── Draft persistence across route-leave / reload ─────────────────────
+  // Files can't be JSON-serialized (File objects are lost across
+  // sessionStorage / hard-refresh), so this ONLY persists text/select
+  // fields. On rehydrate, file-input rows still surface with "please
+  // re-select" wherever a file was expected. Step navigation itself is
+  // safe because the parent `DirectOnboardingWizard` stays mounted and
+  // all state (incl. files) lives here — the persistence is for the case
+  // where the ERM Ctrl-clicks a sidebar link or F5s mid-wizard.
+  const DRAFT_STORAGE_KEY = 'direct-onboarding-draft-v1';
+  // Rehydrate ONCE on mount before any downstream effects run.
+  const rehydratedRef = useRef(false);
+  useEffect(() => {
+    if (rehydratedRef.current) return;
+    rehydratedRef.current = true;
+    try {
+      const raw = typeof window !== 'undefined'
+        ? window.sessionStorage.getItem(DRAFT_STORAGE_KEY) : null;
+      if (!raw) return;
+      const d = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof d.email === 'string') setEmail(d.email);
+      if (typeof d.fullName === 'string') setFullName(d.fullName);
+      if (typeof d.legalName === 'string') setLegalName(d.legalName);
+      if (typeof d.phone === 'string') setPhone(d.phone);
+      if (typeof d.joiningDate === 'string') setJoiningDate(d.joiningDate);
+      if (typeof d.entityId === 'string') setEntityId(d.entityId);
+      if (typeof d.workAuthType === 'string') setWorkAuthType(d.workAuthType);
+      if (typeof d.authorizedFrom === 'string') setAuthorizedFrom(d.authorizedFrom);
+      if (typeof d.authorizedUntil === 'string') setAuthorizedUntil(d.authorizedUntil);
+      if (typeof d.eadCardNumber === 'string') setEadCardNumber(d.eadCardNumber);
+      if (typeof d.i20Expiration === 'string') setI20Expiration(d.i20Expiration);
+      if (typeof d.i983Required === 'boolean') setI983Required(d.i983Required);
+      if (typeof d.dsoName === 'string') setDsoName(d.dsoName);
+      if (typeof d.dsoEmail === 'string') setDsoEmail(d.dsoEmail);
+      if (typeof d.dsoPhone === 'string') setDsoPhone(d.dsoPhone);
+      if (typeof d.workAuthNotes === 'string') setWorkAuthNotes(d.workAuthNotes);
+      if (typeof d.sevisNumber === 'string') setSevisNumber(d.sevisNumber);
+      if (typeof d.h1ReceiptNumber === 'string') setH1ReceiptNumber(d.h1ReceiptNumber);
+      if (Array.isArray(d.selectedDocKeys)) setSelectedDocKeys(d.selectedDocKeys as string[]);
+      if (typeof d.trainerId === 'string') setTrainerId(d.trainerId);
+      if (typeof d.evaluatorId === 'string') setEvaluatorId(d.evaluatorId);
+      if (typeof d.managerId === 'string') setManagerId(d.managerId);
+      if (typeof d.assignMailbox === 'boolean') setAssignMailbox(d.assignMailbox);
+      if (typeof d.mailboxLocalPart === 'string') setMailboxLocalPart(d.mailboxLocalPart);
+      if (typeof d.stepIdx === 'number') setStepIdx(Math.max(0, Math.min(4, d.stepIdx)));
+      // Custom-doc TITLES are preserved so the ERM sees the row shells;
+      // files are dropped (JSON-unserializable) and must be re-selected.
+      if (Array.isArray(d.customDocs)) {
+        const restored: CustomDoc[] = (d.customDocs as Array<Record<string, unknown>>)
+          .filter((c) => typeof c?.key === 'string' && typeof c?.title === 'string')
+          .map((c) => ({ key: c.key as string, title: c.title as string, file: null }));
+        setCustomDocs(restored);
+      }
+    } catch {
+      // Bad draft — drop it silently and start fresh.
+    }
+  }, []);
+  // Persist text fields on every change. Excludes files (unserializable),
+  // API-loaded lookup arrays (entities/trainers/etc.), UI state
+  // (submitting/uploadPct), and success (post-submit result).
+  useEffect(() => {
+    if (!rehydratedRef.current) return;
+    if (success) return; // Onboard succeeded → don't keep persisting the stale draft.
+    try {
+      const payload = {
+        email, fullName, legalName, phone, joiningDate, entityId,
+        workAuthType, authorizedFrom, authorizedUntil, eadCardNumber,
+        i20Expiration, i983Required, dsoName, dsoEmail, dsoPhone,
+        workAuthNotes, sevisNumber, h1ReceiptNumber,
+        selectedDocKeys,
+        customDocs: customDocs.map((c) => ({ key: c.key, title: c.title })),
+        trainerId, evaluatorId, managerId,
+        assignMailbox, mailboxLocalPart,
+        stepIdx,
+      };
+      window.sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // sessionStorage full / disabled → best-effort, ignore.
+    }
+  }, [
+    email, fullName, legalName, phone, joiningDate, entityId,
+    workAuthType, authorizedFrom, authorizedUntil, eadCardNumber,
+    i20Expiration, i983Required, dsoName, dsoEmail, dsoPhone,
+    workAuthNotes, sevisNumber, h1ReceiptNumber,
+    selectedDocKeys, customDocs,
+    trainerId, evaluatorId, managerId,
+    assignMailbox, mailboxLocalPart,
+    stepIdx, success,
+  ]);
+  // "You have unsaved onboarding progress" browser warning on tab close /
+  // hard refresh / URL change. Fires only when the wizard has actual data
+  // beyond defaults AND hasn't been submitted successfully yet.
+  useEffect(() => {
+    const hasProgress = Boolean(
+      email || fullName || legalName || phone
+      || authorizedFrom || authorizedUntil || eadCardNumber || sevisNumber
+      || h1ReceiptNumber || dsoName || dsoEmail || dsoPhone || workAuthNotes
+      || resumeFile || Object.values(docFiles).some(Boolean)
+      || customDocs.some((c) => c.file || c.title.trim())
+      || trainerId || evaluatorId || managerId
+      || mailboxLocalPart,
+    );
+    if (!hasProgress || success) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Modern browsers ignore custom text but still show their own prompt
+      // as long as we set returnValue.
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [
+    email, fullName, legalName, phone,
+    authorizedFrom, authorizedUntil, eadCardNumber, sevisNumber,
+    h1ReceiptNumber, dsoName, dsoEmail, dsoPhone, workAuthNotes,
+    resumeFile, docFiles, customDocs,
+    trainerId, evaluatorId, managerId,
+    mailboxLocalPart, success,
+  ]);
+
   // ── Lazy-load reference data ─────────────────────────────────────────────
   useEffect(() => {
     void (async () => {
@@ -284,6 +431,15 @@ function DirectOnboardingWizard() {
         if (!eadCardNumber.trim()) return 'EAD card number is required.';
         if (!authorizedUntil) return 'EAD expiration (Authorized until) is required.';
       }
+      // F-1 OPT + F-1 STEM-OPT require a proof upload alongside the
+      // number/date fields — EAD card for OPT, EAD-OR-receipt for STEM-OPT.
+      // Same enum-backed pattern as US_CITIZEN + PERMANENT_RESIDENT above.
+      if (workAuthType === 'F1_OPT' && !docFiles[F1_OPT_EAD_KEY]) {
+        return 'Upload the EAD card for F-1 OPT.';
+      }
+      if (workAuthType === 'F1_STEM_OPT' && !docFiles[F1_STEM_OPT_EAD_OR_RECEIPT_KEY]) {
+        return 'Upload either the STEM-OPT EAD card or the I-797 receipt copy.';
+      }
       if (workAuthType === 'H1B') {
         if (!h1ReceiptNumber.trim()) return 'H-1 receipt number is required for H-1B.';
         if (!authorizedFrom) return 'Receipt start (Authorized from) is required for H-1B.';
@@ -335,9 +491,14 @@ function DirectOnboardingWizard() {
 
   function next() {
     if (stepError) {
+      // Latch submitAttempted so the fieldStateClass helper surfaces the
+      // per-field red for still-empty required inputs on the current step
+      // — same behaviour as a submit-attempt but scoped to the Next click.
+      setSubmitAttempted(true);
       toast.error(stepError);
       return;
     }
+    setSubmitAttempted(false); // reset when the step passes
     setStepIdx((n) => Math.min(n + 1, STEPS.length - 1));
   }
   function back() {
@@ -346,6 +507,7 @@ function DirectOnboardingWizard() {
 
   async function submit() {
     if (stepError) {
+      setSubmitAttempted(true);
       toast.error(stepError);
       return;
     }
@@ -416,6 +578,13 @@ function DirectOnboardingWizard() {
       if (workAuthType === 'PERMANENT_RESIDENT'
           && docFiles[PERMANENT_RESIDENT_GREEN_CARD_KEY]) {
         workAuthDocKeys.push(PERMANENT_RESIDENT_GREEN_CARD_KEY);
+      }
+      if (workAuthType === 'F1_OPT' && docFiles[F1_OPT_EAD_KEY]) {
+        workAuthDocKeys.push(F1_OPT_EAD_KEY);
+      }
+      if (workAuthType === 'F1_STEM_OPT'
+          && docFiles[F1_STEM_OPT_EAD_OR_RECEIPT_KEY]) {
+        workAuthDocKeys.push(F1_STEM_OPT_EAD_OR_RECEIPT_KEY);
       }
       const enumBackedKeys = Array.from(
         new Set<string>([...selectedDocKeys, ...workAuthDocKeys]),
@@ -612,6 +781,8 @@ function DirectOnboardingWizard() {
             joiningDate={joiningDate} setJoiningDate={setJoiningDate}
             entityId={entityId} setEntityId={setEntityId}
             entities={entities}
+            showFieldError={showFieldError}
+            markTouched={markTouched}
           />
         )}
         {stepIdx === 1 && (
@@ -664,7 +835,13 @@ function DirectOnboardingWizard() {
           />
         )}
 
-        {(submitError || stepError) && (
+        {/* Red banner shows only after the ERM has actually done something —
+             a submit-attempt (Next-invalid latched submitAttempted) OR at
+             least one field on this or a prior step has been touched. A
+             pristine wizard opening never fires the banner. submitError
+             (real POST failure) always surfaces regardless of touched
+             state. */}
+        {(submitError || (stepError && (submitAttempted || touched.size > 0))) && (
           <div className="mt-6 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <p>{submitError ?? stepError}</p>
@@ -720,7 +897,12 @@ function PersonalStep(props: {
   joiningDate: string; setJoiningDate: (v: string) => void;
   entityId: string; setEntityId: (v: string) => void;
   entities: StaffingEntityStub[];
+  showFieldError: (name: string) => boolean;
+  markTouched: (name: string) => void;
 }) {
+  const emailValid = /.+@.+/.test(props.email.trim());
+  const fullNameValid = props.fullName.trim().length > 0;
+  const joiningDateValid = Boolean(props.joiningDate);
   return (
     <div>
       <SectionHeader
@@ -733,7 +915,8 @@ function PersonalStep(props: {
           <input
             type="email" value={props.email}
             onChange={(e) => props.setEmail(e.target.value)}
-            className={inputClass}
+            onBlur={() => props.markTouched('email')}
+            className={fieldStateClass(props.showFieldError('email'), emailValid)}
             autoComplete="off"
           />
         </Field>
@@ -749,7 +932,8 @@ function PersonalStep(props: {
           <input
             value={props.fullName}
             onChange={(e) => props.setFullName(e.target.value)}
-            className={inputClass}
+            onBlur={() => props.markTouched('fullName')}
+            className={fieldStateClass(props.showFieldError('fullName'), fullNameValid)}
             autoComplete="off"
           />
         </Field>
@@ -770,7 +954,8 @@ function PersonalStep(props: {
             type="date"
             value={props.joiningDate}
             onChange={(e) => props.setJoiningDate(e.target.value)}
-            className={inputClass}
+            onBlur={() => props.markTouched('joiningDate')}
+            className={fieldStateClass(props.showFieldError('joiningDate'), joiningDateValid)}
           />
         </Field>
         {props.entities.length > 0 && (
@@ -869,6 +1054,34 @@ function WorkAuthStep(props: {
               helper="Both sides in one file if possible."
               file={props.docFiles[PERMANENT_RESIDENT_GREEN_CARD_KEY] ?? null}
               onChange={(f) => setDoc(PERMANENT_RESIDENT_GREEN_CARD_KEY, f)}
+            />
+          </div>
+        )}
+        {/* F-1 OPT — EAD card required (post-degree OPT authorization
+             document). Mirrors the citizenship / green-card pattern. */}
+        {t === 'F1_OPT' && (
+          <div className="sm:col-span-2">
+            <ProofUpload
+              label="EAD card (F-1 OPT)"
+              required
+              helper="Upload the OPT EAD card issued by USCIS. Both sides in one file if possible."
+              file={props.docFiles[F1_OPT_EAD_KEY] ?? null}
+              onChange={(f) => setDoc(F1_OPT_EAD_KEY, f)}
+            />
+          </div>
+        )}
+        {/* F-1 STEM-OPT — EITHER the extended EAD card OR the pending
+             I-797 receipt (whichever the DSO has issued at hire time).
+             One upload with an either-is-accepted helper — the ERM picks
+             whichever they have. */}
+        {t === 'F1_STEM_OPT' && (
+          <div className="sm:col-span-2">
+            <ProofUpload
+              label="STEM-OPT EAD or I-797 receipt"
+              required
+              helper="Either is accepted — upload the STEM-OPT EAD card if issued, otherwise the pending I-797 receipt copy."
+              file={props.docFiles[F1_STEM_OPT_EAD_OR_RECEIPT_KEY] ?? null}
+              onChange={(f) => setDoc(F1_STEM_OPT_EAD_OR_RECEIPT_KEY, f)}
             />
           </div>
         )}
@@ -1062,7 +1275,9 @@ function DocumentsStep(props: {
   // live on the Work Auth step where the ERM has type-in-hand context.
   const catalog = props.catalog.filter(
     (d) => d.key !== US_CITIZEN_PROOF_KEY
-        && d.key !== PERMANENT_RESIDENT_GREEN_CARD_KEY,
+        && d.key !== PERMANENT_RESIDENT_GREEN_CARD_KEY
+        && d.key !== F1_OPT_EAD_KEY
+        && d.key !== F1_STEM_OPT_EAD_OR_RECEIPT_KEY,
   );
   function toggleDoc(key: string) {
     if (props.selectedDocKeys.includes(key)) {
@@ -1236,6 +1451,13 @@ function ReviewStep(props: {
       && props.docFiles[PERMANENT_RESIDENT_GREEN_CARD_KEY]) {
     workAuthDocs.push('Green Card');
   }
+  if (props.workAuthType === 'F1_OPT' && props.docFiles[F1_OPT_EAD_KEY]) {
+    workAuthDocs.push('EAD card (F-1 OPT)');
+  }
+  if (props.workAuthType === 'F1_STEM_OPT'
+      && props.docFiles[F1_STEM_OPT_EAD_OR_RECEIPT_KEY]) {
+    workAuthDocs.push('STEM-OPT EAD or I-797 receipt');
+  }
   const summaryDocs: string[] = [
     ...workAuthDocs,
     ...props.selectedDocKeys.map((k) => labelFor(props.catalog, k)),
@@ -1379,6 +1601,33 @@ function RolePicker({
 
 const inputClass =
   'w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500';
+
+/**
+ * Three-state per-field styling for the validation UX:
+ *   - untouched (pristine): neutral slate border (base inputClass)
+ *   - valid + touched:      subtle green border + focus ring
+ *   - invalid + touched OR submit-attempted: red border + focus ring
+ *
+ * Untouched fields NEVER show red — a pristine wizard opens without any
+ * red styling anywhere. Only after the ERM blurs a required field OR
+ * clicks Next-invalid does the red surface.
+ *
+ * The `valid` argument encodes the field's own "am I acceptable" answer
+ * (typically a `.trim().length > 0` for required text). `showError`
+ * comes from the parent's `showFieldError(name)` — true iff the field
+ * has been touched OR a submit has been attempted.
+ */
+function fieldStateClass(showError: boolean, valid: boolean): string {
+  if (showError && !valid) {
+    return 'w-full rounded-md border border-red-400 px-3 py-2 text-sm '
+      + 'focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500';
+  }
+  if (showError && valid) {
+    return 'w-full rounded-md border border-emerald-400 px-3 py-2 text-sm '
+      + 'focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500';
+  }
+  return inputClass;
+}
 
 function labelFor(catalog: OnboardingDoc[], key: string): string {
   return catalog.find((d) => d.key === key)?.title ?? key;
