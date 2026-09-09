@@ -2,6 +2,7 @@ package com.anvicorp.api.erm.directonboarding;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
@@ -93,10 +94,20 @@ public final class DirectOnboardingDtos {
              *  server-side. */
             @Size(max = 40) String h1ReceiptNumber,
 
-            // Step 3 — Reporting structure (all optional; null = auto-link
-            // from DEFAULT_TRAINER_EMAIL / DEFAULT_EVALUATOR_EMAIL) --------------
+            // Step 3 — Reporting structure -----------------------------------
+            // trainerUserId + evaluatorUserId are optional (null → auto-link
+            // from DEFAULT_TRAINER_EMAIL / DEFAULT_EVALUATOR_EMAIL).
+            // managerUserId is REQUIRED — a null manager_id leaves the intern
+            // invisible on the manager-owned roster
+            // (/api/v1/manager/active-interns/roster filters
+            // il.manager_id = caller.id). The ReportingStructureAutoLinker
+            // now has a DEFAULT_MANAGER_EMAIL fallback for the normal
+            // (offer-signed) flow, but DirectOnboarding hard-requires an
+            // explicit pick — the ERM knows exactly which manager owns
+            // the pre-platform hire.
             UUID trainerUserId,
             UUID evaluatorUserId,
+            @NotNull(message = "managerUserId is required — pick a Reporting manager on the Reporting step")
             UUID managerUserId,
 
             // Step 4 — Documents -----------------------------------------------

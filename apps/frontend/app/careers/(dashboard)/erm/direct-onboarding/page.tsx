@@ -303,6 +303,17 @@ function DirectOnboardingWizard() {
         if (!c.file) return `Upload a file for "${c.title.trim() || 'Custom document'}".`;
       }
     }
+    if (stepIdx === 3) {
+      // Reporting manager is REQUIRED — without it, il.manager_id lands
+      // null and the intern is invisible on the manager-owned roster
+      // (/api/v1/manager/active-interns/roster filters
+      // il.manager_id = caller.id). Trainer + evaluator have config-driven
+      // auto-link fallbacks (DEFAULT_TRAINER_EMAIL / DEFAULT_EVALUATOR_EMAIL);
+      // manager now has one too (DEFAULT_MANAGER_EMAIL) but hard-requiring
+      // at onboarding time is cleaner — the ERM knows exactly which
+      // manager owns the intern.
+      if (!managerId) return 'Reporting manager is required.';
+    }
     if (stepIdx === 4 && assignMailbox) {
       if (!mailboxLocalPart.trim()) return 'Mailbox local-part is required when assigning a mailbox now.';
       if (!/^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/.test(mailboxLocalPart.trim())) {
@@ -318,6 +329,7 @@ function DirectOnboardingWizard() {
     authorizedFrom, authorizedUntil,
     sevisNumber, eadCardNumber, h1ReceiptNumber,
     resumeFile, selectedDocKeys, docFiles, catalog, customDocs,
+    managerId,
     assignMailbox, mailboxLocalPart, mailboxPassword,
   ]);
 
@@ -339,6 +351,15 @@ function DirectOnboardingWizard() {
     }
     if (!resumeFile) {
       toast.error('Resume upload is required.');
+      return;
+    }
+    // Cross-step guard: on the Review step, stepError only checks step-4
+    // fields — walk back and re-assert the Reporting-step required field
+    // (manager) so a user who bypassed step 3 via URL/state cannot submit
+    // without a manager. Backend @NotNull is the ultimate safeguard, but
+    // catching here surfaces the friendly message instead of a 400.
+    if (!managerId) {
+      toast.error('Reporting manager is required — go back to the Reporting step and pick one.');
       return;
     }
     // Pre-flight the multipart caps client-side. Without this the browser
@@ -1008,7 +1029,7 @@ function ReportingStep(props: {
     <div>
       <SectionHeader
         title="Reporting structure"
-        subtitle="Leave any of these blank to auto-link from the org-wide defaults."
+        subtitle="Trainer + evaluator can be left blank to auto-link from the org-wide defaults. Reporting manager is required so the intern shows up on their manager's owned roster from day one."
       />
       <div className="space-y-4">
         <RolePicker
@@ -1022,6 +1043,7 @@ function ReportingStep(props: {
         <RolePicker
           label="Reporting Manager" value={props.managerId} options={props.managers}
           onChange={props.setManagerId}
+          required
         />
       </div>
     </div>
@@ -1325,19 +1347,25 @@ function SectionHeader({
 }
 
 function RolePicker({
-  label, value, options, onChange,
+  label, value, options, onChange, required,
 }: {
   label: string; value: string; options: UserStub[]; onChange: (v: string) => void;
+  required?: boolean;
 }) {
   return (
     <div>
-      <label className="text-sm font-medium text-slate-800">{label}</label>
+      <label className="text-sm font-medium text-slate-800">
+        {label}
+        {required && <span className="text-red-600"> *</span>}
+      </label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={cn(inputClass, 'mt-1')}
       >
-        <option value="">Auto-link from default</option>
+        <option value="">
+          {required ? '— pick one —' : 'Auto-link from default'}
+        </option>
         {options.map((o) => (
           <option key={o.userId} value={o.userId}>
             {o.fullName} · {o.currentInternCount} intern
