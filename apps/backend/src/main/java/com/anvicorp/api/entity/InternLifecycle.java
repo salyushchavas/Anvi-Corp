@@ -71,6 +71,28 @@ public class InternLifecycle {
     @Column(name = "ended_at")
     private Instant endedAt;
 
+    /**
+     * Soft-delete timestamp — set by the two-tier admin purge
+     * ({@code AdminUserService.deleteUser}) so a hard-purged intern's
+     * lifecycle row is retained for audit but excluded from every
+     * user-facing read path. Every read query that surfaces lifecycle
+     * rows to a role (Manager Intern Portfolio, Active Interns roster,
+     * ERM active-interns, etc.) MUST filter {@code deleted_at IS NULL}
+     * in its JOIN or WHERE.
+     *
+     * <p>Historically added by {@code SchemaFixupRunner.ensureSoftDeleteColumns}
+     * as an out-of-entity ALTER, which meant the column existed only if
+     * that runner had ever succeeded on the deployed DB. Promoted to an
+     * entity field here so {@code ddl-auto=update} guarantees the column
+     * on every deploy — the Manager Intern Portfolio silently returned
+     * empty rows on any deploy where the runner's ALTER hadn't landed
+     * (its ONLY consumer of the column). The SchemaFixupRunner ALTER is
+     * still {@code ADD COLUMN IF NOT EXISTS} so it stays idempotent
+     * alongside this field.</p>
+     */
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
     // ── ERM Phase 4 — denormalized for the New Hire List ────────────────────
 
     /** Mirrored from signed offer for fast inbox queries. */
