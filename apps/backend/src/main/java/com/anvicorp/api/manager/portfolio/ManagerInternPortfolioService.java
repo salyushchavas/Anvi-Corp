@@ -307,27 +307,49 @@ public class ManagerInternPortfolioService {
 
     private ManagerInternPortfolioDtos.AddressSection loadAddress(UUID userId) {
         try {
+            // Candidate entity's actual address columns are the address_*
+            // set added in B2 (address_street / address_apt / address_city /
+            // address_state / address_zip / address_country) — not
+            // line1/line2/city/state/postal_code/country the query used to
+            // reference. Every column above except the (silently-null)
+            // address_city was wrong → SQL exception → catch swallowed it
+            // → the section rendered "No address captured" for every intern,
+            // even funnel-onboarded ones who filled the profile page.
             return jdbc.queryForObject(
-                    "SELECT address_line1, address_line2, city, state, "
-                            + "       postal_code, country "
+                    "SELECT address_street, address_apt, address_city, "
+                            + "       address_state, address_zip, address_country "
                             + "  FROM candidates WHERE user_id = ? "
                             + " ORDER BY created_at DESC LIMIT 1",
                     (rs, n) -> new ManagerInternPortfolioDtos.AddressSection(
-                            rs.getString("address_line1"),
-                            rs.getString("address_line2"),
-                            rs.getString("city"),
-                            rs.getString("state"),
-                            rs.getString("postal_code"),
-                            rs.getString("country")),
+                            rs.getString("address_street"),
+                            rs.getString("address_apt"),
+                            rs.getString("address_city"),
+                            rs.getString("address_state"),
+                            rs.getString("address_zip"),
+                            rs.getString("address_country")),
                     userId);
         } catch (Exception ignored) { return null; }
     }
 
     private ManagerInternPortfolioDtos.EducationSection loadEducation(UUID userId) {
         try {
+            // Candidate entity columns are: `degree_level` (structured
+            // enum, Phase 1.5) with legacy `degree` (free-text) fallback,
+            // `specialization` for field of study, `school` for university,
+            // `graduation_year`. The query used to reference
+            // `highest_degree` / `field_of_study` / `university` — none of
+            // which exist — so it threw and the catch swallowed the
+            // exception into "No education captured" for every intern.
+            //
+            // COALESCE prefers the structured degree_level for post-Phase-1.5
+            // rows and falls back to legacy degree for older rows. Cast
+            // the year to text so the DTO's String field renders it
+            // regardless of the underlying column type.
             return jdbc.queryForObject(
-                    "SELECT highest_degree, field_of_study, university, "
-                            + "       graduation_year "
+                    "SELECT COALESCE(degree_level, degree) AS highest_degree, "
+                            + "       specialization AS field_of_study, "
+                            + "       school AS university, "
+                            + "       CAST(graduation_year AS text) AS graduation_year "
                             + "  FROM candidates WHERE user_id = ? "
                             + " ORDER BY created_at DESC LIMIT 1",
                     (rs, n) -> new ManagerInternPortfolioDtos.EducationSection(
@@ -343,11 +365,17 @@ public class ManagerInternPortfolioService {
         String workAuthType = null;
         LocalDate authExpires = null;
         try {
+            // WorkAuthorizationRecord entity uses `authorized_until` for
+            // the single source-of-truth expiration date (see the entity's
+            // authorizedUntil field). The query used to reference
+            // `auth_expires_on` which doesn't exist → SQL exception →
+            // catch swallowed it → workAuthType stayed null → "No
+            // work-authorization record on file." for every intern.
             Map<String, Object> war = jdbc.queryForMap(
-                    "SELECT work_auth_type, auth_expires_on FROM work_authorization_records "
+                    "SELECT work_auth_type, authorized_until FROM work_authorization_records "
                             + " WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", userId);
             workAuthType = (String) war.get("work_auth_type");
-            java.sql.Date d = (java.sql.Date) war.get("auth_expires_on");
+            java.sql.Date d = (java.sql.Date) war.get("authorized_until");
             authExpires = d != null ? d.toLocalDate() : null;
         } catch (Exception ignored) { /* no war row */ }
         String planStatus = null;
@@ -395,20 +423,26 @@ public class ManagerInternPortfolioService {
                     null, "NONE", 0, 0, 0);
         }
         try {
+            // Direct-onboarding writes DocumentTask.status='ACCEPTED' (the
+            // ERM has already reviewed the doc at onboard time) — the
+            // funnel path writes SUBMITTED → APPROVED. ACCEPTED counts as
+            // both submitted AND reviewed for portfolio purposes so a
+            // direct-onboarded intern's packet renders with the same
+            // "all-done" shape as an approved funnel packet, not "0/N".
             return jdbc.queryForObject(
                     "SELECT dp.id AS packet_id, dp.status AS packet_status, "
                             + "  COALESCE((SELECT COUNT(*) FROM document_tasks dt "
                             + "              WHERE dt.document_packet_id = dp.id), 0) AS total_tasks, "
                             + "  COALESCE((SELECT COUNT(*) FROM document_tasks dt "
                             + "              WHERE dt.document_packet_id = dp.id "
-                            + "                AND dt.status IN ('SUBMITTED','APPROVED','RESUBMISSION_REQUESTED')), 0) AS submitted_tasks, "
+                            + "                AND dt.status IN ('SUBMITTED','APPROVED','ACCEPTED','RESUBMISSION_REQUESTED')), 0) AS submitted_tasks, "
                             + "  COALESCE((SELECT COUNT(*) FROM document_tasks dt "
                             + "              WHERE dt.document_packet_id = dp.id "
-                            + "                AND dt.status = 'APPROVED'), 0) AS reviewed_tasks "
+                            + "                AND dt.status IN ('APPROVED','ACCEPTED')), 0) AS reviewed_tasks "
                             + "  FROM document_packets dp "
                             + " WHERE dp.intern_lifecycle_id = ? "
                             + "   AND dp.status NOT IN ('CANCELLED') "
-                            + " ORDER BY dp.assigned_at DESC NULLS LAST LIMIT 1",
+                            + " ORDER BY COALESCE(dp.assigned_at, dp.created_at) DESC NULLS LAST LIMIT 1",
                     (rs, n) -> {
                         String packetIdRaw = rs.getString("packet_id");
                         return new ManagerInternPortfolioDtos.DocumentsSection(
