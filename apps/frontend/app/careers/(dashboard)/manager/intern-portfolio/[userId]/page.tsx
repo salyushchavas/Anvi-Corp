@@ -47,7 +47,17 @@ interface PortfolioDetail {
   } | null;
   workAuth: {
     workAuthType: string | null;
+    authorizedFrom: string | null;
     authExpiresOn: string | null;
+    i20Expiration: string | null;
+    i983Required: boolean | null;
+    dsoName: string | null;
+    dsoEmail: string | null;
+    dsoPhone: string | null;
+    cptExpiration: string | null;
+    h1ReceiptStart: string | null;
+    h1ReceiptEnd: string | null;
+    ermNotes: string | null;
     i983PlanStatus: string | null;
   } | null;
   application: {
@@ -257,13 +267,36 @@ export default function ManagerInternPortfolioDetailPage() {
           ) : (
             <>
               <Field label="Type" value={data.workAuth.workAuthType?.replaceAll('_', ' ') ?? null} />
-              <Field label="Auth expires on"
+              <Field label="Authorized from"
+                value={data.workAuth.authorizedFrom
+                  ? new Date(data.workAuth.authorizedFrom).toLocaleDateString() : null} />
+              <Field label="Authorized until"
                 value={data.workAuth.authExpiresOn
                   ? new Date(data.workAuth.authExpiresOn).toLocaleDateString() : null} />
+              <Field label="I-20 expiration"
+                value={data.workAuth.i20Expiration
+                  ? new Date(data.workAuth.i20Expiration).toLocaleDateString() : null} />
+              <Field label="CPT expiration"
+                value={data.workAuth.cptExpiration
+                  ? new Date(data.workAuth.cptExpiration).toLocaleDateString() : null} />
+              <Field label="H-1B receipt start"
+                value={data.workAuth.h1ReceiptStart
+                  ? new Date(data.workAuth.h1ReceiptStart).toLocaleDateString() : null} />
+              <Field label="H-1B receipt end"
+                value={data.workAuth.h1ReceiptEnd
+                  ? new Date(data.workAuth.h1ReceiptEnd).toLocaleDateString() : null} />
+              {data.workAuth.i983Required != null && (
+                <Field label="I-983 required"
+                  value={data.workAuth.i983Required ? 'Yes' : 'No'} />
+              )}
               {data.workAuth.i983PlanStatus && (
                 <Field label="I-983 plan status"
                   value={data.workAuth.i983PlanStatus.replaceAll('_', ' ')} />
               )}
+              <Field label="DSO name" value={data.workAuth.dsoName} />
+              <Field label="DSO email" value={data.workAuth.dsoEmail} />
+              <Field label="DSO phone" value={data.workAuth.dsoPhone} />
+              <Field label="ERM notes" value={data.workAuth.ermNotes} />
             </>
           )}
         </Section>

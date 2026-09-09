@@ -125,7 +125,33 @@ public final class ManagerInternPortfolioDtos {
 
     public record WorkAuthSection(
             String workAuthType,       // e.g. F1_STEM_OPT, H1B, US_CITIZEN, …
+            /** Start of the authorization window (H-1B: I-797 receipt start). */
+            LocalDate authorizedFrom,
+            /** End of the authorization window — single source of truth for
+             *  expiration across every visa type. Displayed under a per-type
+             *  label ("CPT expiration" / "EAD expiration" / "H-1B end date"). */
             LocalDate authExpiresOn,
+            /** I-20 program end date (F-1 visa types). */
+            LocalDate i20Expiration,
+            /** True ONLY when workAuthType is F1_OPT or F1_STEM_OPT — the
+             *  DirectOnboardingService server forces false elsewhere. */
+            Boolean i983Required,
+            /** DSO contact — Designated School Official at the intern's
+             *  university (F-1 visa compliance). All three may be null
+             *  for non-F-1 hires. */
+            String dsoName,
+            String dsoEmail,
+            String dsoPhone,
+            /** Legacy per-type end dates — mirrored from authorizedUntil at
+             *  upsert time so downstream readers (compliance alerts) still
+             *  see them. Displayed here so Manager sees the exact per-type
+             *  expiration in addition to the unified authExpiresOn. */
+            LocalDate cptExpiration,
+            LocalDate h1ReceiptStart,
+            LocalDate h1ReceiptEnd,
+            /** Free-text notes the ERM captured at onboard time
+             *  (work_authorization_records.erm_notes). */
+            String ermNotes,
             /** i-983 plan status when applicable (F1 STEM OPT), else null. */
             String i983PlanStatus
     ) {}
