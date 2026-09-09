@@ -88,11 +88,19 @@ public class ManagerInternPortfolioService {
         String pageSql = "SELECT " + SELECT_COLS + " " + FROM_JOINS + filteredWhere
                 + " ORDER BY u.created_at DESC NULLS LAST, u.id ASC "
                 + " LIMIT " + ps + " OFFSET " + (p * ps);
-        List<ManagerInternPortfolioDtos.PortfolioRow> rows = new ArrayList<>();
+        List<ManagerInternPortfolioDtos.PortfolioRow> rows;
         try {
             rows = jdbc.query(pageSql, params.toArray(), this::mapRow);
         } catch (Exception e) {
-            log.warn("[ManagerPortfolio.list] query failed: {}", e.getMessage());
+            // Was previously catch-and-return-empty-list — that swallowed
+            // schema-drift bugs (e.g. missing `intern_lifecycles.deleted_at`
+            // column) into a silent "0 shown" empty state with no error
+            // banner. Rethrow so GlobalExceptionHandler surfaces a real
+            // error to the frontend (banner + traceId) and the next such
+            // failure is diagnosable in one step instead of a code walk.
+            log.error("[ManagerPortfolio.list] query failed — surfacing to caller "
+                    + "instead of returning empty list: {}", e.getMessage(), e);
+            throw e;
         }
 
         int totalPages = ps == 0 ? 0 : (int) Math.ceil((double) total / ps);
