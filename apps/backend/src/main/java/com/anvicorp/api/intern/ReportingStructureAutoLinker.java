@@ -13,22 +13,27 @@ import java.util.function.Consumer;
 
 /**
  * Resolves {@code DEFAULT_TRAINER_EMAIL} / {@code DEFAULT_EVALUATOR_EMAIL}
- * to user IDs and applies them to an {@link InternLifecycle} row's
- * {@code trainer_id} / {@code evaluator_id} columns.
+ * / {@code DEFAULT_MANAGER_EMAIL} to user IDs and applies them to an
+ * {@link InternLifecycle} row's {@code trainer_id} / {@code evaluator_id}
+ * / {@code manager_id} columns.
  *
- * <p>Single source of truth for the org-wide T/E auto-link. Called by
+ * <p>Single source of truth for the org-wide T/E/M auto-link. Called by
  * {@link com.anvicorp.api.intern.OfferIdmsSigningService} on offer-
- * sign, the activation path ({@link InternActivationJob}), and the
- * one-time backfill in {@code SchemaFixupRunner} so the resolver runs
- * the same way wherever the lifecycle row is created or activated.</p>
+ * sign, the activation path ({@link InternActivationJob}), the
+ * DirectOnboarding flow, and the one-time backfill in
+ * {@code SchemaFixupRunner} so the resolver runs the same way wherever
+ * the lifecycle row is created or activated.</p>
  *
  * <p>The linker NEVER overwrites an existing non-null trainer_id /
- * evaluator_id — ERM's explicit assignments via the AssignManagerModal
- * / assign-reporting endpoint take precedence.</p>
+ * evaluator_id / manager_id — ERM's explicit assignments via the
+ * AssignManagerModal / assign-reporting endpoint take precedence.</p>
  *
- * <p>Non-fatal: unset env vars or unresolvable emails emit INFO logs and
- * leave the column null. ERM can still set values manually via the
- * legacy /assign-reporting endpoint.</p>
+ * <p>Non-fatal: unset env vars or unresolvable emails emit WARN logs
+ * and leave the column null. ERM can still set values manually via the
+ * legacy /assign-reporting endpoint. The manager branch matters for
+ * the DirectOnboarding + normal-flow parity fix: an intern with a null
+ * manager_id is invisible on the manager-owned roster (which filters
+ * {@code il.manager_id = caller.id}).</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -42,6 +47,9 @@ public class ReportingStructureAutoLinker {
 
     @Value("${app.default-evaluator-email:}")
     private String defaultEvaluatorEmail;
+
+    @Value("${app.default-manager-email:}")
+    private String defaultManagerEmail;
 
     /**
      * Apply the default trainer/evaluator IDs to the supplied lifecycle
@@ -68,7 +76,17 @@ public class ReportingStructureAutoLinker {
             changed |= tryAutoLink(lc::setEvaluatorId, defaultEvaluatorEmail,
                     "evaluator", lifecycleId);
         }
+        if (lc.getManagerId() == null) {
+            changed |= tryAutoLink(lc::setManagerId, defaultManagerEmail,
+                    "manager", lifecycleId);
+        }
+        // Complete-marker stamps once ALL THREE reporting roles are populated
+        // (whether by ERM's explicit picks upstream, by this auto-linker,
+        // or a mix). Manager is now included — previously the flag could
+        // fire on trainer + evaluator alone even though a null manager left
+        // the intern invisible on the manager-owned roster.
         if (lc.getTrainerId() != null && lc.getEvaluatorId() != null
+                && lc.getManagerId() != null
                 && !Boolean.TRUE.equals(lc.getReportingStructureComplete())) {
             lc.setReportingStructureComplete(Boolean.TRUE);
             lc.setReportingStructureCompletedAt(now);
