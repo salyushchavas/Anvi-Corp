@@ -552,16 +552,33 @@ public class DocumentInstancePdfRenderer {
                 // and the paragraph itself has no left indent so the block
                 // starts flush with the body — that's the "cramped bullets
                 // jammed together" complaint. Flipping to `outside` +
-                // margin-left gives the bullet its own column of space and
-                // a visible indent, matching how Word renders a real list.
-                // The `!important` beats the injected inline rule (same
-                // specificity otherwise), and `list-style-position` is a
-                // safe override because the marker rendering itself still
-                // works either way — only its position changes.
+                // margin-left gives the bullet its own column of space
+                // and a visible indent — but only as a FALLBACK for lists
+                // whose source w:ind was lost upstream.
+                //
+                // `list-style-position: outside` keeps its `!important`
+                // because it beats a docx-preview injected INLINE rule
+                // (`list-style-position: inside`) — a specificity fight,
+                // not an indent override.
+                //
+                // `margin-left` / `padding-left` do NOT carry `!important`:
+                // when the source DOCX carried a real left-indent value,
+                // CanonicalHtmlProfileCorrector.correctListIndent maps it
+                // to the paragraph's inline `style="margin-left:..."` (see
+                // that method's javadoc). An inline style has higher
+                // specificity than a shell selector rule, so the source's
+                // real indent naturally wins over these baseline fallback
+                // values. The prior `!important` here clobbered every
+                // list to the same 2em regardless of what the source
+                // asked for — that's the "every bullet forced to 2em"
+                // complaint. Removing `!important` restores source-
+                // fidelity: authored indents pass through, un-indented
+                // Word lists still get the 2em/0.5em fallback because
+                // there's no inline style competing.
                 + "  p[class*=\"docx-num\"] {"
                 + "    list-style-position: outside !important;"
-                + "    margin-left: 2em !important;"
-                + "    padding-left: 0.5em !important;"
+                + "    margin-left: 2em;"
+                + "    padding-left: 0.5em;"
                 + "    margin-top: 2pt; margin-bottom: 4pt;"
                 + "  }"
                 + "  h1, h2, h3, h4 { font-weight: bold; margin: 12pt 0 6pt; }"

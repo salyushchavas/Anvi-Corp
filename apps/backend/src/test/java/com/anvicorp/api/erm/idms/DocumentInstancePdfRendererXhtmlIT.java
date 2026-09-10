@@ -8,6 +8,7 @@ import java.io.ByteArrayInputStream;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -462,8 +463,20 @@ class DocumentInstancePdfRendererXhtmlIT {
         assertTrue(shell.contains("list-style-position: outside !important"),
                 "docx-preview list-item list-style-position not flipped to outside: "
                         + shell);
-        assertTrue(shell.contains("margin-left: 2em !important"),
-                "docx-preview list-item indent missing: " + shell);
+        // margin-left / padding-left MUST NOT carry !important — the
+        // source w:ind lands on the paragraph's inline style="margin-left:...",
+        // and an inline style has higher specificity than a shell selector,
+        // so the source's real indent naturally wins over these fallbacks.
+        // The prior !important clobbered every list to the same 2em.
+        assertTrue(shell.contains("margin-left: 2em;"),
+                "docx-preview list-item fallback indent missing: " + shell);
+        assertTrue(shell.contains("padding-left: 0.5em;"),
+                "docx-preview list-item fallback padding missing: " + shell);
+        assertFalse(shell.contains("margin-left: 2em !important"),
+                "list-indent must be overridable by the source's inline "
+                        + "margin-left — !important would clobber it: " + shell);
+        assertFalse(shell.contains("padding-left: 0.5em !important"),
+                "list-padding must be overridable by the source: " + shell);
     }
 
     /** BUG 4 (font hoist) — the docx-preview list-item paragraph
@@ -555,10 +568,16 @@ class DocumentInstancePdfRendererXhtmlIT {
         assertTrue(shell.contains("font-size:12pt"),
                 "12pt not preserved on list items: " + shell);
         // List-item indent + breathing-room CSS present in shell.
+        // outside-marker keeps !important (specificity fight with the
+        // docx-preview injected inline `list-style-position: inside`).
+        // The indent declarations do NOT — see the primary docx-num
+        // shell test above for the full rationale.
         assertTrue(shell.contains("list-style-position: outside !important"),
                 "docx-preview list-item outside-marker rule missing: " + shell);
-        assertTrue(shell.contains("margin-left: 2em !important"),
-                "docx-preview list-item indent rule missing: " + shell);
+        assertTrue(shell.contains("margin-left: 2em;"),
+                "docx-preview list-item fallback indent rule missing: " + shell);
+        assertFalse(shell.contains("margin-left: 2em !important"),
+                "list-indent must be overridable by source inline style: " + shell);
     }
 
     /**
