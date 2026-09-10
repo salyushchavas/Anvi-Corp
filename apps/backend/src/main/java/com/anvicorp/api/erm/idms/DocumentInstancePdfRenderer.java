@@ -84,6 +84,24 @@ public class DocumentInstancePdfRenderer {
     private static final String DEFAULT_PAGE_MARGIN = "1in 0.88in 1in 1in";
     private static final String DEFAULT_PAGE_MARGIN_LEFT = "1in";
 
+    /**
+     * Cap on the RENDERED height of a signature image in the executed
+     * PDF and the intern's live preview. Expressed in {@code em} so the
+     * signature scales with the surrounding line's font-size instead of
+     * dominating it. The prior value of 1.6em (~19.2pt on 12pt body)
+     * rendered signatures noticeably smaller than a real hand-signed
+     * signature on a printed form; 2.6em (~31pt on 12pt body / ~40px
+     * on-screen at default zoom) matches the on-paper look while still
+     * fitting inside a single line-box without wrapping the signature
+     * row into two lines. Kept as ONE constant so any future re-tune
+     * is a single-place edit and stays in lock-step across the PDF
+     * renderer's inline style (interpolate) AND its stylesheet fallback
+     * ({@code .doc-field img}). The live-preview mirror lives on
+     * {@code components/idms/InstanceRenderer.tsx} and is set to the
+     * same value by hand — kept in sync via inline comments there.
+     */
+    private static final String SIGNATURE_MAX_HEIGHT = "2.6em";
+
     /** Simple CSS length shape — number + unit. Accept only what a docx-
      *  preview render actually produces (in / cm / mm / pt / px). We
      *  never pass through arbitrary CSS to {@code @page} because the
@@ -191,7 +209,8 @@ public class DocumentInstancePdfRenderer {
                 anchor.empty();
                 Element img = anchor.appendElement("img");
                 img.attr("style",
-                        "max-height:1.6em;vertical-align:baseline;display:inline-block;");
+                        "max-height:" + SIGNATURE_MAX_HEIGHT
+                                + ";vertical-align:baseline;display:inline-block;");
                 img.attr("src", signature);
                 continue;
             }
@@ -323,36 +342,69 @@ public class DocumentInstancePdfRenderer {
         }
 
         // Hoist first <header> to a running element, drop the rest.
+        // REPARENT to direct body child so openhtmltopdf's paged-media
+        // processor reliably lifts it into the @top-left slot on EVERY
+        // page. Previously the header stayed nested inside its section
+        // — that layout worked on page 1 (the element rendered in normal
+        // flow at the top) but silently failed to repeat on pages 2..N
+        // because openhtmltopdf's `position: running()` extraction is
+        // fragile from arbitrary DOM depths. A direct body child is the
+        // structurally-least-ambiguous placement for a running element.
+        // Also strip any inline `position` (docx-preview never emits one
+        // today, but a defensive scrub means no future variant can
+        // override the class rule via inline specificity).
         Elements headers = doc.select("header");
         boolean hasHeader = !headers.isEmpty();
         if (hasHeader) {
             Element first = headers.first();
             first.addClass("pdf-doc-header");
-            // Also strip the docx-preview inline margin-top / min-height —
-            // those anchored the header inside the section padding
-            // (which no longer exists) and would render as dead space
-            // inside the page margin box.
             String cleaned = stripInlineProperties(first.attr("style"),
-                    "margin-top", "min-height");
+                    "margin-top", "min-height", "position", "top", "left",
+                    "right", "bottom", "transform");
             if (cleaned.isEmpty()) first.removeAttr("style");
             else first.attr("style", cleaned);
             for (int i = 1; i < headers.size(); i++) {
                 headers.get(i).remove();
             }
+            // Detach + reparent as the FIRST direct child of <body>.
+            first.remove();
+            doc.body().prependChild(first);
         }
 
-        // Same for <footer>.
+        // Same for <footer> — ALSO reparent to the START of body (right
+        // after the header). openhtmltopdf's paged-media processor picks
+        // up `position: running()` content when it first encounters the
+        // element in document order; appending the footer at the tail
+        // (after the article) meant the "docFooter" running slot didn't
+        // fill until the paginator reached the last page, so the footer
+        // appeared on the LAST page only. Prepending it before body
+        // content populates both running slots BEFORE any pagination
+        // begins, so every generated @page's @bottom-center picks it up.
+        // Header stays FIRST child (see above), footer becomes SECOND —
+        // the visual placement in the executed PDF is unaffected because
+        // running elements are removed from body flow entirely.
         Elements footers = doc.select("footer");
         boolean hasFooter = !footers.isEmpty();
         if (hasFooter) {
             Element first = footers.first();
             first.addClass("pdf-doc-footer");
             String cleaned = stripInlineProperties(first.attr("style"),
-                    "margin-bottom", "min-height");
+                    "margin-bottom", "min-height", "position", "top", "left",
+                    "right", "bottom", "transform");
             if (cleaned.isEmpty()) first.removeAttr("style");
             else first.attr("style", cleaned);
             for (int i = 1; i < footers.size(); i++) {
                 footers.get(i).remove();
+            }
+            first.remove();
+            // Insert AFTER the header (if any) so header is the first
+            // running element, footer the second — both encountered by
+            // the paginator before any body content.
+            Element header = doc.body().selectFirst("header.pdf-doc-header");
+            if (header != null) {
+                header.after(first);
+            } else {
+                doc.body().prependChild(first);
             }
         }
 
@@ -518,16 +570,18 @@ public class DocumentInstancePdfRenderer {
                 + "           overflow-wrap: break-word; }"
                 + "  .doc-field { display: inline; word-wrap: break-word;"
                 + "               overflow-wrap: break-word; }"
-                // Signature image sizing — em-based so the signature scales
-                // with the surrounding text's line-height instead of
-                // dominating it. The prior absolute 40px pushed line height
-                // ~3× on 11pt body text and broke the signature row into two
-                // lines when the signature was placed on an underscore blank
-                // ("Signed: __________"). 1.6em keeps the signature clearly
-                // visible while sitting within normal line flow;
-                // vertical-align: baseline puts the image ON the baseline
-                // (matches how handwriting sits on a signature line).
-                + "  .doc-field img { max-height: 1.6em; max-width: 100%;"
+                // Signature image sizing — em-based via SIGNATURE_MAX_HEIGHT
+                // constant so the signature scales with the surrounding
+                // text's line-height instead of dominating it. See the
+                // constant's javadoc for the tuning rationale (currently
+                // 2.6em, up from an earlier 1.6em that ERMs flagged as
+                // too small on printed forms). vertical-align: baseline
+                // puts the image ON the baseline (matches how handwriting
+                // sits on a signature line). max-width: 100% caps very
+                // wide signatures at the inline container width so a
+                // wide capture doesn't overflow the paragraph box.
+                + "  .doc-field img { max-height: " + SIGNATURE_MAX_HEIGHT + ";"
+                + "                   max-width: 100%;"
                 + "                   vertical-align: baseline;"
                 + "                   display: inline-block; }"
                 // Base header/footer typography — openhtmltopdf strips

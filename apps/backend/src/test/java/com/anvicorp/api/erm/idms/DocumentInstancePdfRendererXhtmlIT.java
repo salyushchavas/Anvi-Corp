@@ -1,9 +1,13 @@
 package com.anvicorp.api.erm.idms;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -555,6 +559,111 @@ class DocumentInstancePdfRendererXhtmlIT {
                 "docx-preview list-item outside-marker rule missing: " + shell);
         assertTrue(shell.contains("margin-left: 2em !important"),
                 "docx-preview list-item indent rule missing: " + shell);
+    }
+
+    /**
+     * PART A per-page verify — the definitive evidence that the source
+     * DOCX's single <header> and <footer> repeat on EVERY generated
+     * page of the executed PDF, not just page 1.
+     *
+     * <p>Before the "reparent to direct body child" fix,
+     * openhtmltopdf's {@code position: running(docHeader)} extraction
+     * silently failed when the header was nested inside a
+     * {@code section.docx} wrapper: page 1 rendered the header in
+     * normal flow (visible) but pages 2..N had no running content to
+     * paint into the {@code @top-left} slot (invisible). This test
+     * force-feeds the renderer enough body content to trigger ≥2
+     * generated pages, then uses PDFBox {@link PDFTextStripper}
+     * per-page to assert the header + footer literal text appears
+     * on every page.</p>
+     */
+    @Test
+    void header_and_footer_repeat_on_every_generated_page() throws Exception {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        String headerText = "ACME-CORP-HEADER-MARKER";
+        String footerText = "ACME-CORP-FOOTER-MARKER";
+        // Enough filler paragraphs to force openhtmltopdf to paginate
+        // to at least 2 pages. Each paragraph is a chunky line at
+        // ~12pt body text; ~60 of them fills a Letter page plus some.
+        StringBuilder filler = new StringBuilder(8192);
+        for (int i = 0; i < 90; i++) {
+            filler.append("<p>Filler paragraph line number ")
+                    .append(i)
+                    .append(" — enough text on each line to force pagination "
+                            + "beyond a single page in the executed PDF.</p>");
+        }
+        String body = ""
+                + "<article class=\"docx\">"
+                + "<section class=\"docx\" style=\"padding-left: 1in; "
+                + "padding-right: 0.88in; padding-top: 1in; padding-bottom: 1in; "
+                + "width: 8.5in; min-height: 11in;\">"
+                + "<header>" + headerText + "</header>"
+                + filler
+                + "<footer>" + footerText + "</footer>"
+                + "</section>"
+                + "</article>";
+        byte[] pdf = renderer.renderToPdf(
+                body, Map.of(), Map.of(), "Header-repeat PART A verify");
+        assertNotNull(pdf, "renderer returned null");
+        assertTrue(pdf.length > 100, "PDF suspiciously short");
+
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdf))) {
+            int pages = doc.getNumberOfPages();
+            assertTrue(pages >= 2,
+                    "expected ≥2 pages to prove the repeat; got " + pages);
+            PDFTextStripper stripper = new PDFTextStripper();
+            StringBuilder report = new StringBuilder();
+            boolean allHeaderPresent = true;
+            boolean allFooterPresent = true;
+            for (int p = 1; p <= pages; p++) {
+                stripper.setStartPage(p);
+                stripper.setEndPage(p);
+                String pageText = stripper.getText(doc);
+                boolean hasHeader = pageText.contains(headerText);
+                boolean hasFooter = pageText.contains(footerText);
+                report.append("  page ").append(p).append(": header=")
+                        .append(hasHeader).append(", footer=").append(hasFooter)
+                        .append('\n');
+                if (!hasHeader) allHeaderPresent = false;
+                if (!hasFooter) allFooterPresent = false;
+            }
+            assertTrue(allHeaderPresent,
+                    "header text \"" + headerText + "\" missing from some page(s):\n"
+                            + report);
+            assertTrue(allFooterPresent,
+                    "footer text \"" + footerText + "\" missing from some page(s):\n"
+                            + report);
+            // Second belt: the shell must have reparented the header
+            // to a direct body child (right after <body>) so
+            // openhtmltopdf's paged-media processor is fed the
+            // running element at an unambiguous depth.
+            String shell = renderer.toXhtmlForTest("Header-repeat", body);
+            int bodyIdx = shell.indexOf("<body>");
+            int headerIdx = shell.indexOf("<header", bodyIdx);
+            int articleIdx = shell.indexOf("<article", bodyIdx);
+            assertTrue(bodyIdx > 0, "no <body> in shell: " + shell);
+            assertTrue(headerIdx > 0, "no <header> in shell after reparent: " + shell);
+            assertTrue(headerIdx < articleIdx,
+                    "expected <header> to precede <article> as a direct body child, got "
+                            + "headerIdx=" + headerIdx + ", articleIdx=" + articleIdx);
+            // Footer is ALSO placed before <article> (right after the
+            // header) — see preparePageGeometry's footer branch. This
+            // ordering is required so openhtmltopdf's running-element
+            // extraction populates BOTH docHeader and docFooter slots
+            // BEFORE the paginator starts flowing body content; the
+            // opposite ordering (footer at doc tail) leaves the
+            // "docFooter" slot empty until the paginator reaches the
+            // last page, so the footer appears on the last page only.
+            int footerIdx = shell.indexOf("<footer", bodyIdx);
+            assertTrue(footerIdx > headerIdx && footerIdx < articleIdx,
+                    "expected <footer> to sit between <header> and <article> "
+                            + "(so both running slots populate before pagination), got "
+                            + "headerIdx=" + headerIdx + ", footerIdx=" + footerIdx
+                            + ", articleIdx=" + articleIdx);
+            // Sanity: page count matches expectation given the filler.
+            assertEquals(pages, doc.getNumberOfPages(),
+                    "unexpected page count divergence");
+        }
     }
 
     private static long countOccurrences(String haystack, String needle) {
