@@ -155,16 +155,15 @@ export default function InstanceRenderer(props: InstanceRendererProps) {
             img.alt = 'Signature';
             // Sizing: em-based + baseline-aligned so the signature sits
             // ON the surrounding text's baseline (like handwriting on a
-            // signature line) without breaking the line. The prior
-            // absolute {@code max-height:44px} was ~3× a typical 11pt
-            // line-height, which pushed the surrounding text apart and
-            // disrupted layout — the most visible symptom was a
-            // signature placed on an underscore blank breaking the
-            // signature row into two lines. 1.6em keeps the signature
-            // fully visible while sitting within line flow; max-width
-            // caps horizontal overflow on unusually wide signatures.
+            // signature line) without breaking the line. Kept in
+            // LOCK-STEP with the backend PDF renderer's
+            // {@code SIGNATURE_MAX_HEIGHT = "2.6em"} constant
+            // ({@code apps/backend/.../DocumentInstancePdfRenderer.java})
+            // so on-screen preview and executed PDF render at the same
+            // proportional height. If tuning the value, edit BOTH
+            // sites — this string + the Java constant.
             img.style.cssText =
-              'max-height:1.6em;max-width:100%;'
+              'max-height:2.6em;max-width:100%;'
               + 'vertical-align:baseline;display:inline-block;';
             span.appendChild(img);
             span.classList.add('doc-field--filled');
