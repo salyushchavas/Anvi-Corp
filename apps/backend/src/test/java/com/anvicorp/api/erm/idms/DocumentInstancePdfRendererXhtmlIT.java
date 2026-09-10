@@ -479,6 +479,55 @@ class DocumentInstancePdfRendererXhtmlIT {
                 "list-padding must be overridable by the source: " + shell);
     }
 
+    /**
+     * PART C1 fidelity guard — the shell must NOT hardcode paragraph
+     * or list-item spacing (margin / line-height on {@code p} or
+     * {@code li}). docx-preview writes the source DOCX's {@code
+     * w:spacing} as INLINE {@code margin-top} / {@code margin-bottom}
+     * / {@code line-height} on each {@code <p>} (docx-preview.mjs
+     * {@code parseSpacing} 2560-2582, flattened to the paragraph's
+     * inline style by {@code toH} at 3840-3843) AND as class rules in
+     * its injected {@code <style>} block ({@code renderStyles} 3361).
+     * An element-selector rule here (specificity 0-0-1) is outranked
+     * by inline (1-0-0-0) and by class (0-1-0), so it can only affect
+     * paragraphs whose source had NO {@code w:spacing} at all — and
+     * for those the renderer default is a more faithful "the source
+     * didn't say" than an invented value.
+     *
+     * <p>Structural rules that don't impose spacing ARE allowed:
+     * {@code ul, ol { margin; padding-left; }} for real HTML lists,
+     * {@code word-wrap} / {@code overflow-wrap} to keep long URLs
+     * from punching past the page margin. Only spacing on {@code p}
+     * or {@code li} is banned.
+     */
+    @Test
+    void print_css_shell_does_not_impose_paragraph_or_list_item_spacing() {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        String shell = renderer.toXhtmlForTest("Offer", "<p>body</p>");
+        // Word-wrap safety survives — long tokens still break.
+        assertTrue(shell.contains("p, li { word-wrap: break-word;"),
+                "p/li word-wrap safety missing (long URLs would overflow): " + shell);
+        // Banned: any spacing declaration on p / li at the shell level.
+        assertFalse(shell.contains("margin: 0 0 8pt"),
+                "shell must not impose p/li bottom margin — source "
+                        + "w:spacing (inline) or the docx-preview <style> "
+                        + "class rules carry the real spacing: " + shell);
+        assertFalse(shell.contains("line-height: 1.4"),
+                "shell must not impose p/li line-height — a paragraph "
+                        + "with no source w:line renders at renderer default, "
+                        + "which is more faithful than an invented 1.4: " + shell);
+        assertFalse(shell.contains("margin: 0 0 4pt"),
+                "shell must not impose li bottom margin — source "
+                        + "list-item spacing comes from docx-preview: " + shell);
+        assertFalse(shell.contains("li { margin"),
+                "shell must not define a spacing-bearing li rule: " + shell);
+        // Structural list rules ARE still in place (ul/ol scaffolding
+        // is separate from paragraph spacing; docx-preview lists route
+        // through the p[class*="docx-num"] rule above, not these).
+        assertTrue(shell.contains("ul, ol {"),
+                "ul/ol structural rule missing: " + shell);
+    }
+
     /** BUG 4 (font hoist) — the docx-preview list-item paragraph
      *  {@code <p class="docx-num-...">} has NO inline font-family /
      *  font-size of its own; the runs inside DO. The bullet marker,
