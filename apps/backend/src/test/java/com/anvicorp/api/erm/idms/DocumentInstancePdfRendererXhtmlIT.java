@@ -666,6 +666,46 @@ class DocumentInstancePdfRendererXhtmlIT {
         }
     }
 
+    /**
+     * PART B lock — the signature `<img>` max-height in BOTH renderer
+     * sites (interpolate's inline style + the `.doc-field img`
+     * stylesheet rule) must render at the ONE constant
+     * SIGNATURE_MAX_HEIGHT (currently 2.6em). If a future edit lands a
+     * hardcoded pixel value or forgets to keep the two sites in sync,
+     * this test fails loudly.
+     *
+     * <p>Also documents the on-screen ↔ PDF lock-step contract: the
+     * live-preview mirror lives at
+     * {@code apps/frontend/components/idms/InstanceRenderer.tsx} and
+     * must carry the same string (2.6em). It's set by hand — no
+     * shared source of truth crosses the language boundary.</p>
+     */
+    @Test
+    void signature_img_max_height_uses_single_configured_constant() {
+        DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
+        // A minimal doc with one signature-anchored span; the tiny PNG
+        // triggers interpolate's signature branch which emits the inline
+        // max-height style.
+        String tinyPng = "data:image/png;base64,"
+                + "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAA1BMVEUAAA"
+                + "CnEj3aAAAAAXRSTlMAQObYZgAAAApJREFUCNdjYAAAAAIAAeIhvDMAAAAASUVORK5CYII=";
+        String body = "<p>Signature: "
+                + "<span class=\"doc-field\" data-field-id=\"sig-1\">[sig]</span></p>";
+        String shell = renderer.toXhtmlForTest("Sig-height lock", body);
+        // 1) The stylesheet rule uses the configured constant.
+        assertTrue(shell.contains(".doc-field img { max-height: 2.6em;")
+                        || shell.contains(".doc-field img {max-height: 2.6em;"),
+                "expected `.doc-field img { max-height: 2.6em; ... }` in shell; got:\n" + shell);
+        // 2) No stale hardcoded 1.6em (or 40px / 44px) crept back into
+        // either signature-sizing site.
+        assertTrue(!shell.contains("max-height: 1.6em") && !shell.contains("max-height:1.6em"),
+                "stale 1.6em found in shell — regression: " + shell);
+        assertTrue(!shell.contains("max-height:40px") && !shell.contains("max-height: 40px"),
+                "stale 40px found in shell — regression: " + shell);
+        assertTrue(!shell.contains("max-height:44px") && !shell.contains("max-height: 44px"),
+                "stale 44px found in shell — regression: " + shell);
+    }
+
     private static long countOccurrences(String haystack, String needle) {
         long count = 0;
         int idx = 0;
