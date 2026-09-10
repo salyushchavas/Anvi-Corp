@@ -533,17 +533,35 @@ public class DocumentInstancePdfRenderer {
                 + "    box-sizing: border-box; }"
                 + "  article.docx, section.docx {"
                 + "    padding: 0 !important; min-height: 0 !important; }"
-                + "  p, li { margin: 0 0 8pt; line-height: 1.4;"
-                + "          word-wrap: break-word; overflow-wrap: break-word; }"
-                // Real <ul>/<ol>/<li> lists — a template that doesn't route
-                // through docx-preview (custom-authored, or a future editor)
-                // still gets sensible indentation + a visible marker + item
-                // breathing room instead of the bare browser default which
-                // openhtmltopdf under-renders.
+                // Paragraph + list-item safety net — ONLY the overflow
+                // guards (long unbroken tokens like URLs / paths must
+                // wrap so they don't punch past the page margin). No
+                // spacing here: docx-preview writes the source's real
+                // w:spacing as INLINE margin-top / margin-bottom /
+                // line-height on each <p> (docx-preview.mjs:2560-2582)
+                // AND as class rules in its injected <style> block. An
+                // element-selector rule here (specificity 0-0-1) can
+                // only lose that cascade to inline (1-0-0-0) or class
+                // (0-1-0) rules — so the only paragraphs it would
+                // actually affect are the rare ones with NO source
+                // w:spacing, and for those the renderer default is a
+                // more faithful "the source didn't say" than an
+                // invented 1.4 line-height / 8pt bottom-margin. The
+                // guiding principle for the executed PDF: source DOCX
+                // with ONLY field values substituted — imposed layout
+                // is what we REMOVE, never add.
+                + "  p, li { word-wrap: break-word; overflow-wrap: break-word; }"
+                // Structural rules for REAL <ul>/<ol> lists — a
+                // template that doesn't route through docx-preview
+                // (custom-authored, or a future editor) still needs
+                // list scaffolding so `<ul><li>` isn't rendered as
+                // a bare unindented paragraph. This is STRUCTURE
+                // (indent + visible marker), not spacing — Word
+                // lists go through the p[class*="docx-num"] path
+                // below and are unaffected by these ul/ol rules.
                 + "  ul, ol { margin: 6pt 0; padding-left: 2.5em; }"
                 + "  ul { list-style-type: disc; }"
                 + "  ol { list-style-type: decimal; }"
-                + "  li { margin: 0 0 4pt; padding-left: 0.25em; }"
                 // docx-preview list-item pattern — a Word list becomes a
                 // <p class="docx-num-{id}-{lvl}"> carrying inline rules
                 // `display: list-item; list-style-position: inside;` from
