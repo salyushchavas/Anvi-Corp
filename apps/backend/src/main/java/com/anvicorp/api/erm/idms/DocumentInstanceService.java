@@ -969,41 +969,144 @@ public class DocumentInstanceService {
                             + "field schema — cannot resync.");
         }
 
-        // Parse OLD + NEW schemas by id so the R2 rules can be evaluated
-        // in one pass. Old schema comes from the instance's snapshot; new
-        // schema is the freshly-loaded template.
+        // Parse OLD + NEW schemas by id, then run the shared R2 value-
+        // reapply pass. The engine is state-agnostic — the SAME helper
+        // is used by resyncTemplate (DRAFT in-place) AND by
+        // reopenForTemplateUpdate (in-flight backward hop). Any change
+        // to the R2 rules should happen inside {@link #applyR2ValueReapply}
+        // so both paths stay in lock-step.
         List<FieldSchemaEntry> oldSchema =
                 parseSchema(instance.getSnapshotFieldSchemaJson());
         List<FieldSchemaEntry> newSchema =
                 parseSchema(template.getFieldSchemaJson());
+        ValueReapplyResult r = applyR2ValueReapply(instance, oldSchema, newSchema);
+
+        // Re-snapshot the template shape onto the instance + re-stamp the
+        // staleness watermark. Order: values first, THEN entity save, so
+        // that if the value writes throw, the instance's snapshot fields
+        // stay pointing at data that matches the (still-old) schema.
+        Instant oldWatermark = instance.getSnapshotTemplateUpdatedAt();
+        instance.setSnapshotCanonicalHtml(template.getCanonicalHtml());
+        instance.setSnapshotFieldSchemaJson(template.getFieldSchemaJson());
+        instance.setSnapshotTemplateUpdatedAt(template.getUpdatedAt());
+        instance.setVersion(instance.getVersion() + 1);
+        instanceRepo.save(instance);
+
+        // Human-readable summary for the review log's TEXT comments field.
+        // Format matches the "N dropped, N kept, N new" idiom.
+        int droppedTotal = r.droppedRemovedFieldIds().size()
+                + r.droppedTypeChangedFieldIds().size();
+        String summary = droppedTotal + " dropped ("
+                + r.droppedRemovedFieldIds().size() + " removed, "
+                + r.droppedTypeChangedFieldIds().size() + " type-changed), "
+                + r.keptFieldIds().size() + " kept, "
+                + r.newFieldIds().size() + " new"
+                + (r.renamedFieldIds().isEmpty()
+                        ? ""
+                        : ", " + r.renamedFieldIds().size() + " renamed");
+        writeReview(instance.getId(), "RESYNC_TEMPLATE",
+                "TEMPLATE_UPDATED", summary, caller, "ERM");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fromTemplateUpdatedAt",
+                oldWatermark == null ? "" : oldWatermark.toString());
+        payload.put("toTemplateUpdatedAt",
+                template.getUpdatedAt() == null
+                        ? "" : template.getUpdatedAt().toString());
+        payload.put("droppedCount", droppedTotal);
+        payload.put("keptCount", r.keptFieldIds().size());
+        payload.put("newCount", r.newFieldIds().size());
+        payload.put("renamedCount", r.renamedFieldIds().size());
+        payload.put("droppedRemovedFieldIds",
+                String.join(",", r.droppedRemovedFieldIds()));
+        payload.put("droppedTypeChangedFieldIds",
+                String.join(",", r.droppedTypeChangedFieldIds()));
+        payload.put("renamedFieldIds",
+                String.join(",", r.renamedFieldIds()));
+        writeAudit("RESYNC_TEMPLATE", instance, caller, payload);
+        log.info("[IDMS] resyncTemplate instance={} by={} "
+                        + "kept={} dropped={}({}+{}) new={} renamed={}",
+                instance.getId(), caller.getId(),
+                r.keptFieldIds().size(), droppedTotal,
+                r.droppedRemovedFieldIds().size(),
+                r.droppedTypeChangedFieldIds().size(),
+                r.newFieldIds().size(), r.renamedFieldIds().size());
+        DocumentInstanceDtos.ResyncSummary responseSummary =
+                new DocumentInstanceDtos.ResyncSummary(
+                        r.keptFieldIds().size(),
+                        r.droppedRemovedFieldIds().size(),
+                        r.droppedTypeChangedFieldIds().size(),
+                        r.newFieldIds().size(),
+                        r.droppedRemovedFieldNames());
+        return new DocumentInstanceDtos.ResyncTemplateResponse(
+                toDetail(instance, caller), responseSummary);
+    }
+
+    /**
+     * Result of the shared R2 value-reapply pass. Immutable record
+     * carrying the buckets both callers ({@link #resyncTemplate} and
+     * {@link #reopenForTemplateUpdate}) need for audit payloads and,
+     * in the reopen path, for the assignee-partitioned routing
+     * decision. {@code oldById} + {@code newById} are exposed so the
+     * reopen caller can walk the diff by assignee without re-parsing
+     * the schemas.
+     */
+    private record ValueReapplyResult(
+            List<String> keptFieldIds,
+            List<String> renamedFieldIds,
+            List<String> droppedRemovedFieldIds,
+            List<String> droppedRemovedFieldNames,
+            List<String> droppedTypeChangedFieldIds,
+            List<String> newFieldIds,
+            Map<String, FieldSchemaEntry> oldById,
+            Map<String, FieldSchemaEntry> newById
+    ) {}
+
+    /**
+     * Shared R2 value-reapply engine — the state-agnostic core of both
+     * {@link #resyncTemplate} (DRAFT in-place) and
+     * {@link #reopenForTemplateUpdate} (in-flight backward hop). Walks
+     * every existing {@link DocumentInstanceFieldValue} for the
+     * instance against the NEW schema and applies R2:
+     *
+     * <ul>
+     *   <li>id present + SAME type → KEEP (refresh {@code field_name}
+     *       snapshot if the label changed).</li>
+     *   <li>id REMOVED from new schema → DROP the value row + record
+     *       the OLD-schema name for the caller's notice.</li>
+     *   <li>id present + TYPE CHANGED (case-insensitive) → DROP the
+     *       value row.</li>
+     *   <li>new id (no existing value row) → nothing to do; recorded
+     *       for the caller's audit only.</li>
+     * </ul>
+     *
+     * <p>Returns a {@link ValueReapplyResult} carrying the buckets
+     * plus the parsed schemas by id — the reopen caller uses those
+     * schema maps to partition the diff by ASSIGNEE without re-
+     * parsing. Also drops the value rows in-place via {@code valueRepo}
+     * so callers don't need to re-walk.</p>
+     */
+    private ValueReapplyResult applyR2ValueReapply(
+            DocumentInstance instance,
+            List<FieldSchemaEntry> oldSchema,
+            List<FieldSchemaEntry> newSchema) {
         Map<String, FieldSchemaEntry> newById = new LinkedHashMap<>();
         for (FieldSchemaEntry f : newSchema) newById.put(f.id(), f);
         Map<String, FieldSchemaEntry> oldById = new LinkedHashMap<>();
         for (FieldSchemaEntry f : oldSchema) oldById.put(f.id(), f);
 
-        // Categorise every existing value row against the NEW schema.
-        // Buckets collected for the audit payload — keptFieldIds and
-        // renamedFieldIds are useful evidence for the ERM report.
-        // droppedRemovedFieldNames is also captured HERE (during the
-        // walk, before re-snapshot) because after re-snapshot the
-        // removed field id no longer resolves to a name in the current
-        // schema. Prefer the OLD schema's name over the value row's
-        // fieldName snapshot (the schema is the authoritative label).
         List<String> keptFieldIds = new ArrayList<>();
         List<String> renamedFieldIds = new ArrayList<>();
         List<String> droppedRemovedFieldIds = new ArrayList<>();
         List<String> droppedRemovedFieldNames = new ArrayList<>();
         List<String> droppedTypeChangedFieldIds = new ArrayList<>();
 
-        List<DocumentInstanceFieldValue> existing =
-                valueRepo.findByInstanceId(instance.getId());
-        for (DocumentInstanceFieldValue v : existing) {
+        for (DocumentInstanceFieldValue v : valueRepo.findByInstanceId(instance.getId())) {
             FieldSchemaEntry newEntry = newById.get(v.getFieldId());
             if (newEntry == null) {
-                // R2: field REMOVED — drop the value row. Resolve the
-                // human-readable name from the OLD schema; fall back to
-                // the value row's snapshotted fieldName if the schema
-                // entry itself lacks a name.
+                // R2: field REMOVED. Resolve the human-readable name
+                // from the OLD schema (falling back to the value row's
+                // snapshotted fieldName if the schema entry is
+                // nameless — rare, legacy).
                 FieldSchemaEntry oldEntryForName = oldById.get(v.getFieldId());
                 String name = oldEntryForName != null
                         && oldEntryForName.name() != null
@@ -1024,10 +1127,8 @@ public class DocumentInstanceService {
                 droppedTypeChangedFieldIds.add(v.getFieldId());
                 continue;
             }
-            // R2: KEEP. If the human-readable name changed, refresh the
-            // legibility snapshot on the value row — the fieldId is what
-            // links to the schema, but field_name shows up in admin
-            // queries so keep it current.
+            // R2: KEEP. Refresh field_name snapshot on rename so admin
+            // queries stay legible.
             if (newEntry.name() != null
                     && !newEntry.name().equals(v.getFieldName())) {
                 v.setFieldName(newEntry.name());
@@ -1036,71 +1137,17 @@ public class DocumentInstanceService {
             }
             keptFieldIds.add(v.getFieldId());
         }
-        // New fields with no existing value row need no action here — the
-        // ERM will fill them before Send. Collect them for the audit only.
+
         List<String> newFieldIds = new ArrayList<>();
         for (FieldSchemaEntry f : newSchema) {
             if (!oldById.containsKey(f.id())) newFieldIds.add(f.id());
         }
 
-        // Re-snapshot the template shape onto the instance + re-stamp the
-        // staleness watermark. Order: values first, THEN entity save, so
-        // that if the value writes throw, the instance's snapshot fields
-        // stay pointing at data that matches the (still-old) schema.
-        Instant oldWatermark = instance.getSnapshotTemplateUpdatedAt();
-        instance.setSnapshotCanonicalHtml(template.getCanonicalHtml());
-        instance.setSnapshotFieldSchemaJson(template.getFieldSchemaJson());
-        instance.setSnapshotTemplateUpdatedAt(template.getUpdatedAt());
-        instance.setVersion(instance.getVersion() + 1);
-        instanceRepo.save(instance);
-
-        // Human-readable summary for the review log's TEXT comments field.
-        // Format matches the "N dropped, N kept, N new" idiom.
-        int droppedTotal = droppedRemovedFieldIds.size()
-                + droppedTypeChangedFieldIds.size();
-        String summary = droppedTotal + " dropped ("
-                + droppedRemovedFieldIds.size() + " removed, "
-                + droppedTypeChangedFieldIds.size() + " type-changed), "
-                + keptFieldIds.size() + " kept, "
-                + newFieldIds.size() + " new"
-                + (renamedFieldIds.isEmpty()
-                        ? ""
-                        : ", " + renamedFieldIds.size() + " renamed");
-        writeReview(instance.getId(), "RESYNC_TEMPLATE",
-                "TEMPLATE_UPDATED", summary, caller, "ERM");
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("fromTemplateUpdatedAt",
-                oldWatermark == null ? "" : oldWatermark.toString());
-        payload.put("toTemplateUpdatedAt",
-                template.getUpdatedAt() == null
-                        ? "" : template.getUpdatedAt().toString());
-        payload.put("droppedCount", droppedTotal);
-        payload.put("keptCount", keptFieldIds.size());
-        payload.put("newCount", newFieldIds.size());
-        payload.put("renamedCount", renamedFieldIds.size());
-        payload.put("droppedRemovedFieldIds",
-                String.join(",", droppedRemovedFieldIds));
-        payload.put("droppedTypeChangedFieldIds",
-                String.join(",", droppedTypeChangedFieldIds));
-        payload.put("renamedFieldIds",
-                String.join(",", renamedFieldIds));
-        writeAudit("RESYNC_TEMPLATE", instance, caller, payload);
-        log.info("[IDMS] resyncTemplate instance={} by={} "
-                        + "kept={} dropped={}({}+{}) new={} renamed={}",
-                instance.getId(), caller.getId(),
-                keptFieldIds.size(), droppedTotal,
-                droppedRemovedFieldIds.size(),
-                droppedTypeChangedFieldIds.size(),
-                newFieldIds.size(), renamedFieldIds.size());
-        DocumentInstanceDtos.ResyncSummary responseSummary =
-                new DocumentInstanceDtos.ResyncSummary(
-                        keptFieldIds.size(),
-                        droppedRemovedFieldIds.size(),
-                        droppedTypeChangedFieldIds.size(),
-                        newFieldIds.size(),
-                        droppedRemovedFieldNames);
-        return new DocumentInstanceDtos.ResyncTemplateResponse(
-                toDetail(instance, caller), responseSummary);
+        return new ValueReapplyResult(
+                keptFieldIds, renamedFieldIds,
+                droppedRemovedFieldIds, droppedRemovedFieldNames,
+                droppedTypeChangedFieldIds, newFieldIds,
+                oldById, newById);
     }
 
     // ── Queue / list ─────────────────────────────────────────────────
@@ -1611,18 +1658,26 @@ public class DocumentInstanceService {
                 ? canRevoke(lc) : new RevocationGate(false, "Missing lifecycle.");
         DocumentInstanceDtos.InstanceActions actions = buildActions(instance, caller, revocationGate);
 
-        // Staleness signal — MEANINGFUL only for DRAFT. Every non-draft
-        // state returns false regardless of what the template has done,
-        // because the doc is frozen from that point on (see #resyncTemplate
-        // for the paired safety guard). A DRAFT is stale when the current
-        // template.updatedAt does not match the watermark we stamped at
-        // create-time (or the last resync). A missing watermark
-        // (nullable — legacy pre-migration rows) is treated as "cannot
-        // tell → not stale," so the button never appears on legacy rows
-        // that the backfill hasn't caught yet.
+        // Staleness signal — meaningful for DRAFT and every REOPEN-able
+        // in-flight state (SENT_TO_INTERN, RETURNED, INTERN_SUBMITTED,
+        // VERIFIED). DRAFT drives the in-place "Update to latest
+        // template" banner (via #resyncTemplate); in-flight states drive
+        // the backward-hop "Reopen for template update" prompt (via
+        // #reopenForTemplateUpdate). FINALIZED + every TERMINAL state
+        // (REVOKED, SUPERSEDED, VOIDED) intentionally return false — a
+        // legal PDF exists or the doc is dead, and the follow-up
+        // FINALIZED read-only informational banner is a separate concern.
+        //
+        // Comparison: current template.updatedAt vs the snapshot
+        // watermark we stamped at create-time (and re-stamp on every
+        // resync or reopen). A missing watermark (nullable — legacy
+        // pre-migration rows) is treated as "cannot tell → not stale"
+        // so the button never appears on legacy rows the backfill
+        // hasn't caught.
         boolean isTemplateStale = false;
-        if (instance.getStatus() == DocumentInstanceStatus.DRAFT
-                && instance.getSnapshotTemplateUpdatedAt() != null) {
+        if (instance.getSnapshotTemplateUpdatedAt() != null
+                && instance.getStatus() != DocumentInstanceStatus.FINALIZED
+                && !DocumentInstanceStatus.TERMINAL.contains(instance.getStatus())) {
             EditableTemplate liveTemplate =
                     templateRepo.findById(instance.getTemplateId()).orElse(null);
             if (liveTemplate != null && liveTemplate.getUpdatedAt() != null) {
