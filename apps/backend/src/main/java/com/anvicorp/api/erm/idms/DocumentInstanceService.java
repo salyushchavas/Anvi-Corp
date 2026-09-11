@@ -38,11 +38,13 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -969,41 +971,144 @@ public class DocumentInstanceService {
                             + "field schema — cannot resync.");
         }
 
-        // Parse OLD + NEW schemas by id so the R2 rules can be evaluated
-        // in one pass. Old schema comes from the instance's snapshot; new
-        // schema is the freshly-loaded template.
+        // Parse OLD + NEW schemas by id, then run the shared R2 value-
+        // reapply pass. The engine is state-agnostic — the SAME helper
+        // is used by resyncTemplate (DRAFT in-place) AND by
+        // reopenForTemplateUpdate (in-flight backward hop). Any change
+        // to the R2 rules should happen inside {@link #applyR2ValueReapply}
+        // so both paths stay in lock-step.
         List<FieldSchemaEntry> oldSchema =
                 parseSchema(instance.getSnapshotFieldSchemaJson());
         List<FieldSchemaEntry> newSchema =
                 parseSchema(template.getFieldSchemaJson());
+        ValueReapplyResult r = applyR2ValueReapply(instance, oldSchema, newSchema);
+
+        // Re-snapshot the template shape onto the instance + re-stamp the
+        // staleness watermark. Order: values first, THEN entity save, so
+        // that if the value writes throw, the instance's snapshot fields
+        // stay pointing at data that matches the (still-old) schema.
+        Instant oldWatermark = instance.getSnapshotTemplateUpdatedAt();
+        instance.setSnapshotCanonicalHtml(template.getCanonicalHtml());
+        instance.setSnapshotFieldSchemaJson(template.getFieldSchemaJson());
+        instance.setSnapshotTemplateUpdatedAt(template.getUpdatedAt());
+        instance.setVersion(instance.getVersion() + 1);
+        instanceRepo.save(instance);
+
+        // Human-readable summary for the review log's TEXT comments field.
+        // Format matches the "N dropped, N kept, N new" idiom.
+        int droppedTotal = r.droppedRemovedFieldIds().size()
+                + r.droppedTypeChangedFieldIds().size();
+        String summary = droppedTotal + " dropped ("
+                + r.droppedRemovedFieldIds().size() + " removed, "
+                + r.droppedTypeChangedFieldIds().size() + " type-changed), "
+                + r.keptFieldIds().size() + " kept, "
+                + r.newFieldIds().size() + " new"
+                + (r.renamedFieldIds().isEmpty()
+                        ? ""
+                        : ", " + r.renamedFieldIds().size() + " renamed");
+        writeReview(instance.getId(), "RESYNC_TEMPLATE",
+                "TEMPLATE_UPDATED", summary, caller, "ERM");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fromTemplateUpdatedAt",
+                oldWatermark == null ? "" : oldWatermark.toString());
+        payload.put("toTemplateUpdatedAt",
+                template.getUpdatedAt() == null
+                        ? "" : template.getUpdatedAt().toString());
+        payload.put("droppedCount", droppedTotal);
+        payload.put("keptCount", r.keptFieldIds().size());
+        payload.put("newCount", r.newFieldIds().size());
+        payload.put("renamedCount", r.renamedFieldIds().size());
+        payload.put("droppedRemovedFieldIds",
+                String.join(",", r.droppedRemovedFieldIds()));
+        payload.put("droppedTypeChangedFieldIds",
+                String.join(",", r.droppedTypeChangedFieldIds()));
+        payload.put("renamedFieldIds",
+                String.join(",", r.renamedFieldIds()));
+        writeAudit("RESYNC_TEMPLATE", instance, caller, payload);
+        log.info("[IDMS] resyncTemplate instance={} by={} "
+                        + "kept={} dropped={}({}+{}) new={} renamed={}",
+                instance.getId(), caller.getId(),
+                r.keptFieldIds().size(), droppedTotal,
+                r.droppedRemovedFieldIds().size(),
+                r.droppedTypeChangedFieldIds().size(),
+                r.newFieldIds().size(), r.renamedFieldIds().size());
+        DocumentInstanceDtos.ResyncSummary responseSummary =
+                new DocumentInstanceDtos.ResyncSummary(
+                        r.keptFieldIds().size(),
+                        r.droppedRemovedFieldIds().size(),
+                        r.droppedTypeChangedFieldIds().size(),
+                        r.newFieldIds().size(),
+                        r.droppedRemovedFieldNames());
+        return new DocumentInstanceDtos.ResyncTemplateResponse(
+                toDetail(instance, caller), responseSummary);
+    }
+
+    /**
+     * Result of the shared R2 value-reapply pass. Immutable record
+     * carrying the buckets both callers ({@link #resyncTemplate} and
+     * {@link #reopenForTemplateUpdate}) need for audit payloads and,
+     * in the reopen path, for the assignee-partitioned routing
+     * decision. {@code oldById} + {@code newById} are exposed so the
+     * reopen caller can walk the diff by assignee without re-parsing
+     * the schemas.
+     */
+    private record ValueReapplyResult(
+            List<String> keptFieldIds,
+            List<String> renamedFieldIds,
+            List<String> droppedRemovedFieldIds,
+            List<String> droppedRemovedFieldNames,
+            List<String> droppedTypeChangedFieldIds,
+            List<String> newFieldIds,
+            Map<String, FieldSchemaEntry> oldById,
+            Map<String, FieldSchemaEntry> newById
+    ) {}
+
+    /**
+     * Shared R2 value-reapply engine — the state-agnostic core of both
+     * {@link #resyncTemplate} (DRAFT in-place) and
+     * {@link #reopenForTemplateUpdate} (in-flight backward hop). Walks
+     * every existing {@link DocumentInstanceFieldValue} for the
+     * instance against the NEW schema and applies R2:
+     *
+     * <ul>
+     *   <li>id present + SAME type → KEEP (refresh {@code field_name}
+     *       snapshot if the label changed).</li>
+     *   <li>id REMOVED from new schema → DROP the value row + record
+     *       the OLD-schema name for the caller's notice.</li>
+     *   <li>id present + TYPE CHANGED (case-insensitive) → DROP the
+     *       value row.</li>
+     *   <li>new id (no existing value row) → nothing to do; recorded
+     *       for the caller's audit only.</li>
+     * </ul>
+     *
+     * <p>Returns a {@link ValueReapplyResult} carrying the buckets
+     * plus the parsed schemas by id — the reopen caller uses those
+     * schema maps to partition the diff by ASSIGNEE without re-
+     * parsing. Also drops the value rows in-place via {@code valueRepo}
+     * so callers don't need to re-walk.</p>
+     */
+    private ValueReapplyResult applyR2ValueReapply(
+            DocumentInstance instance,
+            List<FieldSchemaEntry> oldSchema,
+            List<FieldSchemaEntry> newSchema) {
         Map<String, FieldSchemaEntry> newById = new LinkedHashMap<>();
         for (FieldSchemaEntry f : newSchema) newById.put(f.id(), f);
         Map<String, FieldSchemaEntry> oldById = new LinkedHashMap<>();
         for (FieldSchemaEntry f : oldSchema) oldById.put(f.id(), f);
 
-        // Categorise every existing value row against the NEW schema.
-        // Buckets collected for the audit payload — keptFieldIds and
-        // renamedFieldIds are useful evidence for the ERM report.
-        // droppedRemovedFieldNames is also captured HERE (during the
-        // walk, before re-snapshot) because after re-snapshot the
-        // removed field id no longer resolves to a name in the current
-        // schema. Prefer the OLD schema's name over the value row's
-        // fieldName snapshot (the schema is the authoritative label).
         List<String> keptFieldIds = new ArrayList<>();
         List<String> renamedFieldIds = new ArrayList<>();
         List<String> droppedRemovedFieldIds = new ArrayList<>();
         List<String> droppedRemovedFieldNames = new ArrayList<>();
         List<String> droppedTypeChangedFieldIds = new ArrayList<>();
 
-        List<DocumentInstanceFieldValue> existing =
-                valueRepo.findByInstanceId(instance.getId());
-        for (DocumentInstanceFieldValue v : existing) {
+        for (DocumentInstanceFieldValue v : valueRepo.findByInstanceId(instance.getId())) {
             FieldSchemaEntry newEntry = newById.get(v.getFieldId());
             if (newEntry == null) {
-                // R2: field REMOVED — drop the value row. Resolve the
-                // human-readable name from the OLD schema; fall back to
-                // the value row's snapshotted fieldName if the schema
-                // entry itself lacks a name.
+                // R2: field REMOVED. Resolve the human-readable name
+                // from the OLD schema (falling back to the value row's
+                // snapshotted fieldName if the schema entry is
+                // nameless — rare, legacy).
                 FieldSchemaEntry oldEntryForName = oldById.get(v.getFieldId());
                 String name = oldEntryForName != null
                         && oldEntryForName.name() != null
@@ -1024,10 +1129,8 @@ public class DocumentInstanceService {
                 droppedTypeChangedFieldIds.add(v.getFieldId());
                 continue;
             }
-            // R2: KEEP. If the human-readable name changed, refresh the
-            // legibility snapshot on the value row — the fieldId is what
-            // links to the schema, but field_name shows up in admin
-            // queries so keep it current.
+            // R2: KEEP. Refresh field_name snapshot on rename so admin
+            // queries stay legible.
             if (newEntry.name() != null
                     && !newEntry.name().equals(v.getFieldName())) {
                 v.setFieldName(newEntry.name());
@@ -1036,17 +1139,374 @@ public class DocumentInstanceService {
             }
             keptFieldIds.add(v.getFieldId());
         }
-        // New fields with no existing value row need no action here — the
-        // ERM will fill them before Send. Collect them for the audit only.
+
         List<String> newFieldIds = new ArrayList<>();
         for (FieldSchemaEntry f : newSchema) {
             if (!oldById.containsKey(f.id())) newFieldIds.add(f.id());
         }
 
-        // Re-snapshot the template shape onto the instance + re-stamp the
-        // staleness watermark. Order: values first, THEN entity save, so
-        // that if the value writes throw, the instance's snapshot fields
-        // stay pointing at data that matches the (still-old) schema.
+        return new ValueReapplyResult(
+                keptFieldIds, renamedFieldIds,
+                droppedRemovedFieldIds, droppedRemovedFieldNames,
+                droppedTypeChangedFieldIds, newFieldIds,
+                oldById, newById);
+    }
+
+    /**
+     * Reopen an IN-FLIGHT document to pull in an admin's template
+     * change. Sibling of {@link #resyncTemplate} — same R2 value-
+     * reapply engine, but on a NON-DRAFT source state the doc must be
+     * routed BACKWARD to whoever needs to re-engage.
+     *
+     * <h2>Routing (R-ROUTE) — target state by assignee-partitioned diff</h2>
+     * <ul>
+     *   <li>ONLY-INTERN fields changed → target {@code RETURNED},
+     *       {@code returnReasonCode="TEMPLATE_UPDATED"},
+     *       {@code unlockedFieldIdsJson} narrowed to the affected
+     *       intern-field ids + the intern signature id. ERM is NOT
+     *       re-invited to edit.</li>
+     *   <li>ONLY-ERM fields changed OR content over-approximation
+     *       (canonical HTML byte differs) → target {@code DRAFT} (the
+     *       only state where {@link #requireCanFill} lets the ERM
+     *       write). ERM re-does their part, then the normal Send
+     *       forward-flow re-triggers the intern's review.</li>
+     *   <li>BOTH parties' fields changed → target {@code DRAFT}. The
+     *       ERM re-does first; the forward state-machine carries the
+     *       doc to the intern on Send. Do NOT hand-roll sequential
+     *       routing — the state machine already does it.</li>
+     *   <li>AUTO-only changed → NO status change. AUTO fields are
+     *       re-resolved in place via {@link #resolveAutoBinding}.</li>
+     *   <li>NO party-relevant change (e.g. template description edit)
+     *       → NO status change; re-snapshot + re-stamp watermark only.
+     *       Idempotent-safe.</li>
+     * </ul>
+     *
+     * <h2>Cautious signature invalidation (R-SIG)</h2>
+     * <p><b>Baseline:</b> drop a party's signature IFF any of that
+     * party's fields changed (added / removed / type-changed /
+     * renamed with content). Cross-party-only diffs preserve the
+     * other party's signature.</p>
+     *
+     * <p><b>Content over-approximation:</b> if the template's
+     * canonical HTML changed at all (byte-comparison), we cannot
+     * cheaply attribute the change to just field-defs — an admin may
+     * have edited the wording between anchor spans. In that case we
+     * drop BOTH signatures. Safer to ask a party to re-sign than to
+     * keep a signature over changed content on a legal document.</p>
+     *
+     * <p><b>How we detect content-vs-field-defs:</b> byte-comparison
+     * of {@code instance.snapshotCanonicalHtml} vs
+     * {@code template.canonicalHtml}. Any difference is treated as a
+     * content change. The trade-off: adding or removing a field
+     * changes the HTML (new / gone anchor span), so those paths also
+     * trip this branch — which is fine, because they by definition
+     * DO change one party's fields. The genuine over-approximation
+     * cases are: (a) admin renames a field but the anchor's inner
+     * text is untouched (rare), or (b) admin edits body copy in
+     * the studio without touching any field-def — both correctly
+     * flip both signatures on the assumption that the party who
+     * signed no longer stands behind the current wording.</p>
+     *
+     * <h2>Mandatory backward-hop mutations</h2>
+     * Every status change clears the same set of side-effect columns
+     * (see the {@code if (statusChanging)} block below) so a doc
+     * walking backward never carries forward-only state:
+     * {@code lastErmViewedAt}, {@code finalPdfDocumentId}, plus
+     * target-specific intern-cycle cleanups.
+     *
+     * <h2>AUTO re-resolve (R-AUTO)</h2>
+     * Unlike {@link #resyncTemplate}, reopen re-resolves every AUTO
+     * field in the new schema via {@link #resolveAutoBinding}. A
+     * template edit may have changed the {@code defaultSource} on an
+     * AUTO field; the reopened doc should carry fresh values.
+     *
+     * <h2>Audit + notification</h2>
+     * Writes {@code writeReview("REOPEN", "TEMPLATE_UPDATED", …)} +
+     * {@code writeAudit("REOPEN", …)} with a payload carrying
+     * {@code fromStatus}, {@code toStatus}, {@code reroutedTo},
+     * {@code invalidatedSignatureFieldIds}, and the R2 bucket lists.
+     * When routed to the intern (target RETURNED), fires a
+     * dedicated {@code IDMS_DOC_TEMPLATE_UPDATED} notification
+     * (distinct from the {@code IDMS_DOC_RETURNED} "please make
+     * corrections" wording) so the intern sees the right framing.
+     * When routed to the ERM (target DRAFT), no notification — the
+     * ERM is the actor who just clicked "reopen".
+     */
+    @Transactional
+    public DocumentInstanceDtos.ReopenTemplateResponse reopenForTemplateUpdate(
+            UUID instanceId, User caller) {
+        requireErmOrAdmin(caller);
+        // GUARD FIRST — pessimistic row-lock BEFORE any mutation.
+        DocumentInstance instance = instanceRepo.findByIdForUpdate(instanceId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Document instance not found: " + instanceId));
+        DocumentInstanceStatus fromStatus = instance.getStatus();
+        // Reject: DRAFT (has its own path — resyncTemplate); FINALIZED
+        // (legal PDF exists); and every TERMINAL state.
+        if (fromStatus == DocumentInstanceStatus.DRAFT) {
+            throw new ConflictException(
+                    "This document is still a draft — use the "
+                            + "update-to-latest-template action instead.");
+        }
+        if (fromStatus == DocumentInstanceStatus.FINALIZED) {
+            throw new ConflictException(
+                    "Finalized documents cannot be reopened for template "
+                            + "updates — the executed PDF is legally binding.");
+        }
+        if (DocumentInstanceStatus.TERMINAL.contains(fromStatus)) {
+            throw new ConflictException(
+                    "This document is " + fromStatus.name().toLowerCase()
+                            + " and cannot be reopened.");
+        }
+        // Now valid: SENT_TO_INTERN, RETURNED, INTERN_SUBMITTED, VERIFIED.
+
+        EditableTemplate template = templateRepo.findById(instance.getTemplateId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Source template not found: " + instance.getTemplateId()));
+        if (!template.isActive()) {
+            throw new ConflictException(
+                    "The source template is no longer active — cannot reopen.");
+        }
+        if (template.getCanonicalHtml() == null
+                || template.getFieldSchemaJson() == null) {
+            throw new ConflictException(
+                    "The source template has no saved canonical HTML / "
+                            + "field schema — cannot reopen.");
+        }
+
+        // Content-vs-field-defs detection (over-approximation basis):
+        // byte-compare the stored snapshot HTML with the current
+        // template HTML. Any difference → content-changed → over-
+        // approximate signature invalidation (drop BOTH).
+        boolean contentChanged = !stringsEqual(
+                instance.getSnapshotCanonicalHtml(),
+                template.getCanonicalHtml());
+
+        // R2 shared value-reapply — deletes removed/type-changed rows,
+        // refreshes renamed field_name snapshots, collects buckets.
+        List<FieldSchemaEntry> oldSchema =
+                parseSchema(instance.getSnapshotFieldSchemaJson());
+        List<FieldSchemaEntry> newSchema =
+                parseSchema(template.getFieldSchemaJson());
+        ValueReapplyResult r = applyR2ValueReapply(instance, oldSchema, newSchema);
+
+        // Partition the diff by ASSIGNEE — which parties have work?
+        // Rule: any field added / removed / type-changed / renamed
+        // (same id, changed name) / assignee-reassigned / required-
+        // flag-changed / defaultSource-changed counts as its owner's
+        // affected. Reassignment marks BOTH old and new owners
+        // affected (the old owner's signature over the reassigned
+        // field is no longer meaningful; the new owner now owns it).
+        //
+        // ⚠️ IMPORTANT: this walk uses the SCHEMAS directly (not
+        // value rows) so a template edit that renames a field the
+        // party never got around to filling still routes correctly.
+        // The R2 value-reapply above already handled the value-row
+        // side; here we compute routing/sig-invalidation from the
+        // shape of the schemas themselves.
+        Set<String> affectedParties = new HashSet<>();
+        // Removed → OLD assignee owned this field.
+        for (String id : r.droppedRemovedFieldIds()) {
+            String a = normAssignee(r.oldById().get(id));
+            if (!a.isEmpty()) affectedParties.add(a);
+        }
+        // Type-changed → NEW assignee owns the new slot.
+        for (String id : r.droppedTypeChangedFieldIds()) {
+            String a = normAssignee(r.newById().get(id));
+            if (!a.isEmpty()) affectedParties.add(a);
+        }
+        // Added → NEW assignee.
+        for (String id : r.newFieldIds()) {
+            String a = normAssignee(r.newById().get(id));
+            if (!a.isEmpty()) affectedParties.add(a);
+        }
+        // Schema-level def diff on KEPT fields (same id, unchanged
+        // type). Catches renames, assignee reassignments, required-
+        // flag flips, defaultSource changes — regardless of whether
+        // the field had a value row.
+        for (FieldSchemaEntry n : newSchema) {
+            FieldSchemaEntry o = r.oldById().get(n.id());
+            if (o == null) continue;
+            String otype = o.type() == null ? "" : o.type().toUpperCase(java.util.Locale.ROOT);
+            String ntype = n.type() == null ? "" : n.type().toUpperCase(java.util.Locale.ROOT);
+            if (!otype.equals(ntype)) continue;   // type-changed — already bucketed above
+            String oa = normAssignee(o);
+            String na = normAssignee(n);
+            boolean nameChanged = !stringsEqual(o.name(), n.name());
+            boolean assigneeChanged = !oa.equals(na);
+            boolean requiredChanged = o.required() != n.required();
+            boolean defaultSourceChanged = !stringsEqual(o.defaultSource(), n.defaultSource());
+            if (!nameChanged && !assigneeChanged
+                    && !requiredChanged && !defaultSourceChanged) continue;
+            if (assigneeChanged) {
+                // Both old and new owners affected.
+                if (!oa.isEmpty()) affectedParties.add(oa);
+                if (!na.isEmpty()) affectedParties.add(na);
+            } else {
+                if (!na.isEmpty()) affectedParties.add(na);
+            }
+        }
+        boolean ermAffected = affectedParties.contains("ERM");
+        boolean internAffected = affectedParties.contains("INTERN");
+        boolean autoAffected = affectedParties.contains("AUTO");
+
+        // Signature invalidation (R-SIG cautious + content over-approx).
+        List<String> invalidatedSignatureFieldIds = new ArrayList<>();
+        boolean dropErmSig;
+        boolean dropInternSig;
+        if (contentChanged) {
+            // Over-approximation — HTML content changed, cannot
+            // attribute to just field-defs. Drop both signatures.
+            dropErmSig = true;
+            dropInternSig = true;
+        } else {
+            // Cautious per-party — drop only the affected owners' sigs.
+            dropErmSig = ermAffected;
+            dropInternSig = internAffected;
+        }
+        // Walk the NEW schema for signature fields (post-R2 walk, the
+        // old schema's now-removed signature rows are already deleted
+        // by applyR2ValueReapply — no double work). This picks up
+        // signatures the ERM/INTERN owned that survived the R2 walk
+        // and were NOT already dropped.
+        for (FieldSchemaEntry f : newSchema) {
+            if (!"SIGNATURE".equalsIgnoreCase(f.type())) continue;
+            String a = normAssignee(f);
+            if ((dropErmSig && "ERM".equals(a))
+                    || (dropInternSig && "INTERN".equals(a))) {
+                DocumentInstanceFieldValue sigRow = valueRepo
+                        .findByInstanceIdAndFieldId(instance.getId(), f.id())
+                        .orElse(null);
+                if (sigRow != null && sigRow.getSignatureDocumentId() != null) {
+                    valueRepo.delete(sigRow);
+                    invalidatedSignatureFieldIds.add(f.id());
+                }
+            }
+        }
+
+        // AUTO re-resolve (R-AUTO — differ from resyncTemplate).
+        // A template edit may have changed defaultSource on an AUTO
+        // field; the reopened doc should carry fresh values. Upserts
+        // by (instance_id, field_id).
+        User intern = userRepo.findById(instance.getInternUserId()).orElse(null);
+        InternLifecycle lc = lifecycleRepo.findById(instance.getInternLifecycleId()).orElse(null);
+        Instant now = Instant.now();
+        if (intern != null && lc != null) {
+            for (FieldSchemaEntry f : newSchema) {
+                if (!"AUTO".equalsIgnoreCase(f.assignee())) continue;
+                String resolved = resolveAutoBinding(f.defaultSource(), intern, lc);
+                if (resolved == null) continue;
+                DocumentInstanceFieldValue existing = valueRepo
+                        .findByInstanceIdAndFieldId(instance.getId(), f.id())
+                        .orElse(null);
+                if (existing == null) {
+                    DocumentInstanceFieldValue val = DocumentInstanceFieldValue.builder()
+                            .instanceId(instance.getId())
+                            .fieldId(f.id())
+                            .fieldName(f.name())
+                            .valueText(resolved)
+                            .filledByUserId(caller.getId())
+                            .filledByRole("AUTO")
+                            .filledAt(now)
+                            .build();
+                    valueRepo.save(val);
+                } else {
+                    existing.setValueText(resolved);
+                    existing.setFieldName(f.name());
+                    existing.setFilledByRole("AUTO");
+                    valueRepo.save(existing);
+                }
+            }
+        }
+
+        // Target state + reroutedTo.
+        DocumentInstanceStatus toStatus;
+        String reroutedTo;
+        if (contentChanged || (ermAffected && internAffected)) {
+            toStatus = DocumentInstanceStatus.DRAFT;
+            reroutedTo = "BOTH_VIA_ERM";
+        } else if (ermAffected) {
+            toStatus = DocumentInstanceStatus.DRAFT;
+            reroutedTo = "ERM";
+        } else if (internAffected) {
+            toStatus = DocumentInstanceStatus.RETURNED;
+            reroutedTo = "INTERN";
+        } else if (autoAffected) {
+            toStatus = fromStatus;
+            reroutedTo = "AUTO_ONLY";
+        } else {
+            toStatus = fromStatus;
+            reroutedTo = "NONE";
+        }
+
+        // Mandatory backward-hop mutations (silent-break traps).
+        boolean statusChanging = toStatus != fromStatus;
+        if (statusChanging) {
+            instance.setStatus(toStatus);
+            // (1) Verify gate must re-earn — clear ERM's "viewed
+            //     before verify" stamp.
+            instance.setLastErmViewedAt(null);
+            // (2) Defensive — a VERIFIED doc could carry a rendered
+            //     PDF ref forward; a reopened doc must not.
+            instance.setFinalPdfDocumentId(null);
+            // (3) Target-specific intern-cycle cleanups.
+            if (toStatus == DocumentInstanceStatus.DRAFT) {
+                // Clean draft owned by ERM: strip every intern-cycle
+                // side effect so the fill surface renders as fresh.
+                instance.setInternLocked(false);
+                instance.setReturnReasonCode(null);
+                instance.setReturnComments(null);
+                instance.setUnlockedFieldIdsJson(null);
+            } else if (toStatus == DocumentInstanceStatus.RETURNED) {
+                // Intern re-review + re-sign. Narrow the editable
+                // field set to just the affected intern fields + the
+                // intern signature so they don't get pulled into a
+                // full re-edit of unchanged content.
+                instance.setInternLocked(false);
+                instance.setReturnReasonCode("TEMPLATE_UPDATED");
+                instance.setReturnComments(
+                        "The template was updated by the admin — please "
+                                + "review the changes and re-sign.");
+                instance.setReturnedAt(now);
+                List<String> unlockedIds = new ArrayList<>();
+                // Every INTERN-owned field that changed (added,
+                // type-changed, renamed) or was reassigned INTO
+                // INTERN ownership — collect their ids from the NEW
+                // schema.
+                addIfInternOwned(unlockedIds, r.newFieldIds(), r.newById());
+                addIfInternOwned(unlockedIds, r.renamedFieldIds(), r.newById());
+                addIfInternOwned(unlockedIds, r.droppedTypeChangedFieldIds(), r.newById());
+                for (String id : r.keptFieldIds()) {
+                    FieldSchemaEntry o = r.oldById().get(id);
+                    FieldSchemaEntry n = r.newById().get(id);
+                    if (o != null && n != null
+                            && "INTERN".equals(normAssignee(n))
+                            && !normAssignee(o).equals(normAssignee(n))
+                            && !unlockedIds.contains(id)) {
+                        unlockedIds.add(id);
+                    }
+                }
+                // Also unlock the intern signature field so they can
+                // re-sign after re-reviewing.
+                for (FieldSchemaEntry f : newSchema) {
+                    if ("SIGNATURE".equalsIgnoreCase(f.type())
+                            && "INTERN".equals(normAssignee(f))
+                            && !unlockedIds.contains(f.id())) {
+                        unlockedIds.add(f.id());
+                    }
+                }
+                try {
+                    instance.setUnlockedFieldIdsJson(
+                            objectMapper.writeValueAsString(unlockedIds));
+                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                    throw new BadRequestException(
+                            "Could not serialise unlockedFieldIds: "
+                                    + e.getMessage());
+                }
+            }
+        }
+
+        // (4) Re-snapshot + re-stamp watermark + version++.
         Instant oldWatermark = instance.getSnapshotTemplateUpdatedAt();
         instance.setSnapshotCanonicalHtml(template.getCanonicalHtml());
         instance.setSnapshotFieldSchemaJson(template.getFieldSchemaJson());
@@ -1054,53 +1514,158 @@ public class DocumentInstanceService {
         instance.setVersion(instance.getVersion() + 1);
         instanceRepo.save(instance);
 
-        // Human-readable summary for the review log's TEXT comments field.
-        // Format matches the "N dropped, N kept, N new" idiom.
-        int droppedTotal = droppedRemovedFieldIds.size()
-                + droppedTypeChangedFieldIds.size();
-        String summary = droppedTotal + " dropped ("
-                + droppedRemovedFieldIds.size() + " removed, "
-                + droppedTypeChangedFieldIds.size() + " type-changed), "
-                + keptFieldIds.size() + " kept, "
-                + newFieldIds.size() + " new"
-                + (renamedFieldIds.isEmpty()
+        // Audit (Q9-mandatory: fromStatus/toStatus/reroutedTo +
+        // invalidated signatures).
+        int droppedTotal = r.droppedRemovedFieldIds().size()
+                + r.droppedTypeChangedFieldIds().size();
+        String summary = "from=" + fromStatus.name()
+                + " to=" + toStatus.name()
+                + " rerouted=" + reroutedTo
+                + ", " + droppedTotal + " dropped ("
+                + r.droppedRemovedFieldIds().size() + " removed, "
+                + r.droppedTypeChangedFieldIds().size() + " type-changed), "
+                + r.keptFieldIds().size() + " kept, "
+                + r.newFieldIds().size() + " new"
+                + (r.renamedFieldIds().isEmpty()
                         ? ""
-                        : ", " + renamedFieldIds.size() + " renamed");
-        writeReview(instance.getId(), "RESYNC_TEMPLATE",
+                        : ", " + r.renamedFieldIds().size() + " renamed")
+                + ", " + invalidatedSignatureFieldIds.size()
+                + " sig(s) invalidated"
+                + (contentChanged ? ", contentChanged=true" : "");
+        writeReview(instance.getId(), "REOPEN",
                 "TEMPLATE_UPDATED", summary, caller, "ERM");
         Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fromStatus", fromStatus.name());
+        payload.put("toStatus", toStatus.name());
+        payload.put("reroutedTo", reroutedTo);
+        payload.put("contentChanged", contentChanged);
         payload.put("fromTemplateUpdatedAt",
                 oldWatermark == null ? "" : oldWatermark.toString());
         payload.put("toTemplateUpdatedAt",
                 template.getUpdatedAt() == null
                         ? "" : template.getUpdatedAt().toString());
-        payload.put("droppedCount", droppedTotal);
-        payload.put("keptCount", keptFieldIds.size());
-        payload.put("newCount", newFieldIds.size());
-        payload.put("renamedCount", renamedFieldIds.size());
+        payload.put("keptCount", r.keptFieldIds().size());
+        payload.put("newCount", r.newFieldIds().size());
+        payload.put("renamedCount", r.renamedFieldIds().size());
         payload.put("droppedRemovedFieldIds",
-                String.join(",", droppedRemovedFieldIds));
+                String.join(",", r.droppedRemovedFieldIds()));
         payload.put("droppedTypeChangedFieldIds",
-                String.join(",", droppedTypeChangedFieldIds));
+                String.join(",", r.droppedTypeChangedFieldIds()));
         payload.put("renamedFieldIds",
-                String.join(",", renamedFieldIds));
-        writeAudit("RESYNC_TEMPLATE", instance, caller, payload);
-        log.info("[IDMS] resyncTemplate instance={} by={} "
-                        + "kept={} dropped={}({}+{}) new={} renamed={}",
+                String.join(",", r.renamedFieldIds()));
+        payload.put("newFieldIds",
+                String.join(",", r.newFieldIds()));
+        payload.put("invalidatedSignatureFieldIds",
+                String.join(",", invalidatedSignatureFieldIds));
+        writeAudit("REOPEN", instance, caller, payload);
+        log.info("[IDMS] reopenForTemplateUpdate instance={} by={} "
+                        + "from={} to={} rerouted={} contentChanged={} "
+                        + "kept={} dropped={}({}+{}) new={} sigsInvalidated={}",
                 instance.getId(), caller.getId(),
-                keptFieldIds.size(), droppedTotal,
-                droppedRemovedFieldIds.size(),
-                droppedTypeChangedFieldIds.size(),
-                newFieldIds.size(), renamedFieldIds.size());
-        DocumentInstanceDtos.ResyncSummary responseSummary =
-                new DocumentInstanceDtos.ResyncSummary(
-                        keptFieldIds.size(),
-                        droppedRemovedFieldIds.size(),
-                        droppedTypeChangedFieldIds.size(),
-                        newFieldIds.size(),
-                        droppedRemovedFieldNames);
-        return new DocumentInstanceDtos.ResyncTemplateResponse(
+                fromStatus.name(), toStatus.name(), reroutedTo, contentChanged,
+                r.keptFieldIds().size(), droppedTotal,
+                r.droppedRemovedFieldIds().size(),
+                r.droppedTypeChangedFieldIds().size(),
+                r.newFieldIds().size(),
+                invalidatedSignatureFieldIds.size());
+
+        // Notification — only when routed to INTERN. ERM is the actor
+        // for DRAFT-target reopens (they clicked the button); they'll
+        // see the refreshed draft when the response returns. AUTO_ONLY
+        // and NONE don't require a notification either.
+        if (toStatus == DocumentInstanceStatus.RETURNED) {
+            String ermName = caller != null && caller.getFullName() != null
+                    && !caller.getFullName().isBlank()
+                    ? caller.getFullName() : brand.getName() + " ERM";
+            String docTitle = instance.getTemplateTitle() != null
+                    ? instance.getTemplateTitle() : "your document";
+            notifyUser(instance.getInternUserId(),
+                    "IDMS_DOC_TEMPLATE_UPDATED",
+                    ermName + " updated \"" + docTitle + "\"",
+                    "Please review the updated template and re-sign.",
+                    internDocPath(instance));
+            emailInternDocTemplateUpdated(instance, caller);
+        }
+
+        DocumentInstanceDtos.ReopenSummary responseSummary =
+                new DocumentInstanceDtos.ReopenSummary(
+                        fromStatus.name(),
+                        toStatus.name(),
+                        reroutedTo,
+                        r.keptFieldIds().size(),
+                        r.droppedRemovedFieldNames(),
+                        invalidatedSignatureFieldIds.size(),
+                        r.newFieldIds().size());
+        return new DocumentInstanceDtos.ReopenTemplateResponse(
                 toDetail(instance, caller), responseSummary);
+    }
+
+    /** Byte-safe string equality with null tolerance. */
+    private static boolean stringsEqual(String a, String b) {
+        return a == null ? b == null : a.equals(b);
+    }
+
+    /** Uppercase + null-tolerant assignee normalisation — every read
+     *  site in the service uses this same pattern (see
+     *  {@link #requireFieldOwner}, {@link #assertRequiredFieldsCompleteFor}). */
+    private static String normAssignee(FieldSchemaEntry f) {
+        if (f == null || f.assignee() == null) return "";
+        return f.assignee().toUpperCase(java.util.Locale.ROOT);
+    }
+
+    /** Collect field ids whose NEW-schema assignee is INTERN, into the
+     *  running unlockedFieldIds list, avoiding duplicates. */
+    private static void addIfInternOwned(
+            List<String> unlockedIds,
+            List<String> candidateIds,
+            Map<String, FieldSchemaEntry> newById) {
+        for (String id : candidateIds) {
+            FieldSchemaEntry n = newById.get(id);
+            if (n != null && "INTERN".equals(normAssignee(n))
+                    && !unlockedIds.contains(id)) {
+                unlockedIds.add(id);
+            }
+        }
+    }
+
+    /** Direct email leg for the reopen notification. Mirrors
+     *  {@link #emailInternDocReturned} — the dispatcher's allow-list
+     *  doesn't cover {@code IDMS_DOC_TEMPLATE_UPDATED}, so we render
+     *  the seeded template + push it through {@code emailProvider}
+     *  ourselves. Best-effort; a template-render failure logs a warn
+     *  and moves on. */
+    private void emailInternDocTemplateUpdated(DocumentInstance instance, User caller) {
+        try {
+            User intern = userRepo.findById(instance.getInternUserId()).orElse(null);
+            if (intern == null || intern.getEmail() == null
+                    || intern.getEmail().isBlank()) {
+                return;
+            }
+            String ermName = caller != null && caller.getFullName() != null
+                    && !caller.getFullName().isBlank()
+                    ? caller.getFullName() : brand.getName() + " ERM";
+            Map<String, Object> vars = new LinkedHashMap<>();
+            vars.put("firstName", firstName(intern));
+            vars.put("ermName", ermName);
+            vars.put("templateTitle", instance.getTemplateTitle() != null
+                    ? instance.getTemplateTitle() : "your document");
+            vars.put("deepLink", frontendBaseUrl + internDocPath(instance));
+            var rendered = templateService
+                    .render("IDMS_DOC_TEMPLATE_UPDATED", "EMAIL", vars).orElse(null);
+            if (rendered == null) {
+                log.debug("[IDMS] template IDMS_DOC_TEMPLATE_UPDATED missing — "
+                        + "skipping intern mail");
+                return;
+            }
+            emailProvider.sendRendered(intern.getEmail(),
+                    rendered.subject() != null
+                            ? rendered.subject()
+                            : "Please review the updated template",
+                    rendered.body() != null ? rendered.body() : "");
+        } catch (Exception e) {
+            log.warn("[IDMS] IDMS_DOC_TEMPLATE_UPDATED intern-mail failed "
+                    + "(non-fatal): {}", e.getMessage());
+        }
     }
 
     // ── Queue / list ─────────────────────────────────────────────────
@@ -1611,18 +2176,26 @@ public class DocumentInstanceService {
                 ? canRevoke(lc) : new RevocationGate(false, "Missing lifecycle.");
         DocumentInstanceDtos.InstanceActions actions = buildActions(instance, caller, revocationGate);
 
-        // Staleness signal — MEANINGFUL only for DRAFT. Every non-draft
-        // state returns false regardless of what the template has done,
-        // because the doc is frozen from that point on (see #resyncTemplate
-        // for the paired safety guard). A DRAFT is stale when the current
-        // template.updatedAt does not match the watermark we stamped at
-        // create-time (or the last resync). A missing watermark
-        // (nullable — legacy pre-migration rows) is treated as "cannot
-        // tell → not stale," so the button never appears on legacy rows
-        // that the backfill hasn't caught yet.
+        // Staleness signal — meaningful for DRAFT and every REOPEN-able
+        // in-flight state (SENT_TO_INTERN, RETURNED, INTERN_SUBMITTED,
+        // VERIFIED). DRAFT drives the in-place "Update to latest
+        // template" banner (via #resyncTemplate); in-flight states drive
+        // the backward-hop "Reopen for template update" prompt (via
+        // #reopenForTemplateUpdate). FINALIZED + every TERMINAL state
+        // (REVOKED, SUPERSEDED, VOIDED) intentionally return false — a
+        // legal PDF exists or the doc is dead, and the follow-up
+        // FINALIZED read-only informational banner is a separate concern.
+        //
+        // Comparison: current template.updatedAt vs the snapshot
+        // watermark we stamped at create-time (and re-stamp on every
+        // resync or reopen). A missing watermark (nullable — legacy
+        // pre-migration rows) is treated as "cannot tell → not stale"
+        // so the button never appears on legacy rows the backfill
+        // hasn't caught.
         boolean isTemplateStale = false;
-        if (instance.getStatus() == DocumentInstanceStatus.DRAFT
-                && instance.getSnapshotTemplateUpdatedAt() != null) {
+        if (instance.getSnapshotTemplateUpdatedAt() != null
+                && instance.getStatus() != DocumentInstanceStatus.FINALIZED
+                && !DocumentInstanceStatus.TERMINAL.contains(instance.getStatus())) {
             EditableTemplate liveTemplate =
                     templateRepo.findById(instance.getTemplateId()).orElse(null);
             if (liveTemplate != null && liveTemplate.getUpdatedAt() != null) {

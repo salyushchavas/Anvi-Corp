@@ -206,6 +206,72 @@ public final class DocumentInstanceDtos {
     ) {}
 
     /**
+     * Response payload for {@code POST /api/v1/erm/idms/{id}/reopen-template-update}.
+     *
+     * <p>Wraps the refreshed instance detail (post-backward-hop, with
+     * the newly-latest template snapshotted onto the row) plus a
+     * summary of what the reopen decided: which state we routed back
+     * to, who's been re-routed, and which signatures were invalidated.
+     * Endpoint-only — the persistent {@link InstanceDetail} DTO stays
+     * unchanged for every other read path.</p>
+     *
+     * <p>The frontend uses this to surface an honest, specific toast:
+     * "Reopened to RETURNED — Alice must re-review and re-sign; 2
+     * field(s) were removed: <names>. Their signature was invalidated
+     * (the template was edited after they signed)."</p>
+     */
+    public record ReopenTemplateResponse(
+            InstanceDetail instance,
+            ReopenSummary summary
+    ) {}
+
+    /**
+     * Per-reopen decision + counts. The reroute + signature
+     * invalidation counts are the two fields that make the reopen
+     * legally auditable at the response layer.
+     */
+    public record ReopenSummary(
+            /** Status the doc was in BEFORE the reopen. */
+            String fromStatus,
+            /** Status the doc was routed to. If equal to
+             *  {@code fromStatus}, the reopen was a metadata-only no-op
+             *  (e.g. only AUTO fields changed, or template metadata
+             *  changed without any party-relevant field diff). */
+            String toStatus,
+            /** Who's been re-routed to re-engage:
+             *  {@code "ERM"} — reopened to DRAFT for ERM re-do (fields
+             *      the ERM owns changed, or content over-approximation).
+             *  {@code "INTERN"} — reopened to RETURNED for intern
+             *      re-review + re-sign (only intern-owned fields
+             *      changed).
+             *  {@code "BOTH_VIA_ERM"} — DRAFT: ERM re-does first,
+             *      forward flow carries it to the intern on Send.
+             *  {@code "AUTO_ONLY"} — no human re-routing; AUTO fields
+             *      re-resolved in place, no status change.
+             *  {@code "NONE"} — no party-relevant change; watermark
+             *      re-stamped, no status change, no side effects
+             *      (metadata-only template edit). */
+            String reroutedTo,
+            /** Value rows kept (id + type matched) — also counts renamed. */
+            int keptCount,
+            /** Human names of REMOVED fields whose values were dropped —
+             *  used verbatim in the frontend notice. May contain null
+             *  entries if a legacy value row had no fieldName snapshot;
+             *  filter defensively before rendering. */
+            List<String> droppedRemovedFieldNames,
+            /** Number of signature rows that were invalidated
+             *  ({@code valueRepo.delete} on the signature value rows).
+             *  A signature is invalidated when its owner's fields
+             *  changed, or when the canonical HTML content differs
+             *  (over-approximation — safer to ask for a re-sign than
+             *  keep a signature over changed content). */
+            int invalidatedSignatureCount,
+            /** Field ids added by the admin — the appropriate party
+             *  will fill these on the reopened cycle. */
+            int newFieldCount
+    ) {}
+
+    /**
      * Per-resync counts + dropped-field names. Names are resolved from
      * the OLD schema during the value-walk (before re-snapshot) so a
      * removed field's user-facing label is still available for the

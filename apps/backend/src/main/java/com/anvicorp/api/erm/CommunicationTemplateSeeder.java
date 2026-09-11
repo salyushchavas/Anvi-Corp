@@ -469,6 +469,28 @@ public class CommunicationTemplateSeeder implements CommandLineRunner {
                             + "{{signoffBlock}}",
                     "firstName,ermName,templateTitle,reasonBlock,"
                             + "commentsBlock,deepLink"),
+            // Intern-facing "the template was updated by the admin —
+            // please re-review + re-sign" alert. Distinct from
+            // IDMS_DOC_RETURNED (which frames the ask as "your ERM
+            // wants corrections you made"); this frames it as "the
+            // document itself changed, your prior signature no longer
+            // applies to the new content, please re-review + re-sign".
+            // Fired by DocumentInstanceService.reopenForTemplateUpdate
+            // when the reopen routes the doc back to the intern
+            // (target RETURNED). Same shape as the RETURNED seed so
+            // the ERM template UI can edit both consistently.
+            new Seed(
+                    "IDMS_DOC_TEMPLATE_UPDATED", "EMAIL",
+                    "Please review the updated \"{{templateTitle}}\"",
+                    "Hello {{firstName}},\n\n"
+                            + "{{ermName}}, your ERM, has updated "
+                            + "\"{{templateTitle}}\" — the template was edited "
+                            + "after you signed, so your signature no longer "
+                            + "applies to the new content.\n\n"
+                            + "Please open the document to review the changes "
+                            + "and re-sign:\n{{deepLink}}\n\n"
+                            + "{{signoffBlock}}",
+                    "firstName,ermName,templateTitle,deepLink"),
             // ── Trainer Phase 0 — doc §10 + §8 notification matrix (7 templates).
             new Seed(
                     "PROJECT_ASSIGNED", "EMAIL",
