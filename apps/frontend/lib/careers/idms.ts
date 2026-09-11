@@ -167,6 +167,55 @@ export interface ResyncTemplateResponse {
   summary: ResyncSummary;
 }
 
+/**
+ * Summary of what happened on the sibling reopen endpoint —
+ * {@code POST /api/v1/erm/idms/{id}/reopen-template-update}. Unlike
+ * {@link ResyncSummary} (DRAFT in-place resync), the reopen path is
+ * the backward-hop for IN-FLIGHT docs (SENT_TO_INTERN / RETURNED /
+ * INTERN_SUBMITTED / VERIFIED). The summary tells the frontend
+ * WHICH way the doc got routed so the toast + redirect can match.
+ */
+export interface ReopenSummary {
+  /** Status the doc was in BEFORE the reopen. Useful for audit
+   *  logging on the frontend telemetry side. */
+  fromStatus: InstanceStatus;
+  /** Status the doc was routed to. If equal to {@code fromStatus},
+   *  the reopen was a metadata-only no-op (AUTO_ONLY / NONE). */
+  toStatus: InstanceStatus;
+  /** Who's been re-routed to re-engage:
+   *   - {@code "INTERN"}     — RETURNED, intern re-reviews + re-signs.
+   *   - {@code "ERM"}        — DRAFT, ERM re-does their part.
+   *   - {@code "BOTH_VIA_ERM"} — DRAFT, ERM first; forward flow
+   *                              carries it to the intern on Send.
+   *   - {@code "AUTO_ONLY"}  — no human; AUTO fields re-resolved.
+   *   - {@code "NONE"}       — no party-relevant change; no-op. */
+  reroutedTo: 'INTERN' | 'ERM' | 'BOTH_VIA_ERM' | 'AUTO_ONLY' | 'NONE';
+  /** Value rows kept (id + type matched). Includes rows whose name
+   *  was refreshed on the value row. */
+  keptCount: number;
+  /** Human names of REMOVED fields whose values were dropped — used
+   *  verbatim in the frontend notice so the ERM knows which of their
+   *  entries vanished. May contain null entries if a legacy value
+   *  row had no fieldName snapshot; filter defensively. */
+  droppedRemovedFieldNames: Array<string | null>;
+  /** Signatures the reopen invalidated ({@code valueRepo.delete} on
+   *  the signature value rows). Backend picks per R-SIG cautious
+   *  policy + content over-approximation. */
+  invalidatedSignatureCount: number;
+  /** Field ids added by the admin — the appropriate party will fill
+   *  these on the reopened cycle. */
+  newFieldCount: number;
+}
+
+/** POST /api/v1/erm/idms/{id}/reopen-template-update — wrapper
+ *  around the refreshed instance detail plus the reopen summary.
+ *  Used ONLY for in-flight docs (not DRAFT — DRAFT has its own
+ *  in-place resync path). */
+export interface ReopenTemplateResponse {
+  instance: InstanceDetail;
+  summary: ReopenSummary;
+}
+
 /** Field schema entry (mirrors the Phase 1 studio + backend
  *  DocumentInstanceService.FieldSchemaEntry). */
 export interface FieldSchemaEntry {

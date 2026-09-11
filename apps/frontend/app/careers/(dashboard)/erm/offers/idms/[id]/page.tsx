@@ -13,14 +13,17 @@ import {
   History as HistoryIcon,
   Loader2,
   PencilLine,
+  RefreshCw,
   RotateCcw,
   ShieldOff,
   X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { AxiosError } from 'axios';
 import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import InstanceRenderer from '@/components/idms/InstanceRenderer';
 import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
 import {
@@ -31,7 +34,20 @@ import {
   parseFieldSchema,
   stageToneClass,
   type InstanceDetail,
+  type InstanceStatus,
+  type ReopenTemplateResponse,
 } from '@/lib/careers/idms';
+
+/** In-flight statuses on which the ERM sees the "reopen for template
+ *  update" prompt. Excludes DRAFT (which has its own in-place resync
+ *  banner on the fill page) and every FINALIZED / TERMINAL state
+ *  (which are frozen — the backend rejects reopen with 409). */
+const IN_FLIGHT_REOPENABLE: ReadonlySet<InstanceStatus> = new Set<InstanceStatus>([
+  'SENT_TO_INTERN',
+  'RETURNED',
+  'INTERN_SUBMITTED',
+  'VERIFIED',
+]);
 
 /**
  * ERM detail page — read-only render of the current document (including
@@ -63,6 +79,7 @@ function PageContent() {
   const [busy, setBusy] = useState<string | null>(null);
   const [returnOpen, setReturnOpen] = useState(false);
   const [revokeOpen, setRevokeOpen] = useState(false);
+  const [reopenConfirmOpen, setReopenConfirmOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -122,6 +139,109 @@ function PageContent() {
       setBusy(null);
     }
   }
+
+  /**
+   * Confirmed handler for the in-flight "Update to latest template"
+   * banner. POSTs to reopen-template-update, then uses the response
+   * summary to (a) show a toast keyed on {@code reroutedTo}, (b)
+   * name any dropped-removed fields (same honesty as the DRAFT
+   * flow), (c) refresh the loaded detail so the banner disappears
+   * and the doc's new status renders, (d) route to the editable
+   * fill view when the doc ended up in DRAFT so the ERM lands where
+   * they need to re-do their part. RETURNED / AUTO_ONLY / NONE stay
+   * on the detail page — the ERM's job on those is to inspect + let
+   * the flow continue, not to edit.
+   *
+   * <p>On 409 (the doc raced to FINALIZED / a terminal / a DRAFT
+   * that no longer permits reopen — e.g. someone revoked in
+   * another tab), refetch the detail so the stale button clears
+   * cleanly instead of leaving a dead spinner.</p>
+   */
+  const performReopen = useCallback(async () => {
+    if (!detail) return;
+    setReopenConfirmOpen(false);
+    setBusy('reopen');
+    try {
+      const { data } = await api.post<ReopenTemplateResponse>(
+        `/api/v1/erm/idms/${detail.id}/reopen-template-update`,
+      );
+      const s = data.summary;
+      setDetail(data.instance);
+
+      // Toast copy keyed on the routing decision — mirror the DRAFT
+      // flow's specificity so the ERM sees exactly what happened.
+      const removedNames = (s.droppedRemovedFieldNames ?? [])
+        .filter((n): n is string => Boolean(n));
+      const specifics: string[] = [];
+      if (s.invalidatedSignatureCount > 0) {
+        specifics.push(
+          `${s.invalidatedSignatureCount} signature(s) were cleared`,
+        );
+      }
+      if (removedNames.length > 0) {
+        specifics.push(
+          `${removedNames.length} field(s) you'd filled were removed: `
+            + removedNames.join(', '),
+        );
+      }
+      const suffix = specifics.length > 0
+        ? ` ${specifics.join('. ')}. Please review.`
+        : '';
+      switch (s.reroutedTo) {
+        case 'INTERN':
+          toast(
+            'Offer updated and sent back to the intern to re-sign.'
+              + suffix,
+            { duration: 8000, icon: '⚠️' },
+          );
+          break;
+        case 'ERM':
+        case 'BOTH_VIA_ERM':
+          toast(
+            'Offer reopened as a draft for you to review and re-send.'
+              + suffix,
+            { duration: 8000, icon: '⚠️' },
+          );
+          break;
+        case 'AUTO_ONLY':
+          toast.success(
+            'Offer updated (auto-filled fields refreshed); '
+              + 'no re-signing needed.',
+          );
+          break;
+        case 'NONE':
+        default:
+          toast.success(
+            'Offer updated to the latest template; nothing needed '
+              + 're-signing.',
+          );
+          break;
+      }
+
+      // toStatus-based redirect: DRAFT → editable fill view (ERM
+      // re-does their part). Every other target stays on the
+      // detail page (RETURNED = intern's turn — ERM watches;
+      // AUTO_ONLY / NONE = no re-engagement needed).
+      if (s.toStatus === 'DRAFT') {
+        router.push(`/careers/erm/offers/idms/${detail.id}/fill`);
+      }
+    } catch (e) {
+      const status = (e as AxiosError)?.response?.status;
+      if (status === 409) {
+        // Raced to FINALIZED / terminal / or DRAFT no longer eligible
+        // — reload the detail so the stale banner clears against the
+        // current state instead of leaving a dead click surface.
+        toast.error(
+          'This offer can no longer be updated (its state changed).',
+        );
+        void load();
+      } else {
+        toast.error("Couldn't update the template. Please try again.");
+      }
+    } finally {
+      setBusy(null);
+    }
+  }, [detail, load, router]);
 
   if (loading) {
     return <div className="mx-auto max-w-4xl p-6"><div className="h-64 animate-pulse rounded-lg bg-slate-100" /></div>;
@@ -257,6 +377,22 @@ function PageContent() {
         </div>
       </header>
 
+      {/* In-flight "the admin updated this template" banner. Shown
+          on any of the four REOPENABLE post-DRAFT states when
+          isTemplateStale is true. Distinct amber styling (not the
+          calm sky-blue used by the DRAFT resync banner on the fill
+          page) because the consequence is heavier — reopening +
+          re-collecting signatures. NEVER shown on DRAFT (fill page
+          owns that) or on FINALIZED / TERMINAL states (backend
+          rejects reopen 409). Click opens the confirmation modal
+          below; the POST fires only on confirm. */}
+      {IN_FLIGHT_REOPENABLE.has(detail.status) && detail.isTemplateStale && (
+        <InFlightStalenessBanner
+          onUpdate={() => setReopenConfirmOpen(true)}
+          pending={busy === 'reopen'}
+        />
+      )}
+
       {detail.returnReasonCode && detail.status === 'RETURNED' && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <p className="font-medium">Waiting on corrections from intern</p>
@@ -346,6 +482,72 @@ function PageContent() {
           confirmTone="danger"
         />
       )}
+      {/* Mandatory confirmation for the in-flight reopen — spells out
+          the full consequence (signature invalidation + backward
+          routing) BEFORE the POST fires. No immediate-POST path
+          exists; the banner button can only open this modal. */}
+      <ConfirmDialog
+        open={reopenConfirmOpen}
+        onClose={() => setReopenConfirmOpen(false)}
+        onConfirm={performReopen}
+        title="Update this offer to the latest template?"
+        description={
+          "This will update this offer to the latest template. Any "
+          + "signatures on content that changed will be cleared and "
+          + "must be re-collected. Depending on what changed, the "
+          + "offer goes back to the intern to re-sign, or reopens for "
+          + "you to edit and re-send. Entered details are kept where "
+          + "the fields still exist. Continue?"
+        }
+        confirmLabel="Update & re-route"
+        cancelLabel="Cancel"
+        variant="primary"
+      />
+    </div>
+  );
+}
+
+/**
+ * "The admin has updated this template since this offer was sent"
+ * banner — rendered on the ERM detail view for
+ * SENT_TO_INTERN / RETURNED / INTERN_SUBMITTED / VERIFIED when the
+ * backend flipped {@code isTemplateStale = true}. Distinct amber
+ * styling to signal the heavier consequence versus the DRAFT
+ * sky-blue resync banner: clicking here reopens the doc, invalidates
+ * the signatures that were made stale by the change, and routes the
+ * doc backward to whoever must re-sign. The mandatory
+ * {@link ConfirmDialog} above spells the consequence out before the
+ * POST fires — this button only opens that modal.
+ */
+function InFlightStalenessBanner({
+  onUpdate,
+  pending,
+}: {
+  onUpdate: () => void;
+  pending: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-start gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <p className="font-medium">
+          The admin has updated this template since this offer was sent.
+        </p>
+        <p className="text-amber-800">
+          Updating will pull in the changes and re-collect the
+          signatures affected — the document will be routed back to
+          whoever needs to re-sign.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onUpdate}
+        disabled={pending}
+        className="inline-flex items-center gap-1.5 rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 shadow-sm hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <RefreshCw className={`h-3.5 w-3.5 ${pending ? 'animate-spin' : ''}`} />
+        {pending ? 'Updating…' : 'Update to latest template'}
+      </button>
     </div>
   );
 }
