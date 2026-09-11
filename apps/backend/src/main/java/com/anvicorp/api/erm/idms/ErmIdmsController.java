@@ -314,6 +314,27 @@ public class ErmIdmsController {
     }
 
     /**
+     * Pull the CURRENT admin-edited template onto a DRAFT instance while
+     * preserving already-entered field values by id — the value-preserving
+     * alternative to "revoke + create new" after an admin edits a template
+     * mid-draft. See
+     * {@link DocumentInstanceService#resyncTemplate(UUID, User)} for the
+     * safety boundary, value re-apply rules (R2), and audit shape.
+     *
+     * <p>Only draft documents can be re-synced; the service throws
+     * {@code ConflictException} → 409 for every non-draft state — the
+     * mandatory backend safety net that survives even if the frontend
+     * forgets to hide the button.</p>
+     */
+    @PostMapping("/{id}/resync-template")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public DocumentInstanceDtos.ResyncTemplateResponse resyncTemplate(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User caller) {
+        return instanceService.resyncTemplate(id, caller);
+    }
+
+    /**
      * Stream the finalized PDF as {@code application/pdf} with a proper
      * {@code Content-Disposition: attachment; filename=...} — the vault
      * stores the object under a {@code .bin} storage key and the PII-

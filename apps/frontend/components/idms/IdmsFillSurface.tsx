@@ -31,6 +31,7 @@ import {
   parseFieldSchema,
   type FieldSchemaEntry,
   type InstanceDetail,
+  type ResyncTemplateResponse,
 } from '@/lib/careers/idms';
 
 /**
@@ -170,6 +171,25 @@ export interface IdmsFillSurfaceConfig {
    *  uses this for RETURNED + REVOKED banners; ERM omits (returns null). */
   extraBanners?(detail: InstanceDetail, canEdit: boolean): ReactNode;
 
+  /** Optional slot for the "Update to latest template" banner rendered
+   *  when a draft becomes stale (an admin has edited the template since
+   *  the ERM started this draft). Caller decides the copy + the click
+   *  behavior; the surface passes {@code onResynced} so the banner's
+   *  async POST can update the loaded {@link InstanceDetail} in place
+   *  and dismiss itself (the banner disappears because
+   *  {@code detail.isTemplateStale} flips false on the returned
+   *  instance).
+   *
+   *  <p>Rendered only for ERM ({@code role === 'ERM'}) on a stale
+   *  DRAFT — the surface itself gates the render (see the double-
+   *  guard at the call site). The intern never sees drafts, and
+   *  post-DRAFT states are frozen from an admin template edit's
+   *  perspective, so this slot is intentionally narrow.</p> */
+  stalenessBanner?(
+    detail: InstanceDetail,
+    onResynced: (response: ResyncTemplateResponse) => void,
+  ): ReactNode;
+
   /** Small hint text below the panel (below FieldForm). */
   panelFooter?(detail: InstanceDetail): ReactNode;
 
@@ -180,7 +200,7 @@ export interface IdmsFillSurfaceConfig {
 export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceConfig }) {
   const {
     role, signerName, resource, canEdit: canEditFn,
-    fullPageOverride, header, primaryAction, extraBanners, panelFooter,
+    fullPageOverride, header, primaryAction, extraBanners, stalenessBanner, panelFooter,
     containerMaxWidthClass = 'max-w-6xl',
     previewMaxHeightClass = 'max-h-[calc(100vh-220px)]',
   } = config;
@@ -528,6 +548,19 @@ export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceCon
       )}
 
       {extraBanners?.(detail, canEdit)}
+
+      {/* Update-to-latest-template banner — double-gated on
+          isTemplateStale AND status === 'DRAFT' AND ERM role so the
+          button never appears on frozen states (defense in depth
+          even though the backend rejects non-draft resync with 409).
+          Callers that don't supply stalenessBanner (e.g. intern's
+          fill config) get no render at all. */}
+      {role === 'ERM'
+          && detail.status === 'DRAFT'
+          && detail.isTemplateStale
+          && stalenessBanner?.(detail, (response) => {
+            setDetail(response.instance);
+          })}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         {/* Preview column — border+rounded+shadow chrome only. The
