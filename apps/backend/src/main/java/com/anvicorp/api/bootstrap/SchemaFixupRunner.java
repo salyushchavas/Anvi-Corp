@@ -4899,7 +4899,18 @@ public class SchemaFixupRunner implements CommandLineRunner {
                 // field ids ERM chose to unlock on the last RETURN.
                 // NULL = legacy (all intern fields editable), safe
                 // default for existing rows; no backfill needed.
-                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS unlocked_field_ids JSONB"
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS unlocked_field_ids JSONB",
+                // Staleness watermark for the draft-resync-to-template
+                // feature — stamped from editable_templates.updated_at at
+                // instance create-time (and re-stamped on resync). A DRAFT
+                // is stale when the current template.updated_at ≠ this
+                // column. See DocumentInstance.snapshotTemplateUpdatedAt
+                // javadoc + DocumentInstanceService.resyncTemplate for the
+                // paired write and safety guard. TIMESTAMP (no zone)
+                // matches every peer timestamp column on this table
+                // (revoked_at, sent_at, verified_at, etc.); Instant maps
+                // cleanly to it on both Postgres and H2.
+                "ALTER TABLE document_instances ADD COLUMN IF NOT EXISTS snapshot_template_updated_at TIMESTAMP"
         };
         for (String sql : instAlters) {
             try { jdbcTemplate.execute(sql); }
@@ -4907,6 +4918,67 @@ public class SchemaFixupRunner implements CommandLineRunner {
                 log.warn("[SchemaFixupRunner] document_instances ALTER skipped "
                         + "(non-fatal): {} — {}", sql, e.getMessage());
             }
+        }
+
+        // 1a-i) Backfill snapshot_template_updated_at for pre-existing
+        //       instances. Rows created before this column existed have
+        //       NULL, which would make every legacy DRAFT show as "not
+        //       stale" (nullable → button never appears) — that's fine
+        //       for non-DRAFT rows (they're frozen anyway), but a
+        //       filled-but-not-sent legacy DRAFT would silently miss
+        //       out on the feature until its next mutation.
+        //
+        //       Ruling R1 fix: on first-boot after the column lands,
+        //       stamp every NULL row with its template's CURRENT
+        //       updated_at. This means existing legacy DRAFTs are
+        //       considered CURRENT as-of-now (not stale) — matching
+        //       the user's ruling that "existing drafts don't all
+        //       show stale on first deploy — they're considered
+        //       current as of now."
+        //
+        //       Idempotent — WHERE ... IS NULL guard means a repeat
+        //       boot touches zero rows. Runs across every row (not
+        //       just DRAFTs) so the column's invariant holds
+        //       uniformly; the DTO only reads this for DRAFTs so
+        //       the stamped value on non-DRAFT rows is harmless.
+        try {
+            // Correlated-subquery form — works on Postgres AND H2 (H2's
+            // default mode does not support the Postgres-specific
+            // UPDATE...FROM syntax). Per-statement try/catch means a
+            // schema mismatch (e.g. editable_templates missing on a
+            // never-seeded DB) still logs a warning rather than aborting.
+            //
+            // The EXISTS guard makes the UPDATE fully idempotent even in
+            // the presence of dangling template_ids (there is no FK on
+            // document_instances.template_id, so orphans are possible in
+            // legacy data). Without EXISTS, a row whose template_id has
+            // no editable_templates match would have the subquery return
+            // NULL, and every subsequent boot would re-touch it (WHERE
+            // ... IS NULL matches perpetually) producing spurious
+            // "backfilled N row(s)" log lines. WITH the EXISTS guard,
+            // orphan rows are skipped once and stay skipped; the DTO's
+            // null-tolerant staleness branch already handles them (a
+            // null watermark reads as "not stale" so the button never
+            // appears on legacy rows we couldn't back-fill).
+            int backfilled = jdbcTemplate.update(
+                    "UPDATE document_instances "
+                            + "   SET snapshot_template_updated_at = ("
+                            + "         SELECT et.updated_at "
+                            + "           FROM editable_templates et "
+                            + "          WHERE et.id = document_instances.template_id) "
+                            + " WHERE snapshot_template_updated_at IS NULL "
+                            + "   AND EXISTS ("
+                            + "         SELECT 1 FROM editable_templates et "
+                            + "          WHERE et.id = document_instances.template_id)");
+            if (backfilled > 0) {
+                log.info("[SchemaFixupRunner] document_instances."
+                        + "snapshot_template_updated_at backfilled {} row(s) "
+                        + "from editable_templates.updated_at (idempotent)",
+                        backfilled);
+            }
+        } catch (Exception e) {
+            log.warn("[SchemaFixupRunner] snapshot_template_updated_at "
+                    + "backfill skipped (non-fatal): {}", e.getMessage());
         }
 
         // 1b) Indexes — including the partial UNIQUE that enforces one live

@@ -108,6 +108,29 @@ public class DocumentInstance {
     @JdbcTypeCode(SqlTypes.JSON)
     private String snapshotFieldSchemaJson;
 
+    /**
+     * The source template's {@link EditableTemplate#updatedAt} at the moment
+     * this instance's canonical HTML + field schema were snapshotted — set
+     * from {@code template.getUpdatedAt()} in {@code create()} and re-stamped
+     * on every {@code resyncTemplate()}. Compared to the template's CURRENT
+     * {@code updatedAt} to compute {@code isTemplateStale} on the draft DTO:
+     * a mismatch means the admin has saved the template since this draft
+     * was snapshotted, so the ERM can be offered an "Update to latest
+     * template" button on DRAFT rows.
+     *
+     * <p>Nullable to tolerate legacy rows created before this column
+     * existed; the {@code SchemaFixupRunner} backfills them to the
+     * template's current {@code updatedAt} on next boot so no draft
+     * appears spuriously stale.</p>
+     *
+     * <p>Meaningful only while the instance is in {@code DRAFT} — once
+     * the ERM sends, the doc is frozen and template drift is irrelevant.
+     * The DTO returns {@code isTemplateStale=false} for every non-draft
+     * state regardless of what this column holds.</p>
+     */
+    @Column(name = "snapshot_template_updated_at")
+    private Instant snapshotTemplateUpdatedAt;
+
     // ── Supersede + final PDF ──────────────────────────────────────────────
 
     /** Points at the prior FINALIZED instance this one replaced. Nullable. */

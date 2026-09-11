@@ -125,7 +125,24 @@ public final class DocumentInstanceDtos {
             List<ReviewLogEntry> history,
             /** UI action gates — the frontend uses these to enable/disable
              *  buttons without reproducing the state-machine rules. */
-            InstanceActions actions
+            InstanceActions actions,
+            /**
+             * True when the admin has edited the source template since this
+             * instance's canonical HTML + field schema were snapshotted. Only
+             * meaningfully computed for {@code DRAFT} instances — every non-
+             * draft state returns {@code false} regardless of what the
+             * underlying template has done, because sent / signed / finalized
+             * docs are frozen (an admin template edit must NEVER alter them).
+             *
+             * <p>The ERM draft view uses this to surface an "Update to latest
+             * template" banner + button; clicking POSTs
+             * {@code /api/v1/erm/idms/{instanceId}/resync-template} which
+             * re-snapshots the template onto the draft, preserves
+             * still-existing field values by id, drops values whose fields
+             * were removed / type-changed, and sets this back to
+             * {@code false}.</p>
+             */
+            boolean isTemplateStale
     ) {}
 
     public record FieldValue(

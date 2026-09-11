@@ -213,6 +213,12 @@ public class DocumentInstanceService {
                 .templateKey(template.getKey())
                 .snapshotCanonicalHtml(template.getCanonicalHtml())
                 .snapshotFieldSchemaJson(template.getFieldSchemaJson())
+                // Staleness watermark — remember which version of the
+                // template we snapshotted so the draft can offer "Update
+                // to latest template" if the admin edits it later.
+                // See DocumentInstance.snapshotTemplateUpdatedAt javadoc
+                // and #resyncTemplate for the paired write.
+                .snapshotTemplateUpdatedAt(template.getUpdatedAt())
                 .supersedesId(req.supersedesInstanceId())
                 .build();
         instance = instanceRepo.save(instance);
@@ -867,6 +873,213 @@ public class DocumentInstanceService {
         return toDetail(instance, caller);
     }
 
+    // ── Draft re-sync to latest template ─────────────────────────────
+
+    /**
+     * Pull the CURRENT admin-edited template onto a DRAFT instance while
+     * preserving field values the ERM has already entered for fields that
+     * still exist. This is the value-preserving alternative to "revoke +
+     * create new" when an admin has edited a template AFTER an ERM
+     * started a draft.
+     *
+     * <h2>Safety boundary — NON-NEGOTIABLE</h2>
+     * Only {@link DocumentInstanceStatus#DRAFT} instances can be re-synced.
+     * Every other state — {@code SENT_TO_INTERN}, {@code INTERN_SUBMITTED},
+     * {@code RETURNED}, {@code VERIFIED}, {@code FINALIZED} (all frozen —
+     * the intern has seen the doc, or a legal PDF exists), plus every
+     * terminal state ({@code REVOKED}, {@code SUPERSEDED}, {@code VOIDED})
+     * — throws {@link ConflictException} → 409. The guard fires BEFORE any
+     * mutation so a rejected call is a byte-identical no-op. Governance
+     * rule: an admin template edit must NEVER alter a sent or signed doc.
+     *
+     * <h2>Value re-apply — rules (ruling R2)</h2>
+     * Value rows are keyed by {@code (instance_id, field_id)} — see
+     * {@link DocumentInstanceFieldValue}'s unique constraint. Field ids
+     * are stable across admin template edits (studio preserves existing
+     * uuids on save; only fresh anchors get a new {@code crypto.randomUUID}),
+     * so id-match is the value-preservation key. For each existing value
+     * row, matched against the NEW field schema:
+     * <ul>
+     *   <li>id present + SAME type → KEEP the value. If the field's
+     *       {@code name} changed, refresh {@code field_name} on the value
+     *       row so admin queries stay legible.</li>
+     *   <li>id REMOVED from the new schema → DROP the value row + record
+     *       fieldId in the audit payload with reason {@code REMOVED}.</li>
+     *   <li>id present but TYPE CHANGED (TEXT ↔ DATE ↔ SIGNATURE ↔
+     *       CONTENT_BLOCK) → DROP the value row + record reason
+     *       {@code TYPE_CHANGED}. Keeping a value across a type change is
+     *       unsafe (a TEXT payload in a SIGNATURE slot would render
+     *       broken).</li>
+     *   <li>new id (no matching value row) → nothing to do; the ERM fills
+     *       it before Send.</li>
+     * </ul>
+     * Signatures (ruling R3) follow the uniform rule: same id + still
+     * {@code SIGNATURE} type → the ERM's signature stays. Dropped only if
+     * the signature field was removed / type-changed. No special case.
+     *
+     * <h2>Idempotency</h2>
+     * Re-syncing a DRAFT whose {@code snapshotTemplateUpdatedAt} already
+     * matches the current template's {@code updatedAt} is a safe no-op:
+     * every value row's field is still present at the same type, no rows
+     * are dropped, and the re-write of {@code snapshotCanonicalHtml} +
+     * {@code snapshotFieldSchemaJson} is byte-identical. The audit + review
+     * rows still fire (they document the ERM's INTENT to re-sync — cheap +
+     * useful for the audit trail).
+     *
+     * <h2>AUTO fields on re-sync</h2>
+     * Intentionally NOT re-resolved here. AUTO fields resolve once at
+     * {@code create()} (the "stamped platform value" contract), and the
+     * ERM has visibility into the current value on the draft. A future
+     * story can add a paired "resync AUTO fields" action; for now the
+     * scope is strictly template-shape refresh.
+     */
+    @Transactional
+    public DocumentInstanceDtos.InstanceDetail resyncTemplate(
+            UUID instanceId, User caller) {
+        requireErmOrAdmin(caller);
+        // GUARD FIRST — load with pessimistic row lock, reject any non-
+        // DRAFT before touching a single value row. This is the safety
+        // boundary the whole feature keys off.
+        DocumentInstance instance = instanceRepo.findByIdForUpdate(instanceId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Document instance not found: " + instanceId));
+        if (instance.getStatus() != DocumentInstanceStatus.DRAFT) {
+            throw new ConflictException(
+                    "Only draft documents can be updated to the latest "
+                            + "template. Current state: "
+                            + instance.getStatus());
+        }
+        EditableTemplate template = templateRepo.findById(instance.getTemplateId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Source template not found: " + instance.getTemplateId()));
+        // The template must still be in a usable state — same shape guard
+        // as create(). An admin might have deactivated the template or
+        // re-attached a fresh DOCX (which nulls canonicalHtml/schema);
+        // both cases mean re-sync would land the draft in a broken state,
+        // so refuse cleanly.
+        if (!template.isActive()) {
+            throw new ConflictException(
+                    "The source template is no longer active — cannot "
+                            + "resync to it.");
+        }
+        if (template.getCanonicalHtml() == null
+                || template.getFieldSchemaJson() == null) {
+            throw new ConflictException(
+                    "The source template has no saved canonical HTML / "
+                            + "field schema — cannot resync.");
+        }
+
+        // Parse OLD + NEW schemas by id so the R2 rules can be evaluated
+        // in one pass. Old schema comes from the instance's snapshot; new
+        // schema is the freshly-loaded template.
+        List<FieldSchemaEntry> oldSchema =
+                parseSchema(instance.getSnapshotFieldSchemaJson());
+        List<FieldSchemaEntry> newSchema =
+                parseSchema(template.getFieldSchemaJson());
+        Map<String, FieldSchemaEntry> newById = new LinkedHashMap<>();
+        for (FieldSchemaEntry f : newSchema) newById.put(f.id(), f);
+        Map<String, FieldSchemaEntry> oldById = new LinkedHashMap<>();
+        for (FieldSchemaEntry f : oldSchema) oldById.put(f.id(), f);
+
+        // Categorise every existing value row against the NEW schema.
+        // Buckets collected for the audit payload — keptFieldIds and
+        // renamedFieldIds are useful evidence for the ERM report.
+        List<String> keptFieldIds = new ArrayList<>();
+        List<String> renamedFieldIds = new ArrayList<>();
+        List<String> droppedRemovedFieldIds = new ArrayList<>();
+        List<String> droppedTypeChangedFieldIds = new ArrayList<>();
+
+        List<DocumentInstanceFieldValue> existing =
+                valueRepo.findByInstanceId(instance.getId());
+        for (DocumentInstanceFieldValue v : existing) {
+            FieldSchemaEntry newEntry = newById.get(v.getFieldId());
+            if (newEntry == null) {
+                // R2: field REMOVED — drop the value row.
+                valueRepo.delete(v);
+                droppedRemovedFieldIds.add(v.getFieldId());
+                continue;
+            }
+            FieldSchemaEntry oldEntry = oldById.get(v.getFieldId());
+            String oldType = oldEntry != null ? oldEntry.type() : null;
+            if (oldType != null && newEntry.type() != null
+                    && !oldType.equalsIgnoreCase(newEntry.type())) {
+                // R2: TYPE CHANGED — drop, safer than keeping an
+                // incompatible payload (TEXT into SIGNATURE slot, etc.).
+                valueRepo.delete(v);
+                droppedTypeChangedFieldIds.add(v.getFieldId());
+                continue;
+            }
+            // R2: KEEP. If the human-readable name changed, refresh the
+            // legibility snapshot on the value row — the fieldId is what
+            // links to the schema, but field_name shows up in admin
+            // queries so keep it current.
+            if (newEntry.name() != null
+                    && !newEntry.name().equals(v.getFieldName())) {
+                v.setFieldName(newEntry.name());
+                valueRepo.save(v);
+                renamedFieldIds.add(v.getFieldId());
+            }
+            keptFieldIds.add(v.getFieldId());
+        }
+        // New fields with no existing value row need no action here — the
+        // ERM will fill them before Send. Collect them for the audit only.
+        List<String> newFieldIds = new ArrayList<>();
+        for (FieldSchemaEntry f : newSchema) {
+            if (!oldById.containsKey(f.id())) newFieldIds.add(f.id());
+        }
+
+        // Re-snapshot the template shape onto the instance + re-stamp the
+        // staleness watermark. Order: values first, THEN entity save, so
+        // that if the value writes throw, the instance's snapshot fields
+        // stay pointing at data that matches the (still-old) schema.
+        Instant oldWatermark = instance.getSnapshotTemplateUpdatedAt();
+        instance.setSnapshotCanonicalHtml(template.getCanonicalHtml());
+        instance.setSnapshotFieldSchemaJson(template.getFieldSchemaJson());
+        instance.setSnapshotTemplateUpdatedAt(template.getUpdatedAt());
+        instance.setVersion(instance.getVersion() + 1);
+        instanceRepo.save(instance);
+
+        // Human-readable summary for the review log's TEXT comments field.
+        // Format matches the "N dropped, N kept, N new" idiom.
+        int droppedTotal = droppedRemovedFieldIds.size()
+                + droppedTypeChangedFieldIds.size();
+        String summary = droppedTotal + " dropped ("
+                + droppedRemovedFieldIds.size() + " removed, "
+                + droppedTypeChangedFieldIds.size() + " type-changed), "
+                + keptFieldIds.size() + " kept, "
+                + newFieldIds.size() + " new"
+                + (renamedFieldIds.isEmpty()
+                        ? ""
+                        : ", " + renamedFieldIds.size() + " renamed");
+        writeReview(instance.getId(), "RESYNC_TEMPLATE",
+                "TEMPLATE_UPDATED", summary, caller, "ERM");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fromTemplateUpdatedAt",
+                oldWatermark == null ? "" : oldWatermark.toString());
+        payload.put("toTemplateUpdatedAt",
+                template.getUpdatedAt() == null
+                        ? "" : template.getUpdatedAt().toString());
+        payload.put("droppedCount", droppedTotal);
+        payload.put("keptCount", keptFieldIds.size());
+        payload.put("newCount", newFieldIds.size());
+        payload.put("renamedCount", renamedFieldIds.size());
+        payload.put("droppedRemovedFieldIds",
+                String.join(",", droppedRemovedFieldIds));
+        payload.put("droppedTypeChangedFieldIds",
+                String.join(",", droppedTypeChangedFieldIds));
+        payload.put("renamedFieldIds",
+                String.join(",", renamedFieldIds));
+        writeAudit("RESYNC_TEMPLATE", instance, caller, payload);
+        log.info("[IDMS] resyncTemplate instance={} by={} "
+                        + "kept={} dropped={}({}+{}) new={} renamed={}",
+                instance.getId(), caller.getId(),
+                keptFieldIds.size(), droppedTotal,
+                droppedRemovedFieldIds.size(),
+                droppedTypeChangedFieldIds.size(),
+                newFieldIds.size(), renamedFieldIds.size());
+        return toDetail(instance, caller);
+    }
+
     // ── Queue / list ─────────────────────────────────────────────────
 
     /**
@@ -1375,6 +1588,26 @@ public class DocumentInstanceService {
                 ? canRevoke(lc) : new RevocationGate(false, "Missing lifecycle.");
         DocumentInstanceDtos.InstanceActions actions = buildActions(instance, caller, revocationGate);
 
+        // Staleness signal — MEANINGFUL only for DRAFT. Every non-draft
+        // state returns false regardless of what the template has done,
+        // because the doc is frozen from that point on (see #resyncTemplate
+        // for the paired safety guard). A DRAFT is stale when the current
+        // template.updatedAt does not match the watermark we stamped at
+        // create-time (or the last resync). A missing watermark
+        // (nullable — legacy pre-migration rows) is treated as "cannot
+        // tell → not stale," so the button never appears on legacy rows
+        // that the backfill hasn't caught yet.
+        boolean isTemplateStale = false;
+        if (instance.getStatus() == DocumentInstanceStatus.DRAFT
+                && instance.getSnapshotTemplateUpdatedAt() != null) {
+            EditableTemplate liveTemplate =
+                    templateRepo.findById(instance.getTemplateId()).orElse(null);
+            if (liveTemplate != null && liveTemplate.getUpdatedAt() != null) {
+                isTemplateStale = !liveTemplate.getUpdatedAt()
+                        .equals(instance.getSnapshotTemplateUpdatedAt());
+            }
+        }
+
         return new DocumentInstanceDtos.InstanceDetail(
                 instance.getId(),
                 instance.getTemplateId(),
@@ -1406,7 +1639,8 @@ public class DocumentInstanceService {
                 instance.getCreatedAt(),
                 instance.getUpdatedAt(),
                 history,
-                actions);
+                actions,
+                isTemplateStale);
     }
 
     private DocumentInstanceDtos.InstanceActions buildActions(
