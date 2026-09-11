@@ -335,6 +335,29 @@ public class ErmIdmsController {
     }
 
     /**
+     * Reopen an IN-FLIGHT document (SENT_TO_INTERN / RETURNED /
+     * INTERN_SUBMITTED / VERIFIED) to pull an admin's template change
+     * onto it, route it back to whoever must re-engage, and invalidate
+     * the signatures the change made stale. Sibling of
+     * {@link #resyncTemplate} — DRAFT still uses the in-place resync
+     * path; this endpoint is specifically for the backward-hop cases.
+     * See {@link DocumentInstanceService#reopenForTemplateUpdate} for
+     * the routing table, cautious signature-invalidation policy
+     * (with content-change over-approximation), and audit shape.
+     *
+     * <p>Rejects DRAFT (409 — use resync), FINALIZED (409 — legal PDF
+     * is binding), and every TERMINAL state (409). The guard fires
+     * BEFORE any mutation.</p>
+     */
+    @PostMapping("/{id}/reopen-template-update")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public DocumentInstanceDtos.ReopenTemplateResponse reopenTemplateUpdate(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User caller) {
+        return instanceService.reopenForTemplateUpdate(id, caller);
+    }
+
+    /**
      * Stream the finalized PDF as {@code application/pdf} with a proper
      * {@code Content-Disposition: attachment; filename=...} — the vault
      * stores the object under a {@code .bin} storage key and the PII-
