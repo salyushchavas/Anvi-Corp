@@ -119,6 +119,52 @@ export interface InstanceDetail {
   updatedAt: string;
   history: ReviewLogEntry[];
   actions: InstanceActions;
+  /**
+   * True when the admin has edited the source template since this
+   * draft was snapshotted. Meaningful ONLY on {@code status ===
+   * 'DRAFT'} — every non-draft state returns false regardless of
+   * what the underlying template has done, because sent / signed
+   * / finalized docs are frozen. The ERM draft view uses this to
+   * gate the "Update to latest template" banner (double-gate:
+   * {@code isTemplateStale && status === 'DRAFT'}).
+   */
+  isTemplateStale: boolean;
+}
+
+/**
+ * Compact summary of what happened to the ERM's already-entered
+ * field values during a re-sync — populated ONLY on the resync
+ * endpoint's response, not on general instance-detail reads.
+ *
+ * <p>The frontend uses this to surface an honest, specific
+ * confirmation: "Draft updated. N field(s) you'd filled were
+ * removed or changed in the updated template: <names>. Please
+ * review before sending." — so the ERM never discovers a
+ * silently-vanished value on a legal doc about to be sent.</p>
+ */
+export interface ResyncSummary {
+  /** Value rows kept (id + type matched) — also counts renamed. */
+  keptCount: number;
+  /** Value rows deleted because the field id is gone. */
+  droppedRemovedCount: number;
+  /** Value rows deleted because the field type changed. */
+  droppedTypeChangedCount: number;
+  /** Field ids added by the admin — the ERM will fill these. */
+  newFieldCount: number;
+  /** Human names of REMOVED fields whose values were dropped —
+   *  used verbatim in the notice so the ERM knows which of their
+   *  entries vanished. Not populated for type-changed drops
+   *  (those are discoverable in the refreshed form). May contain
+   *  null entries if a legacy value row had no fieldName snapshot;
+   *  filter defensively before rendering. */
+  droppedRemovedFieldNames: Array<string | null>;
+}
+
+/** POST /api/v1/erm/idms/{id}/resync-template — a wrapper around
+ *  the refreshed instance detail plus the resync summary. */
+export interface ResyncTemplateResponse {
+  instance: InstanceDetail;
+  summary: ResyncSummary;
 }
 
 /** Field schema entry (mirrors the Phase 1 studio + backend

@@ -170,20 +170,20 @@ class DocumentInstanceResyncTemplateIT {
         adminEditsTemplate();
         assertTrue(service.getDetail(inst.getId(), caller).isTemplateStale());
 
-        DocumentInstanceDtos.InstanceDetail after1 =
+        DocumentInstanceDtos.ResyncTemplateResponse after1 =
                 service.resyncTemplate(inst.getId(), caller);
-        assertFalse(after1.isTemplateStale(),
+        assertFalse(after1.instance().isTemplateStale(),
                 "resync should clear the staleness flag");
 
         // Snapshot every value row's key tuple after the first resync.
         Map<String, ValueTuple> tuplesAfter1 = tuplesFor(inst.getId());
 
         // Idempotent — running it a second time is a safe no-op.
-        DocumentInstanceDtos.InstanceDetail after2 =
+        DocumentInstanceDtos.ResyncTemplateResponse after2 =
                 service.resyncTemplate(inst.getId(), caller);
-        assertFalse(after2.isTemplateStale(),
+        assertFalse(after2.instance().isTemplateStale(),
                 "second resync should still be not stale (idempotent)");
-        assertEquals(after1.canonicalHtml(), after2.canonicalHtml(),
+        assertEquals(after1.instance().canonicalHtml(), after2.instance().canonicalHtml(),
                 "second resync must be byte-identical (no shape drift)");
 
         // Value rows unchanged tuple-for-tuple — proves the no-op path
@@ -335,13 +335,13 @@ class DocumentInstanceResyncTemplateIT {
                 entry(FIELD_NEW_ID,  "New",       "TEXT"));
         adminReplacesSchema(newSchema, "v2-html");
 
-        DocumentInstanceDtos.InstanceDetail after =
+        DocumentInstanceDtos.ResyncTemplateResponse after =
                 service.resyncTemplate(inst.getId(), caller);
 
         // Canonical HTML re-snapshotted. `canonicalHtml("v2-html")`
         // wraps the tag as "<p>v2-html-html</p>" via the local
         // helper — we assert the exact wrapped form.
-        assertEquals(canonicalHtml("v2-html"), after.canonicalHtml(),
+        assertEquals(canonicalHtml("v2-html"), after.instance().canonicalHtml(),
                 "canonicalHtml should be re-snapshotted from the new template");
 
         // KEEP — value row for FIELD_NAME_ID survives with its value.
@@ -455,6 +455,49 @@ class DocumentInstanceResyncTemplateIT {
     }
 
     // ── Audit + review-log trail ─────────────────────────────────────
+
+    /** The resync response carries a lastResyncSummary with counts and
+     *  the human-readable names of REMOVED fields whose values were
+     *  dropped — the frontend uses these verbatim in the "N field(s)
+     *  you'd filled were removed: <names>" notice so the ERM never
+     *  discovers a silently-vanished entry on a legal doc about to be
+     *  sent. This test covers the full-shape case (kept + removed +
+     *  type-changed + new + a dropped-name populated). */
+    @Test
+    void resync_response_carries_lastResyncSummary_with_dropped_names() throws Exception {
+        DocumentInstance inst = saveDraft(template.getUpdatedAt(),
+                schemaJsonFor(template));
+        stubValue(inst.getId(), FIELD_NAME_ID, "Alice",     null);
+        stubValue(inst.getId(), FIELD_ROLE_ID, "Engineer",  null);
+        stubValue(inst.getId(), FIELD_DATE_ID, "2026-01-01", null);
+
+        // KEEP name(TEXT), REMOVE role (its "Role" name is what the
+        // summary should surface), TYPE-CHANGE date(DATE→TEXT), ADD
+        // field-new. Signature is kept but has no value → unchanged.
+        String newSchema = schemaJson(
+                entry(FIELD_NAME_ID, "Name",      "TEXT"),
+                entry(FIELD_DATE_ID, "Start",     "TEXT"),
+                entry(FIELD_SIG_ID,  "Signature", "SIGNATURE"),
+                entry(FIELD_NEW_ID,  "New",       "TEXT"));
+        adminReplacesSchema(newSchema, "v2");
+
+        DocumentInstanceDtos.ResyncTemplateResponse after =
+                service.resyncTemplate(inst.getId(), caller);
+
+        DocumentInstanceDtos.ResyncSummary summary = after.summary();
+        assertEquals(1, summary.keptCount(),
+                "keptCount should count field-name (survivor)");
+        assertEquals(1, summary.droppedRemovedCount(),
+                "droppedRemovedCount should count field-role (id gone)");
+        assertEquals(1, summary.droppedTypeChangedCount(),
+                "droppedTypeChangedCount should count field-date (DATE→TEXT)");
+        assertEquals(1, summary.newFieldCount(),
+                "newFieldCount should count field-new");
+        assertTrue(summary.droppedRemovedFieldNames().contains("Role"),
+                "droppedRemovedFieldNames must carry the OLD-schema name 'Role' "
+                        + "so the frontend can name it verbatim in the notice — got: "
+                        + summary.droppedRemovedFieldNames());
+    }
 
     /** Re-sync writes a review-log row with action=RESYNC_TEMPLATE +
      *  a human-legible summary. The presence of the audit row is the

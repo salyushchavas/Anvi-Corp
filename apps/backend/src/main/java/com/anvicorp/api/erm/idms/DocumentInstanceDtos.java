@@ -180,6 +180,61 @@ public final class DocumentInstanceDtos {
             String revokeBlockedReason
     ) {}
 
+    // ── Draft re-sync to latest template ────────────────────────────
+
+    /**
+     * Response payload for {@code POST /api/v1/erm/idms/{id}/resync-template}.
+     *
+     * <p>Wraps the refreshed instance detail AND a compact summary of what
+     * happened to the ERM's already-entered field values during the re-
+     * apply pass. The summary is populated on this endpoint ONLY — the
+     * persistent {@link InstanceDetail} DTO carries no long-term "last
+     * resync" state (a resync is a one-shot admin-drift catch-up, not
+     * something the ERM re-visits between sessions), so putting the
+     * summary on a wrapper here keeps the general instance-detail shape
+     * unchanged for every other read path.</p>
+     *
+     * <p>The frontend uses {@code summary} to surface an honest, specific
+     * confirmation after a resync: "Draft updated. N field(s) you'd filled
+     * were removed or changed in the updated template: name1, name2.
+     * Please review before sending." — so the ERM never discovers a
+     * silently-vanished value on a legal doc about to be sent.</p>
+     */
+    public record ResyncTemplateResponse(
+            InstanceDetail instance,
+            ResyncSummary summary
+    ) {}
+
+    /**
+     * Per-resync counts + dropped-field names. Names are resolved from
+     * the OLD schema during the value-walk (before re-snapshot) so a
+     * removed field's user-facing label is still available for the
+     * notice — after re-snapshot, the id is gone from the current
+     * schema and the name would be unresolvable.
+     */
+    public record ResyncSummary(
+            /** Value rows kept (id + type matched) — also counts renamed. */
+            int keptCount,
+            /** Value rows deleted because the field id is gone from the
+             *  new schema. */
+            int droppedRemovedCount,
+            /** Value rows deleted because the field's type changed
+             *  (e.g. TEXT → SIGNATURE) and the payload wouldn't render. */
+            int droppedTypeChangedCount,
+            /** Field ids added by the admin — no existing value rows
+             *  affected; the ERM will fill these before Send. */
+            int newFieldCount,
+            /** Human-readable names of fields whose values were dropped
+             *  because the FIELD itself was removed. Used verbatim in the
+             *  frontend notice. Names for type-changed drops are intentionally
+             *  omitted — the field is still there, just with a different
+             *  type, so it's discoverable in the refreshed form.
+             *
+             *  <p>May contain nulls if a legacy value row had no field_name
+             *  snapshot — callers must filter defensively.</p> */
+            List<String> droppedRemovedFieldNames
+    ) {}
+
     // ── Create + supersede ───────────────────────────────────────────
 
     public record CreateInstanceRequest(

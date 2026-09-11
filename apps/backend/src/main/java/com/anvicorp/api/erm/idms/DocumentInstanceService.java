@@ -934,7 +934,7 @@ public class DocumentInstanceService {
      * scope is strictly template-shape refresh.
      */
     @Transactional
-    public DocumentInstanceDtos.InstanceDetail resyncTemplate(
+    public DocumentInstanceDtos.ResyncTemplateResponse resyncTemplate(
             UUID instanceId, User caller) {
         requireErmOrAdmin(caller);
         // GUARD FIRST — load with pessimistic row lock, reject any non-
@@ -984,9 +984,15 @@ public class DocumentInstanceService {
         // Categorise every existing value row against the NEW schema.
         // Buckets collected for the audit payload — keptFieldIds and
         // renamedFieldIds are useful evidence for the ERM report.
+        // droppedRemovedFieldNames is also captured HERE (during the
+        // walk, before re-snapshot) because after re-snapshot the
+        // removed field id no longer resolves to a name in the current
+        // schema. Prefer the OLD schema's name over the value row's
+        // fieldName snapshot (the schema is the authoritative label).
         List<String> keptFieldIds = new ArrayList<>();
         List<String> renamedFieldIds = new ArrayList<>();
         List<String> droppedRemovedFieldIds = new ArrayList<>();
+        List<String> droppedRemovedFieldNames = new ArrayList<>();
         List<String> droppedTypeChangedFieldIds = new ArrayList<>();
 
         List<DocumentInstanceFieldValue> existing =
@@ -994,9 +1000,18 @@ public class DocumentInstanceService {
         for (DocumentInstanceFieldValue v : existing) {
             FieldSchemaEntry newEntry = newById.get(v.getFieldId());
             if (newEntry == null) {
-                // R2: field REMOVED — drop the value row.
+                // R2: field REMOVED — drop the value row. Resolve the
+                // human-readable name from the OLD schema; fall back to
+                // the value row's snapshotted fieldName if the schema
+                // entry itself lacks a name.
+                FieldSchemaEntry oldEntryForName = oldById.get(v.getFieldId());
+                String name = oldEntryForName != null
+                        && oldEntryForName.name() != null
+                                ? oldEntryForName.name()
+                                : v.getFieldName();
                 valueRepo.delete(v);
                 droppedRemovedFieldIds.add(v.getFieldId());
+                droppedRemovedFieldNames.add(name);
                 continue;
             }
             FieldSchemaEntry oldEntry = oldById.get(v.getFieldId());
@@ -1077,7 +1092,15 @@ public class DocumentInstanceService {
                 droppedRemovedFieldIds.size(),
                 droppedTypeChangedFieldIds.size(),
                 newFieldIds.size(), renamedFieldIds.size());
-        return toDetail(instance, caller);
+        DocumentInstanceDtos.ResyncSummary responseSummary =
+                new DocumentInstanceDtos.ResyncSummary(
+                        keptFieldIds.size(),
+                        droppedRemovedFieldIds.size(),
+                        droppedTypeChangedFieldIds.size(),
+                        newFieldIds.size(),
+                        droppedRemovedFieldNames);
+        return new DocumentInstanceDtos.ResyncTemplateResponse(
+                toDetail(instance, caller), responseSummary);
     }
 
     // ── Queue / list ─────────────────────────────────────────────────

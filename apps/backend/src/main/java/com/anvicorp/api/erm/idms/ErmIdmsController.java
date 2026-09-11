@@ -328,7 +328,7 @@ public class ErmIdmsController {
      */
     @PostMapping("/{id}/resync-template")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
-    public DocumentInstanceDtos.InstanceDetail resyncTemplate(
+    public DocumentInstanceDtos.ResyncTemplateResponse resyncTemplate(
             @PathVariable UUID id,
             @AuthenticationPrincipal User caller) {
         return instanceService.resyncTemplate(id, caller);
