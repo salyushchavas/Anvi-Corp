@@ -221,7 +221,7 @@ export interface ReopenTemplateResponse {
 export interface FieldSchemaEntry {
   id: string;
   name: string;
-  type: 'text' | 'date' | 'signature' | 'content_block';
+  type: 'text' | 'date' | 'signature' | 'content_block' | 'salutation';
   assignee: 'ERM' | 'INTERN' | 'AUTO';
   required: boolean;
   defaultSource: string | null;
@@ -266,10 +266,22 @@ function normaliseFieldType(raw: unknown): FieldSchemaEntry['type'] {
     case 'date':          return 'date';
     case 'signature':     return 'signature';
     case 'content_block': return 'content_block';
+    case 'salutation':    return 'salutation';
     case 'text':          return 'text';
     default:              return 'text';
   }
 }
+
+/** The four allowed values for a {@code salutation}-type field.
+ *  Fixed universal list — same set every template uses. Kept as a
+ *  frontend constant (no schema change) per the survey's LIGHT PATH
+ *  ruling; the backend mirrors this exact set inside
+ *  {@code DocumentInstanceService.applyFieldValues} as a whitelist
+ *  so a crafted client can't slip an off-list value onto a legal
+ *  doc. Any change here MUST land in the backend set too — they
+ *  are contract-bound. */
+export const SALUTATIONS = ['Mr.', 'Ms.', 'Mx.', 'Dr.'] as const;
+export type Salutation = (typeof SALUTATIONS)[number];
 
 /** Normalise a raw stored assignee to the canonical uppercase form
  *  the {@link FieldSchemaEntry} type union expects. Unknown values

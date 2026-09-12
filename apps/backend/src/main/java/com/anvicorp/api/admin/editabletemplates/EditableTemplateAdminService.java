@@ -442,9 +442,10 @@ public class EditableTemplateAdminService {
                 throw new BadRequestException("Duplicate field name: " + f.name());
             }
             String type = f.type() == null ? "" : f.type().trim().toUpperCase();
-            if (!List.of("TEXT", "DATE", "SIGNATURE", "CONTENT_BLOCK").contains(type)) {
+            if (!List.of("TEXT", "DATE", "SIGNATURE", "CONTENT_BLOCK", "SALUTATION").contains(type)) {
                 throw new BadRequestException(
-                        "field.type must be one of text | date | signature | content_block");
+                        "field.type must be one of text | date | signature | "
+                                + "content_block | salutation");
             }
             String assignee = f.assignee() == null ? "" : f.assignee().trim().toUpperCase();
             if (!List.of("ERM", "INTERN", "AUTO").contains(assignee)) {

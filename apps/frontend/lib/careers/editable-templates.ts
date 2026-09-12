@@ -5,7 +5,19 @@
  * {@code EditableTemplateDtos}.
  */
 
-export type FieldType = 'text' | 'date' | 'signature' | 'content_block';
+export type FieldType =
+  | 'text'
+  | 'date'
+  | 'signature'
+  | 'content_block'
+  /** Fixed-choice honorific field — the ERM fills via a dropdown of
+   *  {Mr., Ms., Mx., Dr.} on the fill surface. Value stores as plain
+   *  text ({@link FieldValue#valueText} on the backend) and prints on
+   *  the PDF identically to a TEXT field. Backend
+   *  {@code applyFieldValues} enforces a whitelist so a crafted
+   *  client can't slip an off-list value onto a legal doc. See
+   *  {@code SALUTATIONS} in idms.ts for the canonical list. */
+  | 'salutation';
 export type FieldAssignee = 'ERM' | 'INTERN' | 'AUTO';
 
 /** Mirror of {@code EditableTemplateDtos.FieldEntry}. */
@@ -61,6 +73,7 @@ export const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'date', label: 'Date' },
   { value: 'signature', label: 'Signature' },
   { value: 'content_block', label: 'Content block' },
+  { value: 'salutation', label: 'Salutation' },
 ];
 
 export const ASSIGNEES: { value: FieldAssignee; label: string; tone: string }[] = [

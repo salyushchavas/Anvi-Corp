@@ -76,6 +76,13 @@ public class DocumentInstanceService {
 
     private static final String CATEGORY_INSTANCE_PDF = "EDITABLE_DOC_INSTANCE_PDF";
     private static final String CATEGORY_SIGNATURE = "SIGNATURE_IMAGE";
+    /** Whitelist for the {@code SALUTATION} field type — the ERM fill
+     *  UI is a fixed dropdown, but this backend check closes the
+     *  crafted-client gap (curl / Postman POSTing an off-list string).
+     *  Contract-bound with the frontend {@code SALUTATIONS} constant
+     *  in {@code apps/frontend/lib/careers/idms.ts} — the two sets
+     *  MUST stay in lockstep. */
+    private static final Set<String> ALLOWED_SALUTATIONS = Set.of("Mr.", "Ms.", "Mx.", "Dr.");
     private static final Duration SIGNATURE_URL_TTL = Duration.ofMinutes(15);
     private static final int SIGNATURE_MAX_BYTES = 500 * 1024; // 500KB
 
@@ -1881,6 +1888,19 @@ public class DocumentInstanceService {
             }
             requireFieldOwner(callerRole, f.assignee(), f.name());
             String value = e.getValue();
+            // Salutation whitelist (R1) — the frontend fill UI is a
+            // fixed dropdown, but a crafted client (curl / Postman)
+            // can POST arbitrary strings. On a legal document we
+            // reject any value not in the four canonical honorifics.
+            // Blank / null pass through — required-ness is handled
+            // by the completeness check that runs at send-time.
+            if ("SALUTATION".equals(type)
+                    && value != null && !value.isBlank()
+                    && !ALLOWED_SALUTATIONS.contains(value)) {
+                throw new BadRequestException(
+                        "Field \"" + f.name() + "\" (salutation) must be one of "
+                                + "Mr. / Ms. / Mx. / Dr. — received: " + value);
+            }
             DocumentInstanceFieldValue existing = valueRepo
                     .findByInstanceIdAndFieldId(instance.getId(), fieldId)
                     .orElse(null);
