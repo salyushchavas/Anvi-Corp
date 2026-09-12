@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { Calendar, CheckCircle2, CircleDashed, Info, Lock, PenLine } from 'lucide-react';
 import InlineSignatureCapture from '@/components/idms/InlineSignatureCapture';
-import type { FieldSchemaEntry, InstanceDetail } from '@/lib/careers/idms';
+import { SALUTATIONS, type FieldSchemaEntry, type InstanceDetail } from '@/lib/careers/idms';
 
 /**
  * Field panel that lives beside the live-preview canvas. Shows a guided
@@ -404,6 +404,19 @@ function FieldRow({
   const fieldTypeLower = (field.type ?? '').toLowerCase();
   const isDate = fieldTypeLower === 'date';
   const isBlock = fieldTypeLower === 'content_block';
+  const isSalutation = fieldTypeLower === 'salutation';
+  // Salutation fallback (R2): if the stored value isn't blank AND
+  // isn't one of the four allowed strings, render a plain text input
+  // instead of an empty dropdown — so a legacy or hand-edited row
+  // stays visible + editable. Never falls back on blank (a required
+  // unfilled salutation should stay in dropdown mode so the ERM
+  // picks from the fixed set). SALUTATIONS is the frontend-authored
+  // constant; the backend mirrors the same set inside
+  // applyFieldValues so a saved value here is contract-bound to
+  // pass the server-side whitelist.
+  const salutationOutOfList = isSalutation
+      && rawValue !== ''
+      && !(SALUTATIONS as readonly string[]).includes(rawValue);
   // <input type="date"> ONLY renders its value if it's ISO YYYY-MM-DD;
   // a legacy stored value like "08/15/2026" would show as blank in the
   // picker (which then looks to the user like the field is broken /
@@ -485,7 +498,38 @@ function FieldRow({
               className="w-full rounded-md border border-slate-200 py-1.5 pl-7 pr-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
             />
           </div>
+        ) : isSalutation && !salutationOutOfList ? (
+          // Salutation dropdown — fixed 4-option picker. onChange
+          // fires the same onTextChange that TEXT/DATE use, so the
+          // value flows through the identical valueText path (no
+          // renderer or storage change needed). The empty "Select…"
+          // option lets a required unfilled salutation start out
+          // in an obvious unselected state instead of defaulting
+          // to Mr. Backend whitelists this same 4-set in
+          // applyFieldValues so a crafted client can't POST an
+          // off-list value.
+          <select
+            id={`fld-${field.id}`}
+            ref={(el) => registerRef(el)}
+            value={value}
+            onChange={(e) => onTextChange(field.id, e.target.value)}
+            onFocus={handleFocus}
+            disabled={disabled}
+            className="mt-2 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
+          >
+            <option value="">Select…</option>
+            {SALUTATIONS.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
         ) : (
+          // Text input — covers the default text-type branch AND
+          // the salutation-out-of-list fallback (R2). Rendering a
+          // text input for an out-of-list stored value keeps the
+          // legacy value visible + editable instead of blanking
+          // it into an empty dropdown; adding an "Other…" option
+          // to the dropdown would reopen the free-typing surface
+          // we deliberately closed.
           <input
             id={`fld-${field.id}`}
             ref={(el) => registerRef(el)}
