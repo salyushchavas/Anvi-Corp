@@ -194,7 +194,23 @@ export interface IdmsFillSurfaceConfig {
   panelFooter?(detail: InstanceDetail): ReactNode;
 
   containerMaxWidthClass?: string;   // default 'max-w-6xl'
-  previewMaxHeightClass?: string;    // default 'max-h-[calc(100vh-220px)]'
+  /** Height cap for the preview pane's INNER scroll container.
+   *
+   *  <p>Default splits by breakpoint:</p>
+   *  <ul>
+   *    <li>Mobile (< lg): {@code max-h-[calc(100vh-220px)]} — preview
+   *        is above the field list in a single-scroll stacked layout;
+   *        the cap keeps preview from dominating the page.</li>
+   *    <li>{@code lg+}: {@code lg:max-h-none lg:h-full} — the whole
+   *        fill surface is bounded to {@code <main>}'s inner height
+   *        and the two panes (preview + fields) scroll independently.
+   *        {@code h-full} makes the preview fill the row exactly.</li>
+   *  </ul>
+   *
+   *  <p>Callers rarely override this — the default is the layout
+   *  the fill surface was designed for.</p>
+   */
+  previewMaxHeightClass?: string;
 }
 
 export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceConfig }) {
@@ -202,7 +218,7 @@ export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceCon
     role, signerName, resource, canEdit: canEditFn,
     fullPageOverride, header, primaryAction, extraBanners, stalenessBanner, panelFooter,
     containerMaxWidthClass = 'max-w-6xl',
-    previewMaxHeightClass = 'max-h-[calc(100vh-220px)]',
+    previewMaxHeightClass = 'max-h-[calc(100vh-220px)] lg:max-h-none lg:h-full',
   } = config;
 
   const [detail, setDetail] = useState<InstanceDetail | null>(null);
@@ -494,8 +510,24 @@ export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceCon
   const showPrimary = canEdit || primaryAction.showWhenCantEdit === true;
 
   return (
-    <div className={`mx-auto ${containerMaxWidthClass} space-y-4`}>
-      <header className="flex flex-wrap items-start justify-between gap-4">
+    // Independent-scroll layout at lg+ so the field list can scroll
+    // without dragging the document preview off-screen. Below lg
+    // the page stays a natural single-scroll stack (preview on top,
+    // field list below) — small screens can't afford two tiny scroll
+    // areas. Chain: <main>'s h-screen + overflow-y-auto sets the
+    // container; lg:h-full pins this wrapper to main's inner height;
+    // header + banners are lg:shrink-0; the grid becomes lg:flex-1
+    // lg:min-h-0 and each grid cell owns its own overflow. The
+    // min-h-0's are load-bearing — without them, flex children refuse
+    // to shrink and the internal scroll never engages (the exact bug
+    // this fix targets). space-y-4 continues to space children on
+    // both breakpoints — Tailwind's space-y-* uses per-child margin,
+    // which is flex-col-friendly.
+    <div
+      className={`mx-auto ${containerMaxWidthClass} space-y-4 `
+          + `lg:flex lg:h-full lg:flex-col`}
+    >
+      <header className="flex flex-wrap items-start justify-between gap-4 lg:shrink-0">
         <div>
           <Link
             href={header.backLink.href}
@@ -541,35 +573,43 @@ export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceCon
       </header>
 
       {canEdit && completeness.blockingReason && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 lg:shrink-0">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <p>{completeness.blockingReason}</p>
         </div>
       )}
 
-      {extraBanners?.(detail, canEdit)}
+      {/* extraBanners + stalenessBanner sit in a shrink-0 wrapper so
+          they don't get squeezed by the flex-1 grid below when they
+          themselves are non-empty. When both slots return null the
+          wrapper is invisible (no height, no margin from space-y). */}
+      <div className="lg:shrink-0 empty:hidden">
+        {extraBanners?.(detail, canEdit)}
+        {/* Update-to-latest-template banner — double-gated on
+            isTemplateStale AND status === 'DRAFT' AND ERM role so the
+            button never appears on frozen states (defense in depth
+            even though the backend rejects non-draft resync with 409).
+            Callers that don't supply stalenessBanner (e.g. intern's
+            fill config) get no render at all. */}
+        {role === 'ERM'
+            && detail.status === 'DRAFT'
+            && detail.isTemplateStale
+            && stalenessBanner?.(detail, (response) => {
+              setDetail(response.instance);
+            })}
+      </div>
 
-      {/* Update-to-latest-template banner — double-gated on
-          isTemplateStale AND status === 'DRAFT' AND ERM role so the
-          button never appears on frozen states (defense in depth
-          even though the backend rejects non-draft resync with 409).
-          Callers that don't supply stalenessBanner (e.g. intern's
-          fill config) get no render at all. */}
-      {role === 'ERM'
-          && detail.status === 'DRAFT'
-          && detail.isTemplateStale
-          && stalenessBanner?.(detail, (response) => {
-            setDetail(response.instance);
-          })}
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px] lg:flex-1 lg:min-h-0">
         {/* Preview column — border+rounded+shadow chrome only. The
             DocumentPreviewFrame inside InstanceRenderer supplies the
             slate canvas + white page-shadow so the doc renders exactly
             like the admin studio. Overflow lives on the InstanceRenderer
             wrapper so the shared p-6 canvas stays flush inside the
-            chrome (no double padding, no colour fight). */}
-        <section className="overflow-hidden rounded-lg border border-slate-200 shadow-sm">
+            chrome (no double padding, no colour fight). At lg+ the
+            section is bounded by the grid row height (h-full min-h-0)
+            so the inner overflow-y-auto scrolls WITHIN the pane
+            instead of pushing the page. */}
+        <section className="overflow-hidden rounded-lg border border-slate-200 shadow-sm lg:h-full lg:min-h-0">
           <div className={`${previewMaxHeightClass} overflow-y-auto`}>
             <InstanceRenderer
               detail={detail}
@@ -585,7 +625,13 @@ export default function IdmsFillSurface({ config }: { config: IdmsFillSurfaceCon
           </div>
         </section>
 
-        <aside className="space-y-4">
+        {/* Field-form pane — at lg+ owns its own vertical scroll so
+            long field lists don't drag the whole page. min-h-0 is
+            the load-bearing bit (a flex/grid child refuses to shrink
+            below content size without it). pb-6 gives the last field
+            breathing room from the scroll edge; pr-1 prevents the
+            scrollbar from overlapping the field ring focus outline. */}
+        <aside className="space-y-4 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1 lg:pb-6">
           {canEdit && (
             <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <FieldForm
