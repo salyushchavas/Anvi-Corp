@@ -10,6 +10,7 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import PageHeader from '@/components/ui/PageHeader';
 import ReasonDialog from '@/components/ReasonDialog';
 import AssignAdditionalDocumentModal from '@/components/erm/documents/AssignAdditionalDocumentModal';
+import UploadDirectDocumentModal from '@/components/erm/documents/UploadDirectDocumentModal';
 import type {
   DocumentPacketDetail,
   TaskSummary,
@@ -165,13 +166,24 @@ export default function DocumentPacketDetailPage() {
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
+          {/* Direct-onboarded interns had no self-service upload step
+              on the platform, so a missed doc is added by the ERM
+              uploading the finished file directly — attached as
+              ACCEPTED, no intern nudge. Regular / platform interns
+              keep the standard "Assign additional document → send
+              to intern" flow (they upload + acknowledge themselves).
+              Server-side, the direct-upload endpoint enforces the
+              same tos_version check as a hard 403 guard. */}
           <button
             type="button"
             onClick={() => setAddOpen(true)}
             disabled={p.status === 'CANCELLED'}
             className="inline-flex items-center gap-1 rounded-md border border-brand-300 bg-white px-3 py-1.5 text-xs font-medium text-brand-800 hover:bg-brand-50 disabled:opacity-50"
           >
-            <Plus className="h-3 w-3" /> Assign additional document
+            <Plus className="h-3 w-3" />
+            {p.internDirectOnboarded
+              ? 'Upload document directly'
+              : 'Assign additional document'}
           </button>
           <button
             type="button"
@@ -214,17 +226,38 @@ export default function DocumentPacketDetailPage() {
           variant="danger"
         />
 
-        <AssignAdditionalDocumentModal
-          open={addOpen}
-          packetId={p.packetId}
-          internName={p.internName}
-          existingTasks={p.tasks}
-          onClose={() => setAddOpen(false)}
-          onAssigned={() => {
-            setAddOpen(false);
-            void load();
-          }}
-        />
+        {/* Modal-branch pairs with the button-label branch above:
+            direct hires → UploadDirectDocumentModal (single-doc
+            multipart POST to /direct-upload-document, attaches as
+            ACCEPTED, no intern step); regular hires → the existing
+            send-to-intern flow, unchanged. The two modals share
+            {open, packetId, existingTasks, onClose, onAssigned}
+            props — the reload plumbing is identical. */}
+        {p.internDirectOnboarded ? (
+          <UploadDirectDocumentModal
+            open={addOpen}
+            packetId={p.packetId}
+            internName={p.internName}
+            existingTasks={p.tasks}
+            onClose={() => setAddOpen(false)}
+            onUploaded={() => {
+              setAddOpen(false);
+              void load();
+            }}
+          />
+        ) : (
+          <AssignAdditionalDocumentModal
+            open={addOpen}
+            packetId={p.packetId}
+            internName={p.internName}
+            existingTasks={p.tasks}
+            onClose={() => setAddOpen(false)}
+            onAssigned={() => {
+              setAddOpen(false);
+              void load();
+            }}
+          />
+        )}
       </DashboardLayout>
     </ProtectedRoute>
   );

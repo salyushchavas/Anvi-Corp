@@ -24,6 +24,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -61,6 +62,13 @@ public class DocumentPacketService {
     private final InternLifecycleRepository lifecycleRepository;
     private final UserRepository userRepository;
     private final AuditLogRepository auditLogRepository;
+    /** Bytes → Document row plumbing. Used only by {@code
+     *  directUploadDocument} today; every other path here writes Document
+     *  rows indirectly (via {@code DirectOnboardingService} at
+     *  create-time or {@code InternDocumentService} on intern uploads),
+     *  so this is the first constructor field for the vault in this
+     *  service. */
+    private final com.anvicorp.api.intern.DocumentVaultService documentVaultService;
     private final InternLifecycleService internLifecycleService;
     private final com.anvicorp.api.intern.InternActivationJob internActivationJob;
     private final ApplicationEventPublisher eventPublisher;
@@ -492,6 +500,149 @@ public class DocumentPacketService {
                     e.getMessage());
         }
         return toPacketDetail(pk);
+    }
+
+    /**
+     * ERM "upload a missed document DIRECTLY" — for direct-onboarded
+     * interns ONLY. The ERM picks a finished file and it's attached as
+     * an ACCEPTED task on the intern's existing packet: no intern
+     * step, no email nudge, no packet-status change (the new task is
+     * born in a terminal-good state).
+     *
+     * <h2>Guardrails (all four are non-negotiable)</h2>
+     * <ul>
+     *   <li><b>G1 — tos_version hard guard:</b> the intern MUST have
+     *       {@code user.tos_version = "EMPLOYER_REGISTERED"} (stamped
+     *       exclusively by {@code DirectOnboardingService}). REGULAR
+     *       platform hires 403 — they MUST upload + acknowledge
+     *       themselves through the existing {@code /add-documents}
+     *       send-to-intern flow.</li>
+     *   <li><b>G2 — no intern nudge, no packet-status change:</b>
+     *       does NOT publish {@code DocumentPacketAssignedEvent}
+     *       (that fires the intern email) and does NOT flip the
+     *       packet to IN_PROGRESS (the new task is born ACCEPTED so
+     *       the packet stays COMPLETED — no lifecycle regression).</li>
+     *   <li><b>G3 — write BOTH rows ACCEPTED:</b> the intern gallery
+     *       is DocumentTask-driven, so a Document row alone is
+     *       INVISIBLE. Must persist BOTH the Document (via
+     *       {@link com.anvicorp.api.intern.DocumentVaultService#saveDocument})
+     *       AND a companion DocumentTask on the intern's existing
+     *       packet with {@code status="ACCEPTED"},
+     *       {@code uploadedFileId=<Document.id>}, {@code submittedAt},
+     *       {@code reviewedAt}, {@code reviewedById} all stamped — else
+     *       the file lands nowhere on the intern side.</li>
+     *   <li><b>G4 — duplicate guard:</b> a task with the same
+     *       {@code documentKey} on this packet 409s (mirrors the
+     *       {@code UNIQUE(packet_id, document_key)} constraint the
+     *       DB enforces).</li>
+     * </ul>
+     *
+     * <p>Missing packet → 409 (not 404) — for a direct hire the
+     * packet is created in {@code DirectOnboardingService} Step 9 as
+     * part of the same transaction that stamps the user, so a
+     * missing packet indicates a broken direct-onboard elsewhere
+     * that should be surfaced, not papered over by auto-creating a
+     * new one here.</p>
+     */
+    @Transactional
+    public DocumentPacketDetail directUploadDocument(
+            UUID packetId, String documentKey, MultipartFile file,
+            User caller) {
+        requireErm(caller);
+        if (file == null || file.isEmpty()) {
+            throw new BadRequestException(
+                    "file part required (missing or empty)");
+        }
+        // Missing packet → 409 per the design (a direct hire without a
+        // packet indicates a partial-failure onboarding; auto-creating
+        // one here would paper over the real fault).
+        DocumentPacket pk = packetRepository.findById(packetId).orElseThrow(
+                () -> new ConflictException(
+                        "No document packet with id " + packetId
+                                + " — the intern's direct-onboarding likely "
+                                + "did not complete."));
+        InternLifecycle lc = lifecycleRepository.findById(pk.getInternLifecycleId())
+                .orElseThrow(() -> new ConflictException(
+                        "Packet's InternLifecycle is missing: "
+                                + pk.getInternLifecycleId()));
+        User intern = userRepository.findById(lc.getUserId())
+                .orElseThrow(() -> new ConflictException(
+                        "Packet's intern user is missing: " + lc.getUserId()));
+        // G1 — HARD guard on tos_version. Frontend hides the button
+        // for regular hires, but a crafted request must be rejected
+        // too (else the platform-lifecycle upload+ack step is bypassed
+        // for someone who's supposed to do it themselves).
+        if (!"EMPLOYER_REGISTERED".equals(intern.getTosVersion())) {
+            throw new ForbiddenException(
+                    "Direct upload is only for direct-onboarded interns; "
+                            + "assign & send for platform interns.");
+        }
+        OnboardingDocumentTemplate template = requireTemplate(documentKey);
+        // G4 — duplicate guard mirrors the DB UNIQUE(packet_id,
+        // document_key). Reject a doc_key already on this packet with
+        // a clean 409 (same shape addDocumentsToPacket uses).
+        Optional<DocumentTask> existing =
+                taskRepository.findByPacketIdAndDocumentKey(pk.getId(), documentKey.trim());
+        if (existing.isPresent()) {
+            throw new ConflictException(
+                    "\"" + template.getTitle() + "\" is already on this "
+                            + "packet (status=" + existing.get().getStatus()
+                            + "). Use the review flow to update it.");
+        }
+        // G3 — persist BOTH rows. Document via vault (bytes → S3 or
+        // local); DocumentTask row is what makes the file appear as
+        // ACCEPTED on the intern gallery.
+        Instant now = Instant.now();
+        Document stored = documentVaultService.saveDocument(
+                intern.getId(),
+                file.getOriginalFilename(),
+                file.getContentType(),
+                readBytes(file),
+                template.getCategory(),
+                template.getSensitivity(),
+                caller.getId());
+        DocumentTask task = DocumentTask.builder()
+                .packetId(pk.getId())
+                .documentKey(documentKey.trim())
+                .status("ACCEPTED")
+                .uploadedFileId(stored.getId())
+                .submittedAt(now)
+                .reviewedAt(now)
+                .reviewedById(caller.getId())
+                .reviewComments("ERM direct upload — added after onboarding.")
+                .version(1)
+                .build();
+        DocumentTask saved = taskRepository.save(task);
+        // Audit — task-scoped row parallels DOCUMENT_TASK_ACCEPT /
+        // DOCUMENT_TASK_REJECT convention (the closest peer actions).
+        writeAudit(saved.getId(), "DOCUMENT_TASK_DIRECT_UPLOAD",
+                caller.getId(), intern.getId(),
+                /*before*/ null,
+                Map.of(
+                        "documentKey", documentKey.trim(),
+                        "documentId", stored.getId(),
+                        "fileName", file.getOriginalFilename() == null
+                                ? "" : file.getOriginalFilename(),
+                        "packetId", pk.getId()));
+        // G2 — DELIBERATELY NO event, NO packet-status mutation.
+        // publishEvent(DocumentPacketAssignedEvent...) would email
+        // a direct intern to complete a doc that's already done, and
+        // flipping packet to IN_PROGRESS would regress the lifecycle
+        // gate. The task is born ACCEPTED; the packet stays where it
+        // was (COMPLETED or otherwise).
+        return toPacketDetail(pk);
+    }
+
+    /** MultipartFile → bytes with a friendlier 400 on IO failure than
+     *  the raw IOException. Mirrors the helper of the same name in
+     *  {@code DirectOnboardingService}. */
+    private static byte[] readBytes(MultipartFile file) {
+        try {
+            return file.getBytes();
+        } catch (java.io.IOException e) {
+            throw new BadRequestException("Could not read file bytes for "
+                    + file.getOriginalFilename() + ": " + e.getMessage());
+        }
     }
 
     // ── Cancel + waive (SUPER_ADMIN) ─────────────────────────────────────
@@ -1071,6 +1222,20 @@ public class DocumentPacketService {
                     t.getUploadedFileId(), fileName, t.getTaskInstructions()));
             if (!Set.of("ACCEPTED", "WAIVED").contains(t.getStatus())) readyToClose = false;
         }
+        // Direct-onboarding marker — the ERM's Direct Onboarding wizard
+        // (DirectOnboardingService.directOnboard) stamps a distinct ToS
+        // literal on the User row so the audit trail shows the hire
+        // path. It is the SINGLE unambiguous flag distinguishing a
+        // direct hire from a platform self-registered intern (no
+        // origin / hireType / source enum exists). Drives the
+        // frontend Packet screen's action-button branch: direct hires
+        // get "Upload document directly" (ERM attaches finished file
+        // as ACCEPTED, no intern step); regular hires keep the
+        // existing "Assign additional document → send to intern" flow.
+        // Backend {@code directUploadDocument} enforces the same check
+        // as a HARD guard so a crafted request can't bypass the UI.
+        boolean internDirectOnboarded = intern != null
+                && "EMPLOYER_REGISTERED".equals(intern.getTosVersion());
         return new DocumentPacketDetail(
                 pk.getId(), pk.getInternLifecycleId(),
                 lc != null ? lc.getUserId() : null,
@@ -1081,7 +1246,8 @@ public class DocumentPacketService {
                 pk.getAssignedAt(), pk.getFirstSubmissionAt(),
                 pk.getAllSubmittedAt(), pk.getCompletedAt(),
                 pk.getCancelledAt(), pk.getCancellationReason(),
-                tasks, readyToClose);
+                tasks, readyToClose,
+                internDirectOnboarded);
     }
 
     private DocumentTaskDetail toTaskDetail(DocumentTask t) {
