@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -84,6 +85,33 @@ public class DocumentPacketController {
             @RequestBody DocumentDtos.AddDocumentsRequest req,
             @AuthenticationPrincipal User caller) {
         return service.addDocumentsToPacket(id, req, caller);
+    }
+
+    /**
+     * ERM "upload a missed document DIRECTLY" — for direct-onboarded
+     * interns ONLY (user.tos_version = {@code EMPLOYER_REGISTERED}).
+     * The ERM picks a finished file and it's attached as an ACCEPTED
+     * task on the intern's existing packet — no intern step, no
+     * nudge, no packet-status change. Regular / platform interns
+     * MUST go through the normal {@code /add-documents} flow so
+     * they upload + acknowledge themselves; this endpoint 403s them
+     * even if a crafted request reaches it.
+     *
+     * <p>One document per call. The hard guards (tos_version 403,
+     * duplicate 409, missing-packet 409, both-rows-ACCEPTED, no
+     * event / no status change) live in
+     * {@link DocumentPacketService#directUploadDocument}.</p>
+     */
+    @PostMapping(
+            value = "/document-packets/{id}/direct-upload-document",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public DocumentDtos.DocumentPacketDetail directUploadDocument(
+            @PathVariable UUID id,
+            @RequestParam("documentKey") String documentKey,
+            @RequestParam("file") MultipartFile file,
+            @AuthenticationPrincipal User caller) {
+        return service.directUploadDocument(id, documentKey, file, caller);
     }
 
     @PostMapping("/document-packets/{id}/cancel")

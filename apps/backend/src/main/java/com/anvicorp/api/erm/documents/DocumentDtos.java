@@ -110,7 +110,21 @@ public final class DocumentDtos {
             Instant cancelledAt,
             String cancellationReason,
             List<TaskSummary> tasks,
-            boolean readyToClose
+            boolean readyToClose,
+            /**
+             * True iff the intern was created via the ERM's Direct
+             * Onboarding wizard (user.tos_version = "EMPLOYER_REGISTERED",
+             * stamped exclusively by DirectOnboardingService) rather than
+             * self-registering through the platform. Drives the frontend
+             * Document Packets action: direct interns see "Upload
+             * document directly" (ERM attaches a finished file as ACCEPTED,
+             * no intern step); regular interns see "Assign additional
+             * document" (send-to-intern, they upload + acknowledge).
+             * Server-side, the direct-upload endpoint independently
+             * enforces the same {@code tos_version} check as a HARD guard
+             * (a crafted client can't bypass the UI branch).
+             */
+            boolean internDirectOnboarded
     ) {}
 
     // ── Review queue + task detail ───────────────────────────────────────

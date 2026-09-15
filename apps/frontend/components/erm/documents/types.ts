@@ -85,6 +85,16 @@ export type DocumentPacketDetail = {
   cancellationReason: string | null;
   tasks: TaskSummary[];
   readyToClose: boolean;
+  /** True iff the intern was created via the ERM Direct Onboarding
+   *  wizard (backend keys this off {@code user.tos_version =
+   *  "EMPLOYER_REGISTERED"} — the only writer is
+   *  DirectOnboardingService). Drives the Document Packets action:
+   *  direct hires get "Upload document directly" (ERM attaches a
+   *  finished file as ACCEPTED, no intern step); regular hires
+   *  keep "Assign additional document → send to intern". The
+   *  backend endpoint also 403s a mis-routed request as a hard
+   *  guard, so this flag is UX-only. */
+  internDirectOnboarded: boolean;
 };
 
 export type DocumentTaskRow = {
