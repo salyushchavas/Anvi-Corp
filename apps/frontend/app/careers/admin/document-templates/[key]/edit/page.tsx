@@ -499,6 +499,14 @@ function PageContent() {
       setFields(savedFields);
       savedFieldsKeyRef.current = JSON.stringify(savedFields);
       toast.success('Template saved.');
+      // Post-save auto-refresh (part of the refresh model): if the
+      // faithful-PDF tab is currently open, re-render so the admin
+      // sees the real result of the save they just made. Fire-and-
+      // forget — the pane's own loading/error surfaces handle the
+      // rest; save() itself doesn't wait on it.
+      if (viewMode === 'pdf') {
+        void refreshPdfPreview();
+      }
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
       const msg = ax.response?.data?.error ?? (e instanceof Error ? e.message : 'Save failed');
@@ -514,7 +522,104 @@ function PageContent() {
     }
   }
 
-  // ── Preview PDF (iterate on layout without a real intern run) ────
+  // ── Faithful in-studio PDF preview ───────────────────────────────
+  //
+  // Second-render path alongside docx-preview: hits the EXISTING
+  // /preview-pdf endpoint (unchanged) which routes through the SAME
+  // DocumentInstancePdfRenderer the finalize path uses, and embeds
+  // the returned bytes in an <iframe> beside the editing canvas via
+  // a tab switcher. Kills the "looks fine in studio, messy in PDF"
+  // surprise — the admin sees byte-representative output while they
+  // author.
+  //
+  // Refresh model — on-demand + post-save; NOT per-keystroke. The
+  // renderer is ~1-3s per doc + a single-thread executor with a 45s
+  // cap (see DocumentInstancePdfRenderer), so live re-render would
+  // lag visibly and starve concurrent authoring. The tab switch
+  // auto-refreshes ONCE on first open; every subsequent refresh is
+  // an explicit button click, plus one implicit refresh after a
+  // successful Save so the admin immediately sees the real result of
+  // what they just committed.
+  type StudioViewMode = 'canvas' | 'pdf';
+  const [viewMode, setViewMode] = useState<StudioViewMode>('canvas');
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfErr, setPdfErr] = useState<string | null>(null);
+  const [pdfHasEverLoaded, setPdfHasEverLoaded] = useState(false);
+  // Latest-request marker: if the admin clicks Refresh twice quickly,
+  // only the LATER response wins. Race-safety without a full cancel
+  // (openhtmltopdf calls that started can't be aborted server-side
+  // anyway — but we can discard their result client-side).
+  const pdfReqIdRef = useRef(0);
+
+  const refreshPdfPreview = useCallback(async () => {
+    if (!template) return;
+    // Never-saved templates have no canonical HTML — the backend
+    // BadRequests them. Surface the friendly hint instead of firing
+    // a doomed request.
+    if (!template.canonicalHtml || !template.canonicalHtml.trim()) {
+      setPdfErr('Save the template first to see the executed PDF preview.');
+      setPdfLoading(false);
+      return;
+    }
+    const reqId = ++pdfReqIdRef.current;
+    setPdfLoading(true);
+    setPdfErr(null);
+    try {
+      const res = await api.post(
+        `/api/v1/admin/editable-templates/by-key/${template.key}/preview-pdf`,
+        {},
+        { responseType: 'blob' },
+      );
+      // Late-response guard — if the admin fired another refresh
+      // while this one was in-flight, discard.
+      if (reqId !== pdfReqIdRef.current) return;
+      // Revoke the prior URL before replacing so memory doesn't
+      // accumulate on repeated refreshes (many minutes of
+      // authoring × frequent Refresh could otherwise pile up).
+      setPdfBlobUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(res.data as Blob);
+      });
+      setPdfHasEverLoaded(true);
+    } catch (e) {
+      if (reqId !== pdfReqIdRef.current) return;
+      const ax = e as { response?: { data?: { error?: string }; status?: number }; message?: string };
+      // The renderer's 45s executor cap surfaces as a 500-shaped
+      // failure; a template with no fields / bad HTML surfaces as
+      // a 400 with a message. Either way, a clean sentence — never
+      // a broken iframe.
+      setPdfErr(ax.response?.data?.error
+          ?? ax.message
+          ?? "Couldn't render preview — check the template.");
+    } finally {
+      if (reqId === pdfReqIdRef.current) setPdfLoading(false);
+    }
+  }, [template]);
+
+  // Auto-refresh the FIRST time the admin switches to the PDF tab,
+  // so they don't have to hit Refresh separately to see anything.
+  // Subsequent tab-switches show whatever's cached — explicit
+  // Refresh is the only way to re-render after that (plus the
+  // post-save hook below).
+  useEffect(() => {
+    if (viewMode === 'pdf' && !pdfHasEverLoaded && !pdfLoading) {
+      void refreshPdfPreview();
+    }
+  }, [viewMode, pdfHasEverLoaded, pdfLoading, refreshPdfPreview]);
+
+  // Cleanup any lingering blob URL on unmount — otherwise the
+  // browser holds the PDF bytes alive after navigating away.
+  useEffect(() => {
+    return () => {
+      if (pdfBlobUrl) URL.revokeObjectURL(pdfBlobUrl);
+    };
+    // Intentionally captures the initial pdfBlobUrl closure and re-
+    // captures on every change — the cleanup fires on the PRIOR
+    // effect's captured value.
+  }, [pdfBlobUrl]);
+
+  // ── Preview PDF in a new tab (legacy iterate-layout button) ──────
   const [previewingPdf, setPreviewingPdf] = useState(false);
   async function previewPdf() {
     if (!template) return;
@@ -643,59 +748,110 @@ function PageContent() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
         {/* ── Canvas ─────────────────────────────────────────────── */}
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-2 text-xs text-slate-500">
-            <div className="inline-flex items-center gap-3">
-              {previewMode === 'edit' ? (
-                <>
-                  <Edit3 className="h-3.5 w-3.5" />
-                  Edit mode — select any text to make it a field.
-                </>
-              ) : (
-                <>
-                  <Eye className="h-3.5 w-3.5" />
-                  Preview mode — {previewMode === 'erm' ? 'ERM view' : 'Intern view'}. Read-only mock.
-                </>
-              )}
-            </div>
-            <OwnershipLegend />
+          {/* Tab strip — switches between the editing canvas
+              (docx-preview + selection wrapping) and the faithful
+              PDF preview (real DocumentInstancePdfRenderer output
+              via the existing /preview-pdf endpoint). The docx-
+              preview canvas is the AUTHORING surface; the PDF
+              preview shows exactly what a finalized offer would
+              look like, killing the "looks fine in studio, messy
+              in PDF" surprise. */}
+          <div className="flex items-center gap-1 border-b border-slate-100 px-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setViewMode('canvas')}
+              className={`inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium ${
+                viewMode === 'canvas'
+                  ? 'border-brand-500 text-brand-800'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+              Editing canvas
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('pdf')}
+              className={`inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium ${
+                viewMode === 'pdf'
+                  ? 'border-brand-500 text-brand-800'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+              title="Renders through the SAME pipeline as a finalized offer — margins, fonts, header/footer, list positioning, everything."
+            >
+              <Eye className="h-3.5 w-3.5" />
+              Faithful PDF preview
+            </button>
           </div>
 
-          <div className="relative">
-            {/* Shared preview frame — DocumentPreviewFrame ships the
-                slate canvas + white page-shadow + base .doc-field styles
-                so admin studio, ERM fill, and intern fill/sign render
-                the document identically. Admin-only field tints
-                (ownership colors, preview lock/input outlines, flash)
-                still live in the local <style jsx global> below. */}
-            <DocumentPreviewFrame
-              ref={canvasRef}
-              className="min-h-[400px] max-h-[calc(100vh-260px)] overflow-y-auto"
+          {viewMode === 'canvas' && (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-2 text-xs text-slate-500">
+                <div className="inline-flex items-center gap-3">
+                  {previewMode === 'edit' ? (
+                    <>
+                      <Edit3 className="h-3.5 w-3.5" />
+                      Edit mode — select any text to make it a field.
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="h-3.5 w-3.5" />
+                      Preview mode — {previewMode === 'erm' ? 'ERM view' : 'Intern view'}. Read-only mock.
+                    </>
+                  )}
+                </div>
+                <OwnershipLegend />
+              </div>
+
+              <div className="relative">
+                {/* Shared preview frame — DocumentPreviewFrame ships the
+                    slate canvas + white page-shadow + base .doc-field styles
+                    so admin studio, ERM fill, and intern fill/sign render
+                    the document identically. Admin-only field tints
+                    (ownership colors, preview lock/input outlines, flash)
+                    still live in the local <style jsx global> below. */}
+                <DocumentPreviewFrame
+                  ref={canvasRef}
+                  className="min-h-[400px] max-h-[calc(100vh-260px)] overflow-y-auto"
+                />
+                {!rendered && !renderErr && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/70">
+                    <div className="inline-flex items-center gap-2 text-sm text-slate-500">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Rendering document…
+                    </div>
+                  </div>
+                )}
+                {renderErr && (
+                  <div className="absolute inset-0 flex items-center justify-center p-6">
+                    <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                      {renderErr}
+                    </div>
+                  </div>
+                )}
+                {previewMode === 'edit' && selectionPresent && selectionRect && (
+                  <SelectionToolbar
+                    top={selectionRect.top}
+                    left={selectionRect.left}
+                    fields={fields}
+                    onNewField={() => wrapSelection(null)}
+                    onLinkExisting={(id) => wrapSelection(id)}
+                  />
+                )}
+              </div>
+            </>
+          )}
+
+          {viewMode === 'pdf' && (
+            <FaithfulPdfPreviewPane
+              blobUrl={pdfBlobUrl}
+              loading={pdfLoading}
+              error={pdfErr}
+              hasCanonical={Boolean(template.canonicalHtml && template.canonicalHtml.trim())}
+              onRefresh={refreshPdfPreview}
+              savingBlocked={saving}
             />
-            {!rendered && !renderErr && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/70">
-                <div className="inline-flex items-center gap-2 text-sm text-slate-500">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Rendering document…
-                </div>
-              </div>
-            )}
-            {renderErr && (
-              <div className="absolute inset-0 flex items-center justify-center p-6">
-                <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-                  {renderErr}
-                </div>
-              </div>
-            )}
-            {previewMode === 'edit' && selectionPresent && selectionRect && (
-              <SelectionToolbar
-                top={selectionRect.top}
-                left={selectionRect.left}
-                fields={fields}
-                onNewField={() => wrapSelection(null)}
-                onLinkExisting={(id) => wrapSelection(id)}
-              />
-            )}
-          </div>
+          )}
         </section>
 
         {/* ── Sidebar — field list + inspector ──────────────────── */}
@@ -878,6 +1034,136 @@ function OwnershipLegend() {
         </span>
       ))}
     </div>
+  );
+}
+
+// ── Faithful PDF preview pane ─────────────────────────────────────────
+//
+// Renders the same canvas viewport space as the docx-preview editing
+// surface (tab-switched via viewMode). Embeds the /preview-pdf blob
+// in an <iframe> so the admin sees the ACTUAL executed output while
+// they author — margins, fonts, header/footer positioning, list
+// bullets, page breaks, everything. Handles: (a) never-saved
+// template — hint to save first, no doomed request; (b) loading
+// spinner during render (~1-3s); (c) clean error message on renderer
+// failure or timeout; (d) an explicit Refresh button on the toolbar
+// so re-renders are on-demand (never per-keystroke). Post-save
+// auto-refresh is wired in the parent PageContent save() handler.
+
+function FaithfulPdfPreviewPane({
+  blobUrl, loading, error, hasCanonical, onRefresh, savingBlocked,
+}: {
+  blobUrl: string | null;
+  loading: boolean;
+  error: string | null;
+  hasCanonical: boolean;
+  onRefresh: () => void;
+  savingBlocked: boolean;
+}) {
+  const disabled = loading || savingBlocked || !hasCanonical;
+  return (
+    <>
+      {/* Toolbar row — mirrors the canvas-mode toolbar shape so the
+          tab-switch feels like a modeswitch rather than a
+          replacement. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-2 text-xs text-slate-500">
+        <div className="inline-flex items-center gap-1.5">
+          <Eye className="h-3.5 w-3.5" />
+          <span>
+            This is how the finalized PDF will look — rendered through
+            the same pipeline as a real offer.
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={disabled}
+          title={hasCanonical
+            ? 'Re-render the PDF with the currently-saved template state'
+            : 'Save the template first to preview'}
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Loader2 className={`h-3 w-3 ${loading ? 'animate-spin' : 'hidden'}`} />
+          {loading ? 'Rendering…' : 'Refresh preview'}
+        </button>
+      </div>
+
+      <div className="relative min-h-[400px] max-h-[calc(100vh-260px)] overflow-hidden bg-slate-50">
+        {!hasCanonical && (
+          <div className="absolute inset-0 flex items-center justify-center p-6">
+            <div className="max-w-md rounded-md border border-slate-200 bg-white p-4 text-center text-sm text-slate-600">
+              <p className="font-medium text-slate-800">
+                Save the template to preview
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                The faithful PDF preview renders the saved canonical
+                HTML through the real finalize pipeline. Place your
+                field anchors on the editing canvas, then Save — the
+                preview appears here.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {hasCanonical && !blobUrl && !loading && !error && (
+          <div className="absolute inset-0 flex items-center justify-center p-6">
+            <div className="text-center text-sm text-slate-500">
+              <p>Click <strong>Refresh preview</strong> to render the PDF.</p>
+              <p className="mt-1 text-xs text-slate-400">
+                Typically 1–3 seconds. On-demand only — the studio
+                does not re-render on every keystroke.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {loading && !blobUrl && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/70">
+            <div className="inline-flex items-center gap-2 text-sm text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Rendering PDF…
+            </div>
+          </div>
+        )}
+
+        {error && !loading && (
+          <div className="absolute inset-0 flex items-center justify-center p-6">
+            <div className="max-w-md rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+              <p className="font-medium">Couldn&apos;t render preview</p>
+              <p className="mt-1 text-xs">{error}</p>
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={loading}
+                className="mt-2 inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2 py-0.5 text-[11px] font-medium text-red-800 hover:bg-red-50 disabled:opacity-60"
+              >
+                Try again
+              </button>
+            </div>
+          </div>
+        )}
+
+        {blobUrl && (
+          // Overlay a subtle refreshing bar when a re-render is in
+          // flight, but keep the existing PDF visible underneath so
+          // the admin has something to look at during the 1-3s
+          // render window.
+          <>
+            {loading && (
+              <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-2 bg-white/85 py-1 text-[11px] text-slate-600">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Re-rendering with the latest save…
+              </div>
+            )}
+            <iframe
+              src={blobUrl}
+              title="Faithful PDF preview"
+              className="h-[calc(100vh-260px)] min-h-[400px] w-full border-0 bg-white"
+            />
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
