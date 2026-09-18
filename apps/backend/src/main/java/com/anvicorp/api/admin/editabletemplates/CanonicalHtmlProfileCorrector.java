@@ -96,6 +96,44 @@ import java.util.regex.Pattern;
 @Slf4j
 public class CanonicalHtmlProfileCorrector {
 
+    /**
+     * Marker the studio's formatting toolbar stamps on any element whose
+     * layout an admin has DELIBERATELY overridden.
+     *
+     * <p>This corrector re-asserts the source DOCX's profile on EVERY
+     * save, which is right for repairing what docx-preview inferred
+     * badly at import — but it cannot otherwise tell an inferred value
+     * from an admin's considered override, so it silently reverted
+     * every page-margin and list-indent edit the toolbar made. The
+     * marker is that missing signal: a marked element keeps the
+     * properties the toolbar controls, and import-repair continues
+     * everywhere the admin has not overridden.</p>
+     *
+     * <p>The skip is deliberately PROPERTY-SCOPED, not whole-element:
+     * a marked section still gets its authoritative {@code width} /
+     * {@code min-height} re-asserted (the toolbar never writes those),
+     * only its {@code padding-*} is left alone. The corrector keeps
+     * doing every job the toolbar doesn't do.</p>
+     *
+     * <p>Unlike the studio's visual {@code studio-fmt-active} outline —
+     * stripped before save — this attribute is PERSISTED, because the
+     * corrector must still see it on the NEXT save. It therefore has to
+     * survive {@code CanonicalHtmlSanitizer}, which safelists it
+     * alongside the {@code data-field-id} family.</p>
+     *
+     * <p>Re-importing a source DOCX clears the canonical HTML entirely,
+     * so the fresh render carries no markers and the profile is applied
+     * in full — the admin re-applies any overrides against the new
+     * document, which is the correct behaviour.</p>
+     */
+    static final String ADMIN_FORMAT_ATTR = "data-fmt-admin";
+
+    /** True when the admin deliberately set this element's layout via
+     *  the studio formatting toolbar. */
+    private static boolean isAdminFormatted(Element el) {
+        return el != null && el.hasAttr(ADMIN_FORMAT_ATTR);
+    }
+
     private final ObjectMapper objectMapper;
 
     /**
@@ -207,6 +245,10 @@ public class CanonicalHtmlProfileCorrector {
      *  it's the authoritative source. */
     private void applyParagraphStyleToElement(
             Element target, FormattingProfile.ParagraphProfile p) {
+        // Both properties this writes — text-align and margin-left —
+        // are toolbar-controlled, so a deliberate admin override owns
+        // the element outright.
+        if (isAdminFormatted(target)) return;
         String existing = target.attr("style");
         String textAlign = p.alignment();
         // DOCX's "both" == CSS "justify"; leave other values (left/
@@ -279,10 +321,20 @@ public class CanonicalHtmlProfileCorrector {
         String existing = first.attr("style");
         StringBuilder next = new StringBuilder();
 
+        // Property-scoped skip: when the admin has set page margins via
+        // the studio toolbar, this section's padding-* IS the intended
+        // page geometry and preparePageGeometry must scrape it rather
+        // than the imported profile's. width / min-height are NOT
+        // toolbar-controlled, so they are still re-asserted below —
+        // the corrector only steps back from what the admin owns.
+        boolean adminMargins = isAdminFormatted(first);
+
         // Preserve existing declarations we're not overriding.
-        String cleaned = stripInlineProperty(existing,
-                "padding-top", "padding-right", "padding-bottom", "padding-left",
-                "width", "min-height");
+        String cleaned = adminMargins
+                ? stripInlineProperty(existing, "width", "min-height")
+                : stripInlineProperty(existing,
+                        "padding-top", "padding-right", "padding-bottom", "padding-left",
+                        "width", "min-height");
         if (!cleaned.isBlank()) {
             next.append(cleaned.trim());
             if (!next.toString().endsWith(";")) next.append(";");
@@ -293,7 +345,7 @@ public class CanonicalHtmlProfileCorrector {
         if (page.heightIn() != null) {
             next.append("min-height:").append(formatInches(page.heightIn().inches())).append(";");
         }
-        if (page.margins() != null) {
+        if (page.margins() != null && !adminMargins) {
             FormattingProfile.Margins m = page.margins();
             if (m.top() != null) {
                 next.append("padding-top:").append(formatInches(m.top().inches())).append(";");
@@ -419,6 +471,11 @@ public class CanonicalHtmlProfileCorrector {
             Map<String, FormattingProfile.ListDefinition> lists) {
         if (lists == null || lists.isEmpty()) return;
         for (Element item : listItems(doc)) {
+            // Every property this rewrites — margin-left, text-indent and
+            // the padding-left that expresses the same offset — is
+            // toolbar-controlled, so a marked list paragraph keeps the
+            // admin's indent instead of being reset to the source level's.
+            if (isAdminFormatted(item)) continue;
             FormattingProfile.LevelDefinition level = resolveLevel(item, lists);
             if (level == null) continue;
             FormattingProfile.Length left = level.indentLeft();

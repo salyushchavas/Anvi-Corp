@@ -32,7 +32,26 @@ import api from '@/lib/careers/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { DocumentPreviewFrame } from '@/components/idms/DocumentPreviewFrame';
+import { FormatToolbar } from '@/components/idms/FormatToolbar';
 import { applyInheritedTypography } from '@/components/idms/InstanceRenderer';
+import {
+  EMPTY_FORMAT_TARGET,
+  PARAGRAPH_OWNED_PROPS,
+  RUN_PROPS,
+  clearFormatHighlight,
+  clearFormatting,
+  clearPageMargins,
+  firstPageSection,
+  resolveFormatTarget,
+  setFormatHighlight,
+  setInlineDeclarations,
+  setParagraphFontSize,
+  stripStoredZoom,
+  syncAdminMarker,
+  writePageMargins,
+  type FormatTarget,
+  type PageMargins,
+} from '@/lib/careers/studio-format';
 import {
   ASSIGNEES,
   AUTO_BINDINGS,
@@ -102,6 +121,20 @@ function PageContent() {
   const [selectionRect, setSelectionRect] = useState<{ top: number; left: number } | null>(null);
   const [selectionPresent, setSelectionPresent] = useState(false);
 
+  // Formatting-toolbar state. `fmtTarget` is the element trio the
+  // toolbar's controls act on; `fmtTargetRef` mirrors it so the
+  // selection listener can compare against the current target without
+  // re-subscribing on every change. `fmtVersion` is bumped after every
+  // write so the toolbar re-reads the live DOM (the DOM, not React
+  // state, is the source of truth — it is literally what gets saved).
+  // `formatDirty` tracks unsaved formatting edits: they live only in the
+  // canvas DOM until Save, so the faithful PDF preview (which renders
+  // the SERVER's canonical HTML) would otherwise show stale output.
+  const [fmtTarget, setFmtTarget] = useState<FormatTarget>(EMPTY_FORMAT_TARGET);
+  const fmtTargetRef = useRef<FormatTarget>(EMPTY_FORMAT_TARGET);
+  const [fmtVersion, setFmtVersion] = useState(0);
+  const [formatDirty, setFormatDirty] = useState(false);
+
   // Field state — the source of truth once the studio is up.
   const [fields, setFields] = useState<FieldEntry[]>([]);
   const [inspecting, setInspecting] = useState<string | null>(null);
@@ -121,8 +154,14 @@ function PageContent() {
   const [dirty, setDirty] = useState(false);
   useEffect(() => {
     const currentKey = JSON.stringify(fields);
-    setDirty(savedFieldsKeyRef.current !== '' && currentKey !== savedFieldsKeyRef.current);
-  }, [fields]);
+    const fieldsDirty =
+      savedFieldsKeyRef.current !== '' && currentKey !== savedFieldsKeyRef.current;
+    // Formatting edits mutate the canvas DOM directly rather than the
+    // fields array, so they need their own dirty signal — without it an
+    // admin could restyle a document and navigate away with the
+    // beforeunload guard silent.
+    setDirty(fieldsDirty || formatDirty);
+  }, [fields, formatDirty]);
   useEffect(() => {
     function beforeUnload(e: BeforeUnloadEvent) {
       if (dirty) {
@@ -318,6 +357,14 @@ function PageContent() {
     if (!canvas || !rendered) return;
     applyOwnershipTints(canvas, fields);
     applyPreviewMode(canvas, previewMode, fields);
+    // applyPreviewMode -> resetPreviewClasses clears the formatting
+    // toolbar's active outline unconditionally, so ANY field edit used
+    // to erase it while the toolbar stayed bound to that paragraph —
+    // the outline and the thing it points at silently disagreed.
+    // Repaint it to match whatever is still bound.
+    if (previewMode === 'edit') {
+      setFormatHighlight(canvas, fmtTargetRef.current.paragraph);
+    }
   }, [fields, previewMode, rendered]);
 
   // ── Wrap the current selection into a doc-field span ─────────────
@@ -498,14 +545,23 @@ function PageContent() {
       const savedFields = parseFieldSchema(res.data.fieldSchemaJson);
       setFields(savedFields);
       savedFieldsKeyRef.current = JSON.stringify(savedFields);
+      setFormatDirty(false);
       toast.success('Template saved.');
       // Post-save auto-refresh (part of the refresh model): if the
       // faithful-PDF tab is currently open, re-render so the admin
       // sees the real result of the save they just made. Fire-and-
       // forget — the pane's own loading/error surfaces handle the
       // rest; save() itself doesn't wait on it.
+      //
+      // When the tab ISN'T open, mark the cached blob stale instead.
+      // Formatting edits are made on the canvas tab, so without this
+      // the admin would restyle, save, switch to the PDF tab and be
+      // shown the PREVIOUS render — the exact stale-preview trap the
+      // faithful preview exists to avoid.
       if (viewMode === 'pdf') {
         void refreshPdfPreview();
+      } else {
+        setPdfStale(true);
       }
     } catch (e) {
       const ax = e as { response?: { data?: { error?: string } } };
@@ -519,6 +575,13 @@ function PageContent() {
         applyPreviewMode(canvas, previewMode, fields);
       }
       applyOwnershipTints(canvas, fields);
+      // resetPreviewClasses() stripped the formatting highlight above
+      // (that is exactly why it's stripped — so it can't reach the
+      // saved HTML). Repaint it so the admin doesn't lose track of
+      // which paragraph the toolbar is bound to.
+      if (previewMode === 'edit') {
+        setFormatHighlight(canvas, fmtTargetRef.current.paragraph);
+      }
     }
   }
 
@@ -546,6 +609,10 @@ function PageContent() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfErr, setPdfErr] = useState<string | null>(null);
   const [pdfHasEverLoaded, setPdfHasEverLoaded] = useState(false);
+  // Set when a save lands while the PDF tab is closed — the cached blob
+  // no longer reflects the saved template, so the next switch to the
+  // tab must re-render instead of showing the stale one.
+  const [pdfStale, setPdfStale] = useState(false);
   // Latest-request marker: if the admin clicks Refresh twice quickly,
   // only the LATER response wins. Race-safety without a full cancel
   // (openhtmltopdf calls that started can't be aborted server-side
@@ -582,6 +649,7 @@ function PageContent() {
         return URL.createObjectURL(res.data as Blob);
       });
       setPdfHasEverLoaded(true);
+      setPdfStale(false);
     } catch (e) {
       if (reqId !== pdfReqIdRef.current) return;
       const ax = e as { response?: { data?: { error?: string }; status?: number }; message?: string };
@@ -603,10 +671,10 @@ function PageContent() {
   // Refresh is the only way to re-render after that (plus the
   // post-save hook below).
   useEffect(() => {
-    if (viewMode === 'pdf' && !pdfHasEverLoaded && !pdfLoading) {
+    if (viewMode === 'pdf' && (!pdfHasEverLoaded || pdfStale) && !pdfLoading) {
       void refreshPdfPreview();
     }
-  }, [viewMode, pdfHasEverLoaded, pdfLoading, refreshPdfPreview]);
+  }, [viewMode, pdfHasEverLoaded, pdfStale, pdfLoading, refreshPdfPreview]);
 
   // Cleanup any lingering blob URL on unmount — otherwise the
   // browser holds the PDF bytes alive after navigating away.
@@ -618,6 +686,152 @@ function PageContent() {
     // captures on every change — the cleanup fires on the PRIOR
     // effect's captured value.
   }, [pdfBlobUrl]);
+
+  // ── Formatting toolbar — resolve, highlight, apply ───────────────
+  //
+  // FORMATTING ONLY. The canvas never becomes contentEditable and no
+  // control touches text content; each one writes a single inline CSS
+  // declaration onto the element resolved from the admin's selection.
+  //
+  // Coexistence with the field-wrap floater: this path READS the
+  // selection but never consumes it (no removeAllRanges, no
+  // preventDefault on the canvas), so the existing "Make field" floater
+  // keeps firing on non-collapsed selections exactly as before. The two
+  // surfaces also occupy different pixels — the floater is absolutely
+  // positioned against the selection rect, the format strip is a fixed
+  // row above the canvas.
+  const applyTarget = useCallback((next: FormatTarget) => {
+    const prev = fmtTargetRef.current;
+    if (
+      prev.paragraph === next.paragraph &&
+      prev.run === next.run &&
+      prev.section === next.section
+    ) {
+      return; // Same target — skip the re-render (selectionchange is chatty).
+    }
+    fmtTargetRef.current = next;
+    setFormatHighlight(canvasRef.current, next.paragraph);
+    setFmtTarget(next);
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !rendered || viewMode !== 'canvas' || previewMode !== 'edit') {
+      return;
+    }
+    function fromSelection() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const next = resolveFormatTarget(
+        sel.getRangeAt(0).startContainer,
+        canvasRef.current,
+      );
+      if (next.paragraph) applyTarget(next);
+    }
+    function fromClick(e: MouseEvent) {
+      // elementFromPoint semantics via the event target — lets an admin
+      // target an EMPTY paragraph (no text to select), which is exactly
+      // the case where line-spacing repair matters most.
+      const next = resolveFormatTarget(e.target as Node, canvasRef.current);
+      if (next.paragraph) applyTarget(next);
+    }
+    document.addEventListener('selectionchange', fromSelection);
+    canvas.addEventListener('click', fromClick);
+    return () => {
+      document.removeEventListener('selectionchange', fromSelection);
+      canvas.removeEventListener('click', fromClick);
+    };
+  }, [rendered, viewMode, previewMode, applyTarget]);
+
+  // Drop the target (and its highlight) whenever the canvas is no
+  // longer the active, editable surface — a stale highlight pointing at
+  // a detached node would otherwise survive a re-render.
+  useEffect(() => {
+    if (viewMode === 'canvas' && previewMode === 'edit' && rendered) return;
+    fmtTargetRef.current = EMPTY_FORMAT_TARGET;
+    clearFormatHighlight(canvasRef.current);
+    setFmtTarget(EMPTY_FORMAT_TARGET);
+  }, [viewMode, previewMode, rendered]);
+
+  // Every write funnels through here so the bump + dirty flag can never
+  // be forgotten by an individual control.
+  const afterFormatWrite = useCallback(() => {
+    setFmtVersion((v) => v + 1);
+    setFormatDirty(true);
+  }, []);
+
+  const handleSetParagraph = useCallback(
+    (prop: string, value: string | null) => {
+      const target = fmtTargetRef.current;
+      if (!target.paragraph) return;
+      setInlineDeclarations(target.paragraph, { [prop]: value });
+      // Stamp the deliberate-override marker so the backend's profile
+      // corrector stops re-asserting the imported DOCX values over this
+      // paragraph on save. Synced (not blindly stamped) so clearing the
+      // last override also releases the element.
+      syncAdminMarker(target.paragraph, PARAGRAPH_OWNED_PROPS);
+      afterFormatWrite();
+    },
+    [afterFormatWrite],
+  );
+
+  const handleSetFontSize = useCallback(
+    (value: string | null, wholeParagraph: boolean) => {
+      const target = fmtTargetRef.current;
+      if (wholeParagraph) {
+        // Paragraph-wide: the value must also land on each descendant
+        // run, because docx-preview's own inline run sizes would
+        // otherwise mask a declaration on the <p>.
+        setParagraphFontSize(target.paragraph, value);
+      } else if (target.run) {
+        setInlineDeclarations(target.run, { 'font-size': value });
+        syncAdminMarker(target.run, RUN_PROPS);
+      } else {
+        return;
+      }
+      afterFormatWrite();
+    },
+    [afterFormatWrite],
+  );
+
+  const handleSetPageMargins = useCallback(
+    (margins: PageMargins) => {
+      // writePageMargins refuses any set that wouldn't survive the
+      // renderer's SIMPLE_LENGTH scrape, so a rejected write leaves the
+      // document untouched rather than half-applied.
+      if (!writePageMargins(canvasRef.current, margins)) {
+        toast.error('Margins must be a number plus in / cm / mm / pt / px.');
+        return;
+      }
+      afterFormatWrite();
+    },
+    [afterFormatWrite],
+  );
+
+  const handleClearPageMargins = useCallback(() => {
+    clearPageMargins(canvasRef.current);
+    afterFormatWrite();
+  }, [afterFormatWrite]);
+
+  const handleResetFormatting = useCallback(() => {
+    const target = fmtTargetRef.current;
+    if (!target.paragraph) return;
+    clearFormatting(target);
+    afterFormatWrite();
+  }, [afterFormatWrite]);
+
+  // While the margins popover is open the highlight moves to the page
+  // section it actually edits (the FIRST one — that's what
+  // preparePageGeometry scrapes), so the admin can see the scope of the
+  // change is document-wide, not the paragraph they last clicked.
+  const handleSectionFocus = useCallback((focused: boolean) => {
+    const canvas = canvasRef.current;
+    if (focused) {
+      setFormatHighlight(canvas, firstPageSection(canvas), 'section');
+    } else {
+      setFormatHighlight(canvas, fmtTargetRef.current.paragraph);
+    }
+  }, []);
 
   // ── Preview PDF in a new tab (legacy iterate-layout button) ──────
   const [previewingPdf, setPreviewingPdf] = useState(false);
@@ -803,6 +1017,24 @@ function PageContent() {
                 <OwnershipLegend />
               </div>
 
+              {/* Formatting strip — a fixed row, deliberately NOT a
+                  floating popover: the "Make field" floater already
+                  anchors to the selection rect, so a second
+                  selection-anchored surface would collide with it.
+                  Formatting only; the canvas stays non-editable text. */}
+              <FormatToolbar
+                target={fmtTarget}
+                canvas={canvasRef.current}
+                version={fmtVersion}
+                disabled={previewMode !== 'edit' || !rendered}
+                onSetParagraph={handleSetParagraph}
+                onSetFontSize={handleSetFontSize}
+                onSetPageMargins={handleSetPageMargins}
+                onClearPageMargins={handleClearPageMargins}
+                onReset={handleResetFormatting}
+                onSectionFocus={handleSectionFocus}
+              />
+
               <div className="relative">
                 {/* Shared preview frame — DocumentPreviewFrame ships the
                     slate canvas + white page-shadow + base .doc-field styles
@@ -850,6 +1082,7 @@ function PageContent() {
               hasCanonical={Boolean(template.canonicalHtml && template.canonicalHtml.trim())}
               onRefresh={refreshPdfPreview}
               savingBlocked={saving}
+              unsavedFormatting={formatDirty}
             />
           )}
         </section>
@@ -904,6 +1137,38 @@ function PageContent() {
         }
         .doc-field--preview-input {
           outline: 1px dashed rgba(37, 99, 235, 0.65);
+        }
+
+        /* Formatting-toolbar active target. Dashed + brand-tinted so it
+           reads as "this is what the toolbar will restyle" and is
+           visually distinct from the solid-blue .doc-field--flash and
+           the filled ownership tints. Purely visual — stripped by
+           clearFormatHighlight() before every save. */
+        .studio-fmt-active {
+          outline: 2px dashed var(--ds-brand-ring, rgb(42, 140, 219));
+          outline-offset: 2px;
+          background: rgba(42, 140, 219, 0.06);
+        }
+        /* A whole page section is too large to outline legibly — badge
+           the corner instead so the admin sees that a page-margin edit
+           is document-wide, not paragraph-scoped. */
+        .studio-fmt-active--section {
+          position: relative;
+          background: transparent;
+        }
+        .studio-fmt-active--section::before {
+          content: 'Page margins';
+          position: absolute;
+          top: 0;
+          left: 0;
+          transform: translateY(-100%);
+          background: var(--ds-brand-ring, rgb(42, 140, 219));
+          color: #fff;
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.02em;
+          padding: 2px 6px;
+          border-radius: 3px 3px 0 0;
         }
       `}</style>
     </div>
@@ -1052,6 +1317,7 @@ function OwnershipLegend() {
 
 function FaithfulPdfPreviewPane({
   blobUrl, loading, error, hasCanonical, onRefresh, savingBlocked,
+  unsavedFormatting,
 }: {
   blobUrl: string | null;
   loading: boolean;
@@ -1059,10 +1325,27 @@ function FaithfulPdfPreviewPane({
   hasCanonical: boolean;
   onRefresh: () => void;
   savingBlocked: boolean;
+  /** True when the canvas holds formatting edits that haven't been
+   *  saved. This pane renders the SERVER's canonical HTML, so those
+   *  edits are genuinely absent from what's shown — say so rather than
+   *  let the admin read a stale render as a faithful one. */
+  unsavedFormatting: boolean;
 }) {
   const disabled = loading || savingBlocked || !hasCanonical;
   return (
     <>
+      {unsavedFormatting && (
+        <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <p>
+            <span className="font-medium">
+              Unsaved formatting changes aren&apos;t in this preview.
+            </span>{' '}
+            This pane renders the saved template. Hit Save to see your
+            spacing / alignment / margin edits in the executed PDF.
+          </p>
+        </div>
+      )}
       {/* Toolbar row — mirrors the canvas-mode toolbar shape so the
           tab-switch feels like a modeswitch rather than a
           replacement. */}
@@ -1705,6 +1988,21 @@ function resetPreviewClasses(canvas: HTMLElement | null) {
   canvas.querySelectorAll(`.${DOC_FIELD_CLASS}`).forEach((el) => {
     el.classList.remove('doc-field--preview-locked', 'doc-field--preview-input');
   });
+  // The formatting toolbar's active-target outline is a studio-only
+  // affordance. save() calls this immediately before reading
+  // canvas.innerHTML, so stripping it here is what guarantees the
+  // marker can never reach the persisted canonical HTML — and from
+  // there the intern's rendered document and the executed PDF.
+  //
+  // NOTE this strips only the VISUAL outline class. The formatting
+  // toolbar's data-fmt-admin override marker is deliberately NOT
+  // touched: it MUST persist so the backend profile corrector can tell
+  // a deliberate admin override from an imported value on every
+  // subsequent save.
+  clearFormatHighlight(canvas);
+  // Viewport-derived zoom that DocumentPreviewFrame writes onto the
+  // page wrapper — junk that has no business in shared canonical HTML.
+  stripStoredZoom(canvas);
 }
 
 function applyPreviewMode(

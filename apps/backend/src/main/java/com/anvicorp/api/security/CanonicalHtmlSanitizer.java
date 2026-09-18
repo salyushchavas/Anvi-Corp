@@ -111,6 +111,18 @@ public final class CanonicalHtmlSanitizer {
             // post-clean pass below via scrubStyleAttribute, matching
             // the treatment given to <style> element content.
             .addAttributes(":all", "class", "style")
+            // The studio formatting toolbar's deliberate-override marker.
+            // Unlike the visual studio-fmt-active outline (stripped
+            // client-side before save), this one MUST persist: it is the
+            // only signal CanonicalHtmlProfileCorrector has that an
+            // element's layout is an admin's considered choice rather
+            // than something docx-preview inferred, and the corrector
+            // re-reads it on every subsequent save. Without it here the
+            // marker is stripped on the first save and page-margin /
+            // list-indent edits silently revert to the imported profile.
+            // Carried on :all because it lands on <p> and <section>, not
+            // just <span> like the data-field-* family above.
+            .addAttributes(":all", "data-fmt-admin")
             .addAttributes("p", "align")
             .addAttributes("td", "colspan", "rowspan", "align", "valign", "width")
             .addAttributes("th", "colspan", "rowspan", "align", "valign", "width")
