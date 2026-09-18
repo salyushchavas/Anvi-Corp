@@ -256,8 +256,14 @@ public final class CanonicalHtmlSanitizer {
     }
 
     /** Replace every dangerous CSS token with an inert comment so the
-     *  payload is broken while the surrounding declarations still parse. */
-    static String scrubCss(String css) {
+     *  payload is broken while the surrounding declarations still parse.
+     *
+     *  <p>Public so {@code DocumentInstancePdfRenderer} can apply the
+     *  same filter to the document stylesheet it promotes into the
+     *  rendered {@code <head>} — one definition of "dangerous CSS"
+     *  rather than a second copy of the pattern drifting apart from
+     *  this one.</p> */
+    public static String scrubCss(String css) {
         if (css == null || css.isEmpty()) return css;
         return DANGEROUS_CSS.matcher(css).replaceAll("/*stripped*/");
     }

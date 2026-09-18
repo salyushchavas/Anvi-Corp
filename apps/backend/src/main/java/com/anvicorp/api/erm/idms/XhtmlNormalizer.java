@@ -3,6 +3,7 @@ package com.anvicorp.api.erm.idms;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Entities;
+import org.jsoup.select.Elements;
 
 /**
  * IDMS Phase 2 — HTML → XHTML normaliser.
@@ -79,6 +80,29 @@ public final class XhtmlNormalizer {
                     .escapeMode(Entities.EscapeMode.xhtml)
                     .prettyPrint(false)
                     .charset("UTF-8");
+            // Jsoup's full-document parse HOISTS a <style> that appears
+            // before any body content up into <head> — and we return only
+            // body().html(), so it was silently dropped.
+            //
+            // That is exactly where docx-preview puts it. renderAsync()
+            // defaults its styleContainer to the body container, so the
+            // stylesheet carrying the source DOCX's style-based typography
+            // (styles.xml -> CSS class rules: the base font-family,
+            // font-size and paragraph spacing of essentially every Word
+            // document) is appended into the canvas AHEAD of the document
+            // body. Dropping it here meant those values never reached the
+            // stored canonical HTML at all, and the executed PDF fell back
+            // to the shell's own Times/12pt defaults.
+            //
+            // Move any hoisted <style> back to the front of the body, in
+            // its original order, so it survives into canonical HTML.
+            // DocumentInstancePdfRenderer then lifts it into the REAL
+            // <head> at render time — the only place openhtmltopdf will
+            // honour it.
+            Elements headStyles = doc.head().select("style");
+            for (int i = headStyles.size() - 1; i >= 0; i--) {
+                doc.body().prependChild(headStyles.get(i));
+            }
             // Jsoup wraps the input in <html><head/><body/></html>; the
             // caller only wants the body inner HTML back so it can be
             // dropped into an existing XHTML shell.

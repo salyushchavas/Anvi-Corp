@@ -252,14 +252,36 @@ public class DocumentInstancePdfRenderer {
         final String pageMarginLeft;
         final boolean hasHeader;
         final boolean hasFooter;
+        /**
+         * The source document's OWN stylesheet, lifted out of the body.
+         *
+         * <p>docx-preview encodes style-based typography — the
+         * {@code styles.xml} rules that carry the base font-family,
+         * font-size and paragraph spacing of essentially every Word
+         * document — as CSS CLASS RULES in a {@code <style>} element it
+         * appends into the render container, i.e. into the body. Only
+         * DIRECT formatting becomes inline style.</p>
+         *
+         * <p>openhtmltopdf parses {@code <style>} only in {@code <head>}.
+         * A body {@code <style>} is not applied at all AND its CSS text
+         * is rendered as visible body content — so a template's own fonts
+         * silently collapsed to the shell's Times/12pt fallback while the
+         * stylesheet source printed itself at the top of the page. This
+         * field carries that CSS so {@link #wrapInHtmlDoc} can emit it in
+         * the real {@code <head>}, AFTER the shell's defaults, where the
+         * document's rules win.</p>
+         */
+        final String documentCss;
         PreparedDoc(String bodyHtml, String pageSize, String pageMargin,
-                    String pageMarginLeft, boolean hasHeader, boolean hasFooter) {
+                    String pageMarginLeft, boolean hasHeader, boolean hasFooter,
+                    String documentCss) {
             this.bodyHtml = bodyHtml;
             this.pageSize = pageSize;
             this.pageMargin = pageMargin;
             this.pageMarginLeft = pageMarginLeft;
             this.hasHeader = hasHeader;
             this.hasFooter = hasFooter;
+            this.documentCss = documentCss;
         }
     }
 
@@ -300,7 +322,7 @@ public class DocumentInstancePdfRenderer {
     PreparedDoc preparePageGeometry(String bodyHtml) {
         if (bodyHtml == null || bodyHtml.isEmpty()) {
             return new PreparedDoc("", DEFAULT_PAGE_SIZE, DEFAULT_PAGE_MARGIN,
-                    DEFAULT_PAGE_MARGIN_LEFT, false, false);
+                    DEFAULT_PAGE_MARGIN_LEFT, false, false, "");
         }
         Document doc = Jsoup.parseBodyFragment(bodyHtml);
         doc.outputSettings()
@@ -308,6 +330,21 @@ public class DocumentInstancePdfRenderer {
                 .escapeMode(Entities.EscapeMode.xhtml)
                 .prettyPrint(false)
                 .charset("UTF-8");
+
+        // Lift the document's own <style> elements OUT of the body.
+        // openhtmltopdf only applies CSS from <head>; a <style> left in
+        // the body is both inert AND rendered as visible text, so the
+        // stylesheet source used to print itself into the document while
+        // the fonts it declared were quietly ignored. wrapInHtmlDoc
+        // re-emits this CSS in <head> after the shell's own rules.
+        StringBuilder css = new StringBuilder();
+        for (Element styleEl : doc.select("style")) {
+            String block = styleEl.data();
+            if (block != null && !block.isBlank()) {
+                css.append(block).append('\n');
+            }
+            styleEl.remove();
+        }
 
         // Scrape geometry from the first section.docx; strip padding /
         // width / min-height off every section so @page is the single
@@ -409,7 +446,7 @@ public class DocumentInstancePdfRenderer {
         }
 
         return new PreparedDoc(doc.body().html(), pageSize, pageMargin,
-                pageMarginLeft, hasHeader, hasFooter);
+                pageMarginLeft, hasHeader, hasFooter, css.toString().trim());
     }
 
     /**
@@ -648,11 +685,60 @@ public class DocumentInstancePdfRenderer {
                         ? "  .pdf-doc-footer { position: running(docFooter); }"
                         : "")
                 + "</style>"
+                // ── The DOCUMENT'S OWN stylesheet ────────────────────
+                // Emitted AFTER the shell block, and that order is the
+                // whole point: docx-preview's class rules and the shell's
+                // element rules mostly collide at different specificity
+                // anyway, but where they tie — most importantly the
+                // document's base font against the shell's
+                // `body { font-family: Times New Roman; font-size: 12pt }`
+                // — later-declared wins, so the uploaded document decides
+                // and the shell is only the fallback for what the
+                // document didn't specify.
+                //
+                // This is what makes the renderer portable: the shell's
+                // defaults were tuned against Anvi's own offer letters, so
+                // any other platform's templates rendered in Anvi's fonts.
+                // With the document's own rules applied, the same code
+                // renders each brand's documents in their own typography
+                // with no per-brand tuning.
+                //
+                // Scrubbed with the same CSS-XSS filter the sanitizer
+                // applies to inline styles: this CSS is admin-authored
+                // content being promoted into <head>, so it gets the same
+                // treatment rather than being trusted because of where it
+                // came from.
+                + (prep.documentCss.isEmpty()
+                        ? ""
+                        : "<style>" + scrubDocumentCss(prep.documentCss) + "</style>")
                 + "</head>"
                 + "<body>"
                 + prep.bodyHtml
                 + "</body>"
                 + "</html>";
+    }
+
+    /**
+     * Filter the document's own stylesheet before promoting it into the
+     * rendered {@code <head>}.
+     *
+     * <p>Two passes. First the shared
+     * {@link com.anvicorp.api.security.CanonicalHtmlSanitizer#scrubCss}
+     * filter — the same one applied to stored inline styles, so
+     * "dangerous CSS" has a single definition rather than a second copy
+     * that drifts. Second, a defensive neutralisation of any literal
+     * {@code </style} sequence: this CSS is being spliced into a
+     * {@code <style>} element, and a closing tag inside it would end the
+     * element early and turn the remainder into markup. Stored canonical
+     * HTML can't carry one (jsoup would already have split the element at
+     * parse time), but this renderer is also the last-mile guard for
+     * legacy HTML that never went through the sanitizer, so it does not
+     * assume its input was cleaned.</p>
+     */
+    static String scrubDocumentCss(String css) {
+        if (css == null || css.isEmpty()) return "";
+        String scrubbed = com.anvicorp.api.security.CanonicalHtmlSanitizer.scrubCss(css);
+        return scrubbed.replaceAll("(?i)</\\s*style", "/*stripped*/");
     }
 
     /** For fully-controlled substitution — the studio's raw text passes
