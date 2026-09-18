@@ -34,6 +34,72 @@
  * original order and values.</p>
  */
 
+/**
+ * Marker stamped on every element this toolbar restyles.
+ *
+ * <p>PERSISTED — the exact opposite of {@link FMT_ACTIVE_CLASS}, which
+ * is stripped before save. The backend's
+ * {@code CanonicalHtmlProfileCorrector} re-asserts the imported DOCX
+ * formatting profile on EVERY save; without a signal it cannot tell an
+ * admin's deliberate override from a value docx-preview inferred at
+ * import, so it silently reverted page-margin and list-indent edits.
+ * This attribute is that signal: the corrector skips the properties the
+ * toolbar controls on a marked element and keeps repairing everything
+ * else.</p>
+ *
+ * <p>It must therefore survive the save round-trip —
+ * {@code CanonicalHtmlSanitizer} safelists it on {@code :all}, since it
+ * lands on {@code <p>} and {@code <section>} rather than only
+ * {@code <span>} like the {@code data-field-*} family.</p>
+ */
+export const FMT_ADMIN_ATTR = 'data-fmt-admin';
+
+/** Stamp the deliberate-override marker. Idempotent — re-editing the
+ *  same element never accumulates duplicates. */
+export function markAdminFormatted(el: HTMLElement | null): void {
+  if (!el) return;
+  el.setAttribute(FMT_ADMIN_ATTR, '1');
+}
+
+/** Remove the marker, returning the element to the corrector's care.
+ *  Paired with every reset path — an element whose formatting has been
+ *  cleared is no longer an override. */
+export function unmarkAdminFormatted(el: HTMLElement | null): void {
+  if (!el) return;
+  el.removeAttribute(FMT_ADMIN_ATTR);
+}
+
+/**
+ * Keep the override marker in sync with reality: present iff at least
+ * one toolbar-controlled property is still set inline on the element.
+ *
+ * <p>Better than stamping unconditionally on write — clearing the last
+ * value via a stepper's own clear button returns the element to the
+ * corrector's care without the admin having to hit Reset, so the marker
+ * never outlives the override it represents.</p>
+ */
+export function syncAdminMarker(
+  el: HTMLElement | null,
+  props: readonly string[],
+): void {
+  if (!el) return;
+  const stillOverridden = props.some((p) => readInlineDeclaration(el, p) !== '');
+  if (stillOverridden) markAdminFormatted(el);
+  else unmarkAdminFormatted(el);
+}
+
+/** Every property the toolbar can set on a paragraph, font-size
+ *  included (the "whole paragraph" path writes it there). */
+export const PARAGRAPH_OWNED_PROPS = [
+  'line-height',
+  'margin-top',
+  'margin-bottom',
+  'text-align',
+  'margin-left',
+  'text-indent',
+  'font-size',
+] as const;
+
 /** Marker class for the currently-targeted element. PURELY VISUAL —
  *  stripped before save by {@link clearFormatHighlight} (called from
  *  the studio's {@code resetPreviewClasses}) so it can never reach the
@@ -365,6 +431,11 @@ export function writePageMargins(
       'padding-bottom': bottom,
       'padding-left': left,
     });
+    // Mark every section we wrote. The corrector only consults the
+    // FIRST one (that's the only section preparePageGeometry scrapes),
+    // so marking the rest is belt-and-braces — but it keeps the
+    // invariant simple: every element this toolbar restyled is marked.
+    markAdminFormatted(section);
   });
   return true;
 }
@@ -380,6 +451,10 @@ export function clearPageMargins(canvas: HTMLElement | null): void {
       'padding-bottom': null,
       'padding-left': null,
     });
+    // Back under the corrector's care: with no override left to
+    // protect, the imported profile's page geometry should be
+    // re-asserted on the next save.
+    unmarkAdminFormatted(section);
   });
 }
 
@@ -408,6 +483,12 @@ export function setParagraphFontSize(
   paragraph
     .querySelectorAll<HTMLElement>(RUN_DESCENDANT_SELECTOR)
     .forEach((el) => setInlineDeclarations(el, { 'font-size': value }));
+  // Marked on the paragraph only — that is the element the corrector's
+  // list-item passes act on; stamping every descendant run would bloat
+  // the saved HTML for no gain. Synced rather than stamped so clearing
+  // the size doesn't drop a marker that line-spacing or indent still
+  // need.
+  syncAdminMarker(paragraph, PARAGRAPH_OWNED_PROPS);
 }
 
 /**
@@ -429,10 +510,13 @@ export function clearFormatting(target: FormatTarget): void {
     setInlineDeclarations(paragraph, patch);
     // Mirror of setParagraphFontSize — clear the run-level sizes it
     // would have stamped, so the source's class-rule size comes back.
+    // That call also drops the paragraph's override marker.
     setParagraphFontSize(paragraph, null);
+    unmarkAdminFormatted(paragraph);
   }
   if (run && run !== paragraph) {
     setInlineDeclarations(run, { 'font-size': null });
+    unmarkAdminFormatted(run);
   }
 }
 
@@ -456,6 +540,26 @@ export function clearFormatHighlight(canvas: HTMLElement | null): void {
       el.classList.remove(FMT_ACTIVE_CLASS, FMT_ACTIVE_SECTION_CLASS);
       if (el.getAttribute('class') === '') el.removeAttribute('class');
     });
+}
+
+/**
+ * Drop any inline {@code zoom} from the canvas subtree.
+ *
+ * <p>{@code DocumentPreviewFrame} fits the page to the pane by setting
+ * {@code wrapper.style.zoom} to a ratio derived from the CURRENT
+ * viewport width. That wrapper sits inside the element whose
+ * {@code innerHTML} is serialised on save, so every save was baking one
+ * admin's window size into the stored template. openhtmltopdf doesn't
+ * recognise {@code zoom} so the executed PDF was never affected, and
+ * the frame recomputes the fit on mount — but it is viewport-derived
+ * junk in shared canonical HTML, written on the same path this toolbar
+ * now uses, so it gets stripped alongside the visual highlight.</p>
+ */
+export function stripStoredZoom(canvas: HTMLElement | null): void {
+  if (!canvas) return;
+  canvas.querySelectorAll<HTMLElement>('[style*="zoom"]').forEach((el) => {
+    setInlineDeclarations(el, { zoom: null });
+  });
 }
 
 /** Paint the active-target marker on one element (clearing any prior). */

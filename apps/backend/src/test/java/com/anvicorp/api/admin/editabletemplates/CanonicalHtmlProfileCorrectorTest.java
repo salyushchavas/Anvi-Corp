@@ -629,4 +629,172 @@ class CanonicalHtmlProfileCorrectorTest {
                 new FormattingProfile.BodyDefault(bodyFont, null, null),
                 Map.of(numId, def));
     }
+
+    // ── data-fmt-admin: deliberate admin overrides survive ────────────
+    //
+    // The corrector re-asserts the imported profile on EVERY save, which
+    // is right for repairing what docx-preview inferred at import — but
+    // it cannot otherwise distinguish an inferred value from an admin's
+    // considered override, so it silently reverted every page-margin and
+    // list-indent edit the studio's formatting toolbar made. The
+    // data-fmt-admin marker is that missing signal. These tests pin both
+    // halves of the contract: marked elements keep the admin's values,
+    // UNMARKED ones still get the profile re-asserted exactly as before.
+
+    /** Letter page + 1in margins — the profile an admin is overriding. */
+    private String letterOneInchProfileJson() throws Exception {
+        FormattingProfile.PageGeometry page = new FormattingProfile.PageGeometry(
+                FormattingProfile.Length.fromTwips(12240),  // 8.5in
+                FormattingProfile.Length.fromTwips(15840),  // 11in
+                "portrait",
+                new FormattingProfile.Margins(
+                        FormattingProfile.Length.fromTwips(1440),
+                        FormattingProfile.Length.fromTwips(1440),
+                        FormattingProfile.Length.fromTwips(1440),
+                        FormattingProfile.Length.fromTwips(1440),
+                        FormattingProfile.Length.fromTwips(720),
+                        FormattingProfile.Length.fromTwips(720),
+                        null));
+        return mapper.writeValueAsString(new FormattingProfile(
+                1, page, null, null,
+                new FormattingProfile.BodyDefault(null, null, null),
+                Map.of()));
+    }
+
+    @Test
+    void marked_section_keeps_the_admins_page_margins() throws Exception {
+        String html = "<section class=\"docx\" data-fmt-admin=\"1\" "
+                + "style=\"width:8.5in;min-height:11in;padding-top:1.5in;"
+                + "padding-right:0.5in;padding-bottom:0.5in;padding-left:0.5in;\">"
+                + "<p>Body</p></section>";
+
+        String out = corrector.correct(html, letterOneInchProfileJson());
+
+        assertTrue(out.contains("padding-top:1.5in"),
+                "admin's 1.5in top margin must survive the corrector: " + out);
+        assertTrue(out.contains("padding-left:0.5in"), out);
+        assertTrue(out.contains("padding-right:0.5in"), out);
+        assertTrue(out.contains("padding-bottom:0.5in"), out);
+        assertFalse(out.contains("padding-top:1.00in"),
+                "profile margin must NOT overwrite a marked section: " + out);
+        // Property-scoped skip: width / min-height aren't toolbar-owned,
+        // so the profile's authoritative page SIZE is still applied.
+        assertTrue(out.contains("width:8.50in"),
+                "non-toolbar properties must still be corrected: " + out);
+        assertTrue(out.contains("min-height:11.00in"), out);
+        assertTrue(out.contains("data-fmt-admin"),
+                "marker must persist for the NEXT save: " + out);
+    }
+
+    @Test
+    void unmarked_section_still_gets_profile_margins_reasserted() throws Exception {
+        String html = "<section class=\"docx\" "
+                + "style=\"padding-top:1.5in;padding-left:0.5in;\">"
+                + "<p>Body</p></section>";
+
+        String out = corrector.correct(html, letterOneInchProfileJson());
+
+        assertTrue(out.contains("padding-top:1.00in"),
+                "unmarked section must still be corrected to the profile: " + out);
+        assertTrue(out.contains("padding-left:1.00in"), out);
+        assertFalse(out.contains("padding-top:1.5in"),
+                "stale inferred value must be replaced on an unmarked section: " + out);
+    }
+
+    @Test
+    void marked_list_paragraph_keeps_the_admins_indent() throws Exception {
+        // Profile level says 0.25in left / -0.25in hanging.
+        String profileJson = mapper.writeValueAsString(
+                listProfile("1", 360L, 360L, null, null));
+        String html = "<p class=\"docx-num-1-0\" data-fmt-admin=\"1\" "
+                + "style=\"margin-left:2in;text-indent:0in;\">Item</p>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertTrue(out.contains("margin-left:2in"),
+                "admin's 2in list indent must survive the corrector: " + out);
+        assertFalse(out.contains("margin-left:0.25in"),
+                "profile indent must NOT overwrite a marked list paragraph: " + out);
+        assertTrue(out.contains("data-fmt-admin"),
+                "marker must persist for the NEXT save: " + out);
+    }
+
+    @Test
+    void unmarked_list_paragraph_still_gets_profile_indent_reasserted() throws Exception {
+        String profileJson = mapper.writeValueAsString(
+                listProfile("1", 360L, 360L, null, null));
+        String html = "<p class=\"docx-num-1-0\" style=\"margin-left:2in;\">Item</p>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertTrue(out.contains("margin-left:0.25in"),
+                "unmarked list paragraph must still be corrected: " + out);
+        assertFalse(out.contains("margin-left:2in"),
+                "stale value must be replaced on an unmarked paragraph: " + out);
+    }
+
+    @Test
+    void marked_header_keeps_the_admins_alignment_and_indent() throws Exception {
+        String profileJson = mapper.writeValueAsString(
+                minimalProfile(headerParagraph("center", 0L)));
+        String html = "<header data-fmt-admin=\"1\" "
+                + "style=\"text-align:right;margin-left:1in;\">"
+                + "<p>Masthead</p></header>";
+
+        String out = corrector.correct(html, profileJson);
+
+        assertTrue(out.contains("text-align:right"),
+                "admin's header alignment must survive: " + out);
+        assertTrue(out.contains("margin-left:1in"), out);
+        assertFalse(out.contains("text-align:center"),
+                "profile alignment must NOT overwrite a marked header: " + out);
+    }
+
+    /**
+     * Re-import safety: replacing the source DOCX clears the canonical
+     * HTML, so the fresh docx-preview render carries NO markers and the
+     * profile is applied in full. Proven here by running the corrector
+     * over marker-free HTML — the admin then re-applies any overrides
+     * against the new document, which is the correct behaviour.
+     */
+    @Test
+    void fresh_reimported_html_has_no_markers_so_profile_applies_fully()
+            throws Exception {
+        String freshFromDocxPreview =
+                "<section class=\"docx\" style=\"padding-top:2in;width:9in;\">"
+                + "<p class=\"docx-num-1-0\" style=\"margin-left:3in;\">Item</p>"
+                + "</section>";
+        assertFalse(freshFromDocxPreview.contains("data-fmt-admin"),
+                "a fresh docx-preview render carries no override markers");
+
+        String out = corrector.correct(freshFromDocxPreview,
+                mapper.writeValueAsString(new FormattingProfile(
+                        1,
+                        new FormattingProfile.PageGeometry(
+                                FormattingProfile.Length.fromTwips(12240),
+                                FormattingProfile.Length.fromTwips(15840),
+                                "portrait",
+                                new FormattingProfile.Margins(
+                                        FormattingProfile.Length.fromTwips(1440),
+                                        FormattingProfile.Length.fromTwips(1440),
+                                        FormattingProfile.Length.fromTwips(1440),
+                                        FormattingProfile.Length.fromTwips(1440),
+                                        null, null, null)),
+                        null, null,
+                        new FormattingProfile.BodyDefault(null, null, null),
+                        Map.of("1", new FormattingProfile.ListDefinition(
+                                "0",
+                                List.of(new FormattingProfile.LevelDefinition(
+                                        0, "bullet", "•",
+                                        FormattingProfile.Length.fromTwips(360),
+                                        null)),
+                                null, null)))));
+
+        assertTrue(out.contains("padding-top:1.00in"),
+                "re-imported page geometry must be fully corrected: " + out);
+        assertTrue(out.contains("margin-left:0.25in"),
+                "re-imported list indent must be fully corrected: " + out);
+        assertFalse(out.contains("data-fmt-admin"),
+                "no stale marker may appear from a re-import: " + out);
+    }
 }

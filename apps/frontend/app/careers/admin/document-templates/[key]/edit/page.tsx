@@ -36,6 +36,8 @@ import { FormatToolbar } from '@/components/idms/FormatToolbar';
 import { applyInheritedTypography } from '@/components/idms/InstanceRenderer';
 import {
   EMPTY_FORMAT_TARGET,
+  PARAGRAPH_OWNED_PROPS,
+  RUN_PROPS,
   clearFormatHighlight,
   clearFormatting,
   clearPageMargins,
@@ -44,6 +46,8 @@ import {
   setFormatHighlight,
   setInlineDeclarations,
   setParagraphFontSize,
+  stripStoredZoom,
+  syncAdminMarker,
   writePageMargins,
   type FormatTarget,
   type PageMargins,
@@ -353,6 +357,14 @@ function PageContent() {
     if (!canvas || !rendered) return;
     applyOwnershipTints(canvas, fields);
     applyPreviewMode(canvas, previewMode, fields);
+    // applyPreviewMode -> resetPreviewClasses clears the formatting
+    // toolbar's active outline unconditionally, so ANY field edit used
+    // to erase it while the toolbar stayed bound to that paragraph —
+    // the outline and the thing it points at silently disagreed.
+    // Repaint it to match whatever is still bound.
+    if (previewMode === 'edit') {
+      setFormatHighlight(canvas, fmtTargetRef.current.paragraph);
+    }
   }, [fields, previewMode, rendered]);
 
   // ── Wrap the current selection into a doc-field span ─────────────
@@ -753,6 +765,11 @@ function PageContent() {
       const target = fmtTargetRef.current;
       if (!target.paragraph) return;
       setInlineDeclarations(target.paragraph, { [prop]: value });
+      // Stamp the deliberate-override marker so the backend's profile
+      // corrector stops re-asserting the imported DOCX values over this
+      // paragraph on save. Synced (not blindly stamped) so clearing the
+      // last override also releases the element.
+      syncAdminMarker(target.paragraph, PARAGRAPH_OWNED_PROPS);
       afterFormatWrite();
     },
     [afterFormatWrite],
@@ -768,6 +785,7 @@ function PageContent() {
         setParagraphFontSize(target.paragraph, value);
       } else if (target.run) {
         setInlineDeclarations(target.run, { 'font-size': value });
+        syncAdminMarker(target.run, RUN_PROPS);
       } else {
         return;
       }
@@ -1975,7 +1993,16 @@ function resetPreviewClasses(canvas: HTMLElement | null) {
   // canvas.innerHTML, so stripping it here is what guarantees the
   // marker can never reach the persisted canonical HTML — and from
   // there the intern's rendered document and the executed PDF.
+  //
+  // NOTE this strips only the VISUAL outline class. The formatting
+  // toolbar's data-fmt-admin override marker is deliberately NOT
+  // touched: it MUST persist so the backend profile corrector can tell
+  // a deliberate admin override from an imported value on every
+  // subsequent save.
   clearFormatHighlight(canvas);
+  // Viewport-derived zoom that DocumentPreviewFrame writes onto the
+  // page wrapper — junk that has no business in shared canonical HTML.
+  stripStoredZoom(canvas);
 }
 
 function applyPreviewMode(
