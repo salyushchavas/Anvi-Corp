@@ -335,6 +335,32 @@ public class ErmIdmsController {
         return instanceService.reopenForErmCorrection(id, req, caller);
     }
 
+    /**
+     * Issue a CORRECTED offer from a signed (or already-revoked) one —
+     * revokes the prior and creates a fresh instance pre-filled from it,
+     * linked via {@code supersedesId}, in a single transaction.
+     *
+     * <p>The counterpart to {@code /correct-and-reopen}, which handles
+     * the sent-but-unsigned case by reopening the SAME record. Once a
+     * party has signed, the document is a record of what was agreed and
+     * has to survive as one, so this retires it and starts a new one
+     * rather than rewinding it.</p>
+     *
+     * <p>Rejects DRAFT and SENT_TO_INTERN with 409 and a message naming
+     * the better path. Subject to the revocation gate (an intern who has
+     * started can't have an offer revoked) EXCEPT when the prior is
+     * already revoked, where there is nothing left to revoke.</p>
+     */
+    @PostMapping("/{id}/issue-corrected")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public DocumentInstanceDtos.IssueCorrectedResponse issueCorrected(
+            @PathVariable UUID id,
+            @jakarta.validation.Valid @RequestBody
+            DocumentInstanceDtos.IssueCorrectedRequest req,
+            @AuthenticationPrincipal User caller) {
+        return instanceService.issueCorrectedOffer(id, req, caller);
+    }
+
     @PostMapping("/{id}/revoke")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail revoke(

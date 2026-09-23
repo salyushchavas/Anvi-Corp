@@ -85,6 +85,14 @@ export interface InstanceActions {
    *  document supersedes rather than reopens, which is a different
    *  flow. */
   canErmCorrect: boolean;
+  /** ERM "issue corrected offer" — available once a party has signed
+   *  (or the offer is already revoked), where the document must be
+   *  preserved as a record rather than reopened. Separate from
+   *  canErmCorrect so a reopen can never swallow a submitted doc. */
+  canErmIssueCorrected: boolean;
+  /** Why issue-corrected is unavailable, when it is — the revocation
+   *  gate's reason. Shown rather than hiding the button. */
+  issueCorrectedBlockedReason: string | null;
 }
 
 /**
@@ -109,6 +117,35 @@ export interface CorrectRequest {
  *  dependency-light on purpose — see downloadIdmsFinalPdf). */
 export function correctAndReopenPath(instanceId: string): string {
   return `/api/v1/erm/idms/${instanceId}/correct-and-reopen`;
+}
+
+/**
+ * Body for {@code POST /api/v1/erm/idms/{id}/issue-corrected}.
+ *
+ * <p>{@code reasonCode} is REQUIRED, unlike {@link CorrectRequest}.
+ * That one fixes a document nobody signed and notifies no one; this one
+ * revokes a SIGNED offer and the intern is told it was withdrawn, so
+ * they're owed a reason they can read.</p>
+ */
+export interface IssueCorrectedRequest {
+  reasonCode: string;
+  comments?: string;
+  expectedUpdatedAt?: number;
+}
+
+/** Result of issuing a corrected offer. {@code droppedFieldNames} is
+ *  non-empty only when the admin moved the template since the prior
+ *  offer — those answers had nowhere to land and the ERM needs to know
+ *  which, by name, before sending. */
+export interface IssueCorrectedResponse {
+  instance: InstanceDetail;
+  carriedCount: number;
+  droppedFieldNames: string[];
+}
+
+/** @see correctAndReopenPath — same dependency-light convention. */
+export function issueCorrectedPath(instanceId: string): string {
+  return `/api/v1/erm/idms/${instanceId}/issue-corrected`;
 }
 
 export interface InstanceDetail {
