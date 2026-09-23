@@ -29,10 +29,12 @@ import { useSignatureBlobs } from '@/components/idms/useSignatureBlobs';
 import {
   RETURN_REASONS,
   REVOKE_REASONS,
+  correctAndReopenPath,
   downloadIdmsFinalPdf,
   humanDate,
   parseFieldSchema,
   stageToneClass,
+  type CorrectRequest,
   type InstanceDetail,
   type InstanceStatus,
   type ReopenTemplateResponse,
@@ -80,6 +82,7 @@ function PageContent() {
   const [returnOpen, setReturnOpen] = useState(false);
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [reopenConfirmOpen, setReopenConfirmOpen] = useState(false);
+  const [correctConfirmOpen, setCorrectConfirmOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -139,6 +142,55 @@ function PageContent() {
       setBusy(null);
     }
   }
+
+  /**
+   * Confirmed handler for "Correct & re-send" — the ERM noticed they
+   * filled something wrong (classically the start date) on an offer
+   * they've already sent, and the intern hasn't submitted yet.
+   *
+   * <p>Pulls the offer back to DRAFT on the SAME record and lands the
+   * ERM on the fill surface to fix it. The intern is deliberately NOT
+   * notified here — the document is moving to the ERM, not to them, and
+   * "your offer was withdrawn" seconds before "your offer is ready"
+   * is noise. The existing Send notifies them when there's actually
+   * something to act on.</p>
+   *
+   * <p>409 handling mirrors {@link performReopen}: the intern may have
+   * submitted between the page render and the click, in which case the
+   * action is no longer valid — say so plainly and reload rather than
+   * leaving a dead spinner.</p>
+   */
+  const performCorrect = useCallback(async () => {
+    if (!detail) return;
+    setCorrectConfirmOpen(false);
+    setBusy('correct');
+    try {
+      const { data } = await api.post<InstanceDetail>(
+        correctAndReopenPath(detail.id),
+        { reasonCode: 'ERM_CORRECTION' } satisfies CorrectRequest,
+      );
+      setDetail(data);
+      toast.success(
+        'Offer pulled back to draft. Fix the details, then re-send it '
+          + '— any signatures were cleared and will be re-collected.',
+        { duration: 8000 },
+      );
+      router.push(`/careers/erm/offers/idms/${detail.id}/fill`);
+    } catch (e) {
+      const status = (e as AxiosError)?.response?.status;
+      if (status === 409) {
+        toast.error(
+          'This offer can no longer be corrected — the intern has '
+            + 'already submitted it, or its state changed.',
+        );
+        void load();
+      } else {
+        toast.error("Couldn't pull this offer back. Please try again.");
+      }
+    } finally {
+      setBusy(null);
+    }
+  }, [detail, router, load]);
 
   /**
    * Confirmed handler for the in-flight "Update to latest template"
@@ -328,6 +380,27 @@ function PageContent() {
               Execute & render PDF
             </button>
           )}
+          {/* Correct & re-send — only in the sent-but-unsigned window
+              (canErmCorrect). Shown only when available rather than
+              disabled-with-tooltip like Revoke: Revoke is an action an
+              ERM goes looking for and needs to understand the absence
+              of, whereas this one is meaningless outside its window —
+              on a draft you just edit, and once the intern submits it's
+              a different flow entirely. */}
+          {detail.actions.canErmCorrect && (
+            <button
+              type="button"
+              onClick={() => setCorrectConfirmOpen(true)}
+              disabled={busy === 'correct'}
+              title="Pull this offer back to draft to fix a detail, then re-send it"
+              className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy === 'correct'
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <RefreshCw className="h-3.5 w-3.5" />}
+              Correct &amp; re-send
+            </button>
+          )}
           {/* Always render Revoke — disabled with a tooltip when
               revokeBlockedReason is present. Hiding the button (or
               replacing it with a tiny AlertCircle) is the precedent
@@ -500,6 +573,26 @@ function PageContent() {
           + "the fields still exist. Continue?"
         }
         confirmLabel="Update & re-route"
+        cancelLabel="Cancel"
+        variant="primary"
+      />
+
+      {/* Mandatory confirmation for Correct & re-send. Names both
+          consequences the ERM can't see from the button — signatures
+          are cleared, and they own re-sending afterwards (the intern
+          is NOT notified by the pull-back itself). */}
+      <ConfirmDialog
+        open={correctConfirmOpen}
+        onClose={() => setCorrectConfirmOpen(false)}
+        onConfirm={performCorrect}
+        title="Pull this offer back to correct it?"
+        description={
+          "This pulls the offer back to draft so you can correct it. "
+          + "Any signatures already made will be cleared and must be "
+          + "re-signed, and you'll need to re-send it to the intern. "
+          + "Everything already filled in is kept. Continue?"
+        }
+        confirmLabel="Pull back & correct"
         cancelLabel="Cancel"
         variant="primary"
       />

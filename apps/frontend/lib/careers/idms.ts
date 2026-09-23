@@ -80,6 +80,35 @@ export interface InstanceActions {
   canErmFinalize: boolean;
   canErmRevoke: boolean;
   revokeBlockedReason: string | null;
+  /** ERM "correct & re-send" — true only while the offer is SENT but
+   *  the intern hasn't submitted. Once they submit, correcting the
+   *  document supersedes rather than reopens, which is a different
+   *  flow. */
+  canErmCorrect: boolean;
+}
+
+/**
+ * Body for {@code POST /api/v1/erm/idms/{id}/correct-and-reopen}.
+ *
+ * <p>Every field is optional. Unlike a return or a revoke — both of
+ * which are addressed to the intern and so require a reason they can
+ * read — this is the ERM annotating their own typo for the audit trail,
+ * and requiring a form to fix your own mistake is friction with no
+ * reader. Omitted, the backend records {@code ERM_CORRECTION}.</p>
+ */
+export interface CorrectRequest {
+  reasonCode?: string;
+  comments?: string;
+  expectedUpdatedAt?: number;
+}
+
+/** Endpoint for the ERM correct-and-reopen action. Kept here beside the
+ *  request type so the path and its shape stay together; the POST
+ *  itself runs in the page against the shared axios client, matching
+ *  how every other IDMS transition is called (this module stays
+ *  dependency-light on purpose — see downloadIdmsFinalPdf). */
+export function correctAndReopenPath(instanceId: string): string {
+  return `/api/v1/erm/idms/${instanceId}/correct-and-reopen`;
 }
 
 export interface InstanceDetail {

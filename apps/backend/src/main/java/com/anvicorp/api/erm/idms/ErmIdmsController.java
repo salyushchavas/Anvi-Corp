@@ -304,6 +304,37 @@ public class ErmIdmsController {
         return instanceService.returnForCorrections(id, req, caller);
     }
 
+    /**
+     * ERM "correct &amp; re-send" — pull a SENT, unsigned offer back to
+     * DRAFT so the ERM can fix a value they got wrong, then re-send it
+     * on the same record.
+     *
+     * <p>The mirror of {@code /return} (which hands the document to the
+     * INTERN to fix THEIR fields). Sibling of
+     * {@code /reopen-template-update}, deliberately NOT the same
+     * endpoint: that one exists because the template moved and so it
+     * re-snapshots, whereas this must not — re-snapshotting here would
+     * silently pull an unrelated admin template edit into a "fix the
+     * date" action.</p>
+     *
+     * <p>Rejects anything but {@code SENT_TO_INTERN} with 409
+     * (already-DRAFT is an idempotent no-op). Once the intern has
+     * submitted, correcting the document is the separate
+     * issue-corrected flow. Both parties' signatures are cleared — see
+     * {@link DocumentInstanceService#reopenForErmCorrection}. The intern
+     * is NOT notified on pull-back; {@code /send} notifies them when the
+     * ERM re-sends.</p>
+     */
+    @PostMapping("/{id}/correct-and-reopen")
+    @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
+    public DocumentInstanceDtos.InstanceDetail correctAndReopen(
+            @PathVariable UUID id,
+            @jakarta.validation.Valid @RequestBody(required = false)
+            DocumentInstanceDtos.CorrectRequest req,
+            @AuthenticationPrincipal User caller) {
+        return instanceService.reopenForErmCorrection(id, req, caller);
+    }
+
     @PostMapping("/{id}/revoke")
     @PreAuthorize("hasAnyRole('ERM', 'SUPER_ADMIN')")
     public DocumentInstanceDtos.InstanceDetail revoke(
