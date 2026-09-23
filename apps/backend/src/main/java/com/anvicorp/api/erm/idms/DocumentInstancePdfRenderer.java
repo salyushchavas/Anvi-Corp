@@ -102,6 +102,64 @@ public class DocumentInstancePdfRenderer {
      */
     private static final String SIGNATURE_MAX_HEIGHT = "2.6em";
 
+    /**
+     * Marker classes for the shell's FALLBACK typography.
+     *
+     * <h3>Why these exist</h3>
+     *
+     * <p>The shell used to declare its defaults against element and
+     * attribute selectors — {@code p[class*="docx-num"]},
+     * {@code h1,h2,h3,h4}, {@code td,th}, {@code header,footer}. Those
+     * were Anvi-tuned numbers fitted to Anvi's own offer letters, and at
+     * that specificity they OVERRODE what the uploaded document asked
+     * for. Two distinct failure shapes were measured:</p>
+     * <ul>
+     *   <li><b>Override.</b> {@code p[class*="docx-num"]} is specificity
+     *       (0,1,1) — it beat a document's own class rule at (0,1,0).
+     *       {@code header{font-size:9pt}} is a DIRECT declaration, so it
+     *       beat the document's font inherited from body. The document
+     *       lost even though it had said what it wanted.</li>
+     *   <li><b>Stacking.</b> {@code padding-left:0.5em} on a list
+     *       paragraph did not conflict with the document's
+     *       {@code margin-left} at all — it simply ADDED to it, so every
+     *       source indent rendered 6pt deeper than the document asked,
+     *       and a list with no source indent got 30pt invented from
+     *       nowhere. No cascade rule can fix that; the declaration has to
+     *       go.</li>
+     * </ul>
+     *
+     * <h3>The technique</h3>
+     *
+     * <p>Each such value moved to a rule selected by ONE of these
+     * classes — specificity (0,1,0) — and the shell's stylesheet is
+     * emitted BEFORE the document's hoisted stylesheet. So a document
+     * rule at equal specificity wins on order, a document rule at higher
+     * specificity wins outright, and an inline document style wins over
+     * both. The fallback can only take effect when the document declares
+     * nothing for that property. That is the whole invariant: <b>a shell
+     * rule may provide a fallback, it may never override.</b></p>
+     *
+     * <p>{@code :where()} and {@code :not()} would express this more
+     * directly, but neither is usable in openhtmltopdf's selector engine
+     * (measured: {@code :where()} unsupported, {@code :not()} matches
+     * nothing), which is why the marker classes are stamped onto the DOM
+     * in {@link #stampFallbackClasses} instead.</p>
+     */
+    static final String FALLBACK_NUM = "pdf-fb-num";
+    /** @see #FALLBACK_NUM */
+    static final String FALLBACK_LIST = "pdf-fb-list";
+    /** @see #FALLBACK_NUM */
+    static final String FALLBACK_HEADING = "pdf-fb-heading";
+    /** @see #FALLBACK_NUM */
+    static final String FALLBACK_CELL = "pdf-fb-cell";
+    /** @see #FALLBACK_NUM */
+    static final String FALLBACK_HF = "pdf-fb-hf";
+
+    /** Properties whose presence means "the document already decided the
+     *  indent of this list paragraph", so no fallback indent applies. */
+    private static final String[] INDENT_PROPS =
+            {"margin-left", "text-indent", "padding-left"};
+
     /** Simple CSS length shape — number + unit. Accept only what a docx-
      *  preview render actually produces (in / cm / mm / pt / px). We
      *  never pass through arbitrary CSS to {@code @page} because the
@@ -445,8 +503,76 @@ public class DocumentInstancePdfRenderer {
             }
         }
 
+        // Last pass: mark which elements may receive the shell's
+        // fallback typography. Runs AFTER the header/footer reparenting
+        // so the elements it marks are the ones that actually render.
+        stampFallbackClasses(doc);
+
         return new PreparedDoc(doc.body().html(), pageSize, pageMargin,
                 pageMarginLeft, hasHeader, hasFooter, css.toString().trim());
+    }
+
+    /**
+     * Stamp the shell's fallback marker classes onto the elements that
+     * are allowed to receive fallback typography.
+     *
+     * <p>Two different mechanisms, because the two failure shapes need
+     * different treatment:</p>
+     *
+     * <p><b>Cascade-resolvable properties</b> (heading margin, cell
+     * padding, header/footer colour+size) are stamped unconditionally.
+     * The marker rule sits at specificity (0,1,0) in the shell block,
+     * which is emitted BEFORE the document's stylesheet, so any document
+     * declaration — class rule at equal specificity (wins on order),
+     * anything more specific, or an inline style — beats it. Marking
+     * every element is therefore safe: the fallback silently yields
+     * wherever the document has an opinion.</p>
+     *
+     * <p><b>The list indent is NOT cascade-resolvable</b> and is the one
+     * case that needs a real check. The document expresses its indent as
+     * {@code margin-left} / {@code text-indent}; the old shell rule added
+     * {@code padding-left} — a DIFFERENT property, so the cascade never
+     * chose between them and the two simply summed (+6pt on every source
+     * indent). That declaration is gone entirely, and the remaining
+     * {@code margin-left} fallback is stamped only where the paragraph
+     * carries no indent of its own. A paragraph whose indent came from
+     * the document's hoisted stylesheet rather than inline still wins on
+     * ordering, so the check only has to look at inline style.</p>
+     */
+    private void stampFallbackClasses(Document doc) {
+        for (Element p : doc.select("p[class*=\"docx-num\"]")) {
+            if (!declaresAny(p.attr("style"), INDENT_PROPS)) {
+                p.addClass(FALLBACK_NUM);
+            }
+        }
+        for (Element list : doc.select("ul, ol")) {
+            if (!declaresAny(list.attr("style"), INDENT_PROPS)
+                    && !declaresAny(list.attr("style"), "margin")) {
+                list.addClass(FALLBACK_LIST);
+            }
+        }
+        for (Element h : doc.select("h1, h2, h3, h4")) {
+            h.addClass(FALLBACK_HEADING);
+        }
+        for (Element cell : doc.select("td, th")) {
+            cell.addClass(FALLBACK_CELL);
+        }
+        for (Element hf : doc.select("header, footer")) {
+            hf.addClass(FALLBACK_HF);
+        }
+    }
+
+    /** True when the inline style declares any of the named properties.
+     *  Longhand-aware only — matching is by exact property name, so
+     *  {@code margin-left} does not match {@code margin-left-foo}. */
+    static boolean declaresAny(String styleAttr, String... props) {
+        if (styleAttr == null || styleAttr.isBlank()) return false;
+        for (String prop : props) {
+            Pattern p = Pattern.compile(
+                    "(?i)(?:^|;)\\s*" + Pattern.quote(prop) + "\\s*:");
+            if (p.matcher(styleAttr).find()) return true;
+        }
+        return false;
     }
 
     /**
@@ -596,7 +722,8 @@ public class DocumentInstancePdfRenderer {
                 // (indent + visible marker), not spacing — Word
                 // lists go through the p[class*="docx-num"] path
                 // below and are unaffected by these ul/ol rules.
-                + "  ul, ol { margin: 6pt 0; padding-left: 2.5em; }"
+                + "  ." + FALLBACK_LIST + " { margin-top: 6pt; margin-bottom: 6pt;"
+                + "    padding-left: 2.5em; }"
                 + "  ul { list-style-type: disc; }"
                 + "  ol { list-style-type: decimal; }"
                 // docx-preview list-item pattern — a Word list becomes a
@@ -616,30 +743,40 @@ public class DocumentInstancePdfRenderer {
                 // (`list-style-position: inside`) — a specificity fight,
                 // not an indent override.
                 //
-                // `margin-left` / `padding-left` do NOT carry `!important`:
-                // when the source DOCX carried a real left-indent value,
-                // CanonicalHtmlProfileCorrector.correctListIndent maps it
-                // to the paragraph's inline `style="margin-left:..."` (see
-                // that method's javadoc). An inline style has higher
-                // specificity than a shell selector rule, so the source's
-                // real indent naturally wins over these baseline fallback
-                // values. The prior `!important` here clobbered every
-                // list to the same 2em regardless of what the source
-                // asked for — that's the "every bullet forced to 2em"
-                // complaint. Removing `!important` restores source-
-                // fidelity: authored indents pass through, un-indented
-                // Word lists still get the 2em/0.5em fallback because
-                // there's no inline style competing.
-                + "  p[class*=\"docx-num\"] {"
-                + "    list-style-position: outside !important;"
-                + "    margin-left: 2em;"
-                + "    padding-left: 0.5em;"
-                + "    margin-top: 2pt; margin-bottom: 4pt;"
-                + "  }"
-                + "  h1, h2, h3, h4 { font-weight: bold; margin: 12pt 0 6pt; }"
+                // `list-style-position: outside` stays on the attribute
+                // selector with `!important` — it is STRUCTURE (where the
+                // bullet sits relative to the text box), it beats a
+                // docx-preview injected INLINE `inside`, and no document
+                // expresses an intent about it.
+                + "  p[class*=\"docx-num\"] { list-style-position: outside !important; }"
+                // The INDENT, by contrast, is a document value, so it
+                // moved to a fallback class stamped only where the
+                // paragraph carries no indent of its own. See
+                // FALLBACK_NUM's javadoc for why the old rule both
+                // stacked +6pt onto every source indent and invented
+                // +30pt where the source had none.
+                + "  ." + FALLBACK_NUM + " { margin-left: 2em;"
+                + "    margin-top: 2pt; margin-bottom: 4pt; }"
+                // font-weight on a heading is UA-default structure, not
+                // an Anvi value — it stays. The MARGIN was an invented
+                // constant and moves to the fallback class.
+                + "  h1, h2, h3, h4 { font-weight: bold; }"
+                // LONGHAND, deliberately. The old rule was
+                // `margin: 12pt 0 6pt` — a shorthand, so it also set
+                // margin-left/right to 0 and clobbered a document that
+                // had only ever spoken about margin-left. A fallback
+                // must not reach past the property it is a fallback for.
+                + "  ." + FALLBACK_HEADING
+                + " { margin-top: 12pt; margin-bottom: 6pt; }"
+                // border-collapse + max-width are overflow/structure
+                // guards, not document values — kept. See the sweep note
+                // on the class constants above.
                 + "  table { border-collapse: collapse; max-width: 100%; }"
-                + "  td, th { padding: 4pt 6pt; word-wrap: break-word;"
-                + "           overflow-wrap: break-word; }"
+                + "  td, th { word-wrap: break-word; overflow-wrap: break-word; }"
+                // Longhand for the same reason as the heading fallback.
+                + "  ." + FALLBACK_CELL + " { padding-top: 4pt;"
+                + "    padding-bottom: 4pt; padding-left: 6pt;"
+                + "    padding-right: 6pt; }"
                 + "  .doc-field { display: inline; word-wrap: break-word;"
                 + "               overflow-wrap: break-word; }"
                 // Signature image sizing — em-based via SIGNATURE_MAX_HEIGHT
@@ -661,7 +798,13 @@ public class DocumentInstancePdfRenderer {
                 // below, but keep the default text style just in case a
                 // fallback path renders them inline (e.g. a preview that
                 // doesn't paginate).
-                + "  header, footer { display: block; color: #555; font-size: 9pt; }"
+                // `display: block` is structure. The 9pt/#555 typography
+                // was an Anvi-tuned value that, declared directly on the
+                // element, beat the document's own inherited header font
+                // — so it moved to the fallback class, stamped only when
+                // the header/footer subtree declares no size or colour.
+                + "  header, footer { display: block; }"
+                + "  ." + FALLBACK_HF + " { color: #555; font-size: 9pt; }"
                 // Running-element hoist — openhtmltopdf lifts each
                 // marked element OUT of body flow and INTO the @page
                 // margin-box that references it via element(name). See
