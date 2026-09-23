@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Download,
+  FilePlus2,
   History as HistoryIcon,
   Loader2,
   PencilLine,
@@ -32,11 +33,14 @@ import {
   correctAndReopenPath,
   downloadIdmsFinalPdf,
   humanDate,
+  issueCorrectedPath,
   parseFieldSchema,
   stageToneClass,
   type CorrectRequest,
   type InstanceDetail,
   type InstanceStatus,
+  type IssueCorrectedRequest,
+  type IssueCorrectedResponse,
   type ReopenTemplateResponse,
 } from '@/lib/careers/idms';
 
@@ -83,6 +87,7 @@ function PageContent() {
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [reopenConfirmOpen, setReopenConfirmOpen] = useState(false);
   const [correctConfirmOpen, setCorrectConfirmOpen] = useState(false);
+  const [issueCorrectedConfirmOpen, setIssueCorrectedConfirmOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -144,6 +149,65 @@ function PageContent() {
   }
 
   /**
+   * Confirmed handler for "Issue corrected offer" — the signed-offer
+   * counterpart to performCorrect.
+   *
+   * <p>Once a party has signed, the offer can't be rewound: it's a
+   * record of what was agreed. So this revokes it (the intern is told,
+   * with a reason) and creates a fresh copy carrying the old answers
+   * forward, for the ERM to fix and send. Both legs are one transaction
+   * server-side, so a failure leaves the signed offer intact.</p>
+   *
+   * <p>When the template moved since the prior offer, some answers have
+   * nowhere to land. Those come back named in {@code droppedFieldNames}
+   * and are surfaced explicitly — a value quietly missing from a legal
+   * document is exactly what the ERM must not discover on the PDF.</p>
+   */
+  const performIssueCorrected = useCallback(async () => {
+    if (!detail) return;
+    setIssueCorrectedConfirmOpen(false);
+    setBusy('issue-corrected');
+    try {
+      const { data } = await api.post<IssueCorrectedResponse>(
+        issueCorrectedPath(detail.id),
+        { reasonCode: 'ERM_CORRECTION' } satisfies IssueCorrectedRequest,
+      );
+      const dropped = data.droppedFieldNames ?? [];
+      if (dropped.length > 0) {
+        toast(
+          `Corrected offer created, but ${dropped.length} detail(s) couldn't `
+            + `carry over (removed or changed in the current template): `
+            + `${dropped.join(', ')} — please review before sending.`,
+          { duration: 12000, icon: '⚠️' },
+        );
+      } else {
+        toast.success(
+          'Corrected offer created, pre-filled with the same details. '
+            + 'Fix what was wrong, then send it.',
+          { duration: 8000 },
+        );
+      }
+      router.push(`/careers/erm/offers/idms/${data.instance.id}/fill`);
+    } catch (e) {
+      const ax = e as AxiosError<{ error?: string }>;
+      if (ax?.response?.status === 409) {
+        // Gate closed (intern started / start date passed), or the
+        // offer raced to another state. The server's message is the
+        // specific one — show it rather than a generic retry.
+        toast.error(
+          ax.response?.data?.error
+            ?? 'This offer can no longer be corrected (its state changed).',
+        );
+        void load();
+      } else {
+        toast.error("Couldn't issue a corrected offer. Please try again.");
+      }
+    } finally {
+      setBusy(null);
+    }
+  }, [detail, router, load]);
+
+  /**
    * Confirmed handler for "Correct & re-send" — the ERM noticed they
    * filled something wrong (classically the start date) on an offer
    * they've already sent, and the intern hasn't submitted yet.
@@ -179,9 +243,30 @@ function PageContent() {
     } catch (e) {
       const status = (e as AxiosError)?.response?.status;
       if (status === 409) {
-        toast.error(
-          'This offer can no longer be corrected — the intern has '
-            + 'already submitted it, or its state changed.',
+        // The seam: correct-and-resend only covers sent-but-unsigned.
+        // If the intern submitted in the meantime, don't dead-end the
+        // ERM — reload so canErmIssueCorrected lights up, and point
+        // them at the path that does handle a signed offer.
+        toast(
+          (t) => (
+            <span className="flex items-center gap-3">
+              <span>
+                The intern has already submitted this offer, so it can&apos;t be
+                pulled back. Issue a corrected offer instead?
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  toast.dismiss(t.id);
+                  setIssueCorrectedConfirmOpen(true);
+                }}
+                className="shrink-0 rounded-md bg-brand-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-800"
+              >
+                Issue corrected
+              </button>
+            </span>
+          ),
+          { duration: 12000, icon: '⚠️' },
         );
         void load();
       } else {
@@ -401,6 +486,42 @@ function PageContent() {
               Correct &amp; re-send
             </button>
           )}
+          {/* Issue corrected offer — the signed/revoked counterpart to
+              Correct & re-send. Rendered visible-but-disabled when the
+              revocation gate blocks it (the action has to revoke the
+              prior), same reasoning as Revoke below: an ERM looking for
+              this needs to see WHY it's unavailable, not wonder where
+              it went. An already-REVOKED prior needs no revoke, so the
+              gate doesn't apply there — the backend handles that. */}
+          {(detail.actions.canErmIssueCorrected
+            || detail.actions.issueCorrectedBlockedReason) && (
+            <button
+              type="button"
+              onClick={() => setIssueCorrectedConfirmOpen(true)}
+              disabled={
+                !detail.actions.canErmIssueCorrected || busy === 'issue-corrected'
+              }
+              title={
+                detail.actions.canErmIssueCorrected
+                  ? 'Revoke this offer and create a corrected copy pre-filled with the same details'
+                  : detail.actions.issueCorrectedBlockedReason
+                    ?? 'Unavailable in this state'
+              }
+              aria-label={
+                detail.actions.canErmIssueCorrected
+                  ? 'Issue a corrected offer'
+                  : `Issue corrected offer unavailable — ${detail.actions.issueCorrectedBlockedReason ?? 'not allowed in this state'}`
+              }
+              className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-amber-50"
+            >
+              {busy === 'issue-corrected'
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <FilePlus2 className="h-3.5 w-3.5" />}
+              {detail.status === 'REVOKED'
+                ? 'Issue corrected offer'
+                : 'Revoke & issue corrected'}
+            </button>
+          )}
           {/* Always render Revoke — disabled with a tooltip when
               revokeBlockedReason is present. Hiding the button (or
               replacing it with a tiny AlertCircle) is the precedent
@@ -595,6 +716,34 @@ function PageContent() {
         confirmLabel="Pull back & correct"
         cancelLabel="Cancel"
         variant="primary"
+      />
+
+      {/* Mandatory confirmation for Issue corrected offer. This one
+          destroys something — it names BOTH consequences (the intern is
+          told the offer was withdrawn; both parties re-sign) before the
+          POST, because neither is visible from the button. */}
+      <ConfirmDialog
+        open={issueCorrectedConfirmOpen}
+        onClose={() => setIssueCorrectedConfirmOpen(false)}
+        onConfirm={performIssueCorrected}
+        title={
+          detail.status === 'REVOKED'
+            ? 'Issue a corrected offer?'
+            : 'Revoke this offer and issue a corrected one?'
+        }
+        description={
+          (detail.status === 'REVOKED'
+            ? 'This creates a corrected copy of the revoked offer, '
+            : 'This revokes the current offer (the intern will be notified '
+              + 'it was withdrawn) and creates a corrected copy, ')
+          + 'pre-filled with the same details for you to fix and re-send. '
+          + 'Both parties will sign the corrected offer fresh. Continue?'
+        }
+        confirmLabel={
+          detail.status === 'REVOKED' ? 'Issue corrected offer' : 'Revoke & issue corrected'
+        }
+        cancelLabel="Cancel"
+        variant="danger"
       />
     </div>
   );

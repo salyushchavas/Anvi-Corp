@@ -1071,6 +1071,271 @@ public class DocumentInstanceService {
     ) {}
 
     /**
+     * Issue a CORRECTED offer from one that has already been signed (or
+     * already revoked): revoke the prior, then create a fresh instance
+     * pre-filled from it, linked for audit.
+     *
+     * <p>The other half of the correct-an-offer story. Its sibling,
+     * {@link #reopenForErmCorrection}, handles the sent-but-unsigned
+     * window by pulling the SAME record back to DRAFT. Once a party has
+     * signed, that is no longer honest: the signed document is a record
+     * of what was agreed, and it has to survive as one. So this path
+     * does not reopen anything — it retires the old document with a
+     * reason and starts a new one carrying the old one's answers.</p>
+     *
+     * <h2>Why the prior stays REVOKED and is never marked SUPERSEDED</h2>
+     * <p>{@code supersedesId} is reused here purely as the LINEAGE LINK
+     * — it is the same shape ("this instance replaces that one"), it is
+     * already surfaced on {@code InstanceDetail}, and it needs no new
+     * column. What is NOT reused is the status transition: the
+     * finalize-time supersede block only retires a prior that is
+     * {@code FINALIZED}, so a REVOKED prior falls through its else-branch
+     * and stays REVOKED with no extra code.</p>
+     *
+     * <p>That is also the correct semantics, not merely the convenient
+     * one. REVOKED and SUPERSEDED say different things: revoked means
+     * "withdrawn, for this reason, and the intern was told"; superseded
+     * means "quietly retired because a newer executed version exists".
+     * Only REVOKED has somewhere to put {@code revokeReasonCode} /
+     * {@code revokedById}. Overwriting it would erase why the document
+     * was pulled.</p>
+     *
+     * <h2>Atomic</h2>
+     * <p>The revoke and the create are ONE transaction. Split, a failure
+     * between them (template deactivated, live-slot race, ack gate)
+     * would leave a signed offer destroyed and nothing in its place —
+     * the worst possible outcome for this feature. All-or-nothing.</p>
+     *
+     * <h2>What carries forward, and what does not</h2>
+     * <ul>
+     *   <li><b>Values: yes.</b> The point of the feature — the ERM fixes
+     *       the one wrong field instead of re-keying an entire offer.</li>
+     *   <li><b>Signatures: no.</b> This is a NEW document and both
+     *       parties sign it fresh. The filter is on
+     *       {@code signatureDocumentId != null}, NOT on whether the row
+     *       has text: {@code signField} also stores the signer's typed
+     *       name in {@code valueText}, so filtering on text would carry a
+     *       signature's name across without its image.</li>
+     *   <li><b>AUTO fields: no.</b> {@link #create} already resolved them
+     *       against current platform data. Copying would overwrite a
+     *       correct fresh value with a stale one — and collide with the
+     *       {@code (instance_id, field_id)} unique constraint.</li>
+     * </ul>
+     *
+     * <h2>Template drift</h2>
+     * <p>The corrected offer snapshots the CURRENT template, which may
+     * have moved since the prior was created. Each carried value is
+     * classified against the new schema via {@link #classifyFieldCarry}
+     * — removed and type-changed fields are dropped and NAMED in the
+     * response, because a value silently vanishing from a legal document
+     * is exactly the kind of thing the ERM must be told about.</p>
+     *
+     * <h2>Notifications</h2>
+     * <p>Both fire, deliberately. The revoke leg tells the intern the
+     * old offer was withdrawn; the new offer's send notification reaches
+     * them when the ERM sends it. Suppressing the first would mean an
+     * intern's signed offer quietly disappearing from their dashboard
+     * with no explanation.</p>
+     */
+    @Transactional
+    public DocumentInstanceDtos.IssueCorrectedResponse issueCorrectedOffer(
+            UUID priorId,
+            DocumentInstanceDtos.IssueCorrectedRequest req,
+            User caller) {
+        requireErmOrAdmin(caller);
+        if (req == null || req.reasonCode() == null || req.reasonCode().isBlank()) {
+            // Required here, unlike reopenForErmCorrection: this revokes a
+            // document and notifies the intern, so there has to be a
+            // reason THEY can read.
+            throw new BadRequestException("reasonCode required");
+        }
+        DocumentInstance prior = instanceRepo.findByIdForUpdate(priorId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Document instance not found: " + priorId));
+        DocumentInstanceStatus fromStatus = prior.getStatus();
+
+        // Guard — point the two "there's a better path" states at it
+        // rather than letting an ERM destroy a document needlessly.
+        if (fromStatus == DocumentInstanceStatus.DRAFT) {
+            throw new ConflictException(
+                    "This offer is still a draft — edit it directly instead of "
+                            + "issuing a corrected copy.");
+        }
+        if (fromStatus == DocumentInstanceStatus.SENT_TO_INTERN) {
+            throw new ConflictException(
+                    "The intern hasn't signed this offer yet — use "
+                            + "\"Correct & re-send\" to fix it on the same record "
+                            + "instead of revoking it.");
+        }
+        boolean alreadyRevoked = fromStatus == DocumentInstanceStatus.REVOKED;
+        if (!alreadyRevoked && !DocumentInstanceStatus.REVOCABLE.contains(fromStatus)) {
+            throw new ConflictException(
+                    "This offer is " + fromStatus.name().toLowerCase()
+                            + " and cannot be corrected.");
+        }
+
+        // Snapshot what we need off the prior BEFORE the revoke leg.
+        UUID templateId = prior.getTemplateId();
+        UUID lifecycleId = prior.getInternLifecycleId();
+        List<FieldSchemaEntry> priorSchema =
+                parseSchema(prior.getSnapshotFieldSchemaJson());
+        Map<String, FieldSchemaEntry> priorById = new LinkedHashMap<>();
+        for (FieldSchemaEntry f : priorSchema) priorById.put(f.id(), f);
+        List<DocumentInstanceFieldValue> priorValues =
+                new ArrayList<>(valueRepo.findByInstanceId(priorId));
+
+        // ── Leg 1: revoke the prior (skipped when already revoked) ──
+        // Delegated to revoke() rather than reimplemented so the
+        // start-date gate, the idempotency check, the audit/review rows
+        // and the intern notification are all exactly the ones the
+        // standalone Revoke action produces. A blocked gate throws here
+        // and rolls the whole transaction back — nothing revoked,
+        // nothing created.
+        if (!alreadyRevoked) {
+            revoke(priorId,
+                    new DocumentInstanceDtos.RevokeRequest(
+                            req.reasonCode(), req.comments(), req.expectedUpdatedAt()),
+                    caller);
+        }
+
+        // ── Leg 2: create the corrected offer ───────────────────────
+        // The prior is now REVOKED, which is in NOT_LIVE, so the
+        // one-live-per-(lifecycle, template) partial UNIQUE slot is free
+        // and create()'s own pre-check passes. internLifecycleId is
+        // supplied directly (never applicationId), so the selection-ack
+        // gate does not re-apply to someone who already has an offer.
+        DocumentInstanceDtos.InstanceDetail created = create(
+                new DocumentInstanceDtos.CreateInstanceRequest(
+                        templateId, lifecycleId, null, priorId),
+                caller);
+        DocumentInstance fresh = instanceRepo.findByIdForUpdate(created.id())
+                .orElseThrow(() -> new IllegalStateException(
+                        "corrected instance vanished mid-transaction: " + created.id()));
+
+        // ── Leg 3: carry the prior's answers forward ────────────────
+        List<FieldSchemaEntry> newSchema =
+                parseSchema(fresh.getSnapshotFieldSchemaJson());
+        Map<String, FieldSchemaEntry> newById = new LinkedHashMap<>();
+        for (FieldSchemaEntry f : newSchema) newById.put(f.id(), f);
+
+        List<String> droppedFieldNames = new ArrayList<>();
+        int carried = 0;
+        Instant now = Instant.now();
+        for (DocumentInstanceFieldValue v : priorValues) {
+            // Signatures never carry — the new document is signed fresh.
+            if (v.getSignatureDocumentId() != null) continue;
+            FieldSchemaEntry oldEntry = priorById.get(v.getFieldId());
+            FieldSchemaEntry newEntry = newById.get(v.getFieldId());
+            // AUTO fields never carry — create() already resolved them
+            // against current platform data.
+            if (newEntry != null && "AUTO".equalsIgnoreCase(newEntry.assignee())) continue;
+            FieldCarryVerdict verdict = classifyFieldCarry(oldEntry, newEntry);
+            if (verdict != FieldCarryVerdict.KEEP) {
+                droppedFieldNames.add(droppedFieldLabel(oldEntry, v.getFieldName()));
+                continue;
+            }
+            // Nothing to overwrite — create() only seeded AUTO rows, and
+            // those are skipped above.
+            valueRepo.save(DocumentInstanceFieldValue.builder()
+                    .instanceId(fresh.getId())
+                    .fieldId(v.getFieldId())
+                    .fieldName(newEntry.name() != null ? newEntry.name() : v.getFieldName())
+                    .valueText(v.getValueText())
+                    .filledByUserId(v.getFilledByUserId())
+                    .filledByRole(v.getFilledByRole())
+                    .filledAt(now)
+                    .build());
+            carried++;
+        }
+
+        writeReview(fresh.getId(), "ISSUE_CORRECTED", req.reasonCode(),
+                "Corrected copy of " + priorId + " (" + carried + " detail(s) carried"
+                        + (droppedFieldNames.isEmpty()
+                                ? "" : ", " + droppedFieldNames.size() + " dropped")
+                        + ")",
+                caller, "ERM");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("priorId", priorId.toString());
+        payload.put("priorStatusBefore", fromStatus.name());
+        payload.put("newId", fresh.getId().toString());
+        payload.put("reasonCode", req.reasonCode());
+        payload.put("comments", req.comments() == null ? "" : req.comments());
+        payload.put("carriedCount", carried);
+        payload.put("droppedFieldNames", String.join(",", droppedFieldNames));
+        writeAudit("ISSUE_CORRECTED", fresh, caller, payload);
+        log.info("[IDMS] issueCorrectedOffer prior={} ({}) -> new={} by={} "
+                        + "carried={} dropped={}",
+                priorId, fromStatus.name(), fresh.getId(), caller.getId(),
+                carried, droppedFieldNames.size());
+
+        // No send notification here — the corrected offer is a DRAFT the
+        // ERM still has to review and send. send() notifies the intern
+        // at that point.
+        return new DocumentInstanceDtos.IssueCorrectedResponse(
+                toDetail(fresh, caller), carried, droppedFieldNames);
+    }
+
+    /**
+     * What should happen to one field's stored value when it is matched
+     * against a NEWER schema. The R2 rules, with no side effects.
+     */
+    enum FieldCarryVerdict {
+        /** Same id, same type — the value is still valid. */
+        KEEP,
+        /** The id is gone from the new schema — the value has no home. */
+        DROP_REMOVED,
+        /** Same id, different type — a TEXT payload in a SIGNATURE slot
+         *  would render broken, so the value cannot survive. */
+        DROP_TYPE_CHANGED
+    }
+
+    /**
+     * The R2 classification, extracted as a PURE function.
+     *
+     * <p>Two callers need this decision for opposite reasons, which is
+     * why it is a function rather than shared code inside one of
+     * them:</p>
+     * <ul>
+     *   <li>{@link #applyR2ValueReapply} reconciles value rows IN PLACE
+     *       on a single instance whose template moved underneath it, and
+     *       deletes the losers.</li>
+     *   <li>{@link #issueCorrectedOffer} copies value rows ACROSS two
+     *       instances and simply declines to copy the losers — there is
+     *       nothing to delete, because the destination row never
+     *       existed.</li>
+     * </ul>
+     *
+     * <p>Sharing the mutating engine between them would have meant
+     * bending a delete-in-place routine into a copy routine. Sharing the
+     * rules instead keeps one definition of "can this value survive a
+     * schema change" with no behavioural coupling.</p>
+     *
+     * @param oldEntry the field as the SOURCE schema defined it, or null
+     *                 when the source schema no longer carries the id
+     * @param newEntry the field as the TARGET schema defines it, or null
+     *                 when the field was removed
+     */
+    static FieldCarryVerdict classifyFieldCarry(
+            FieldSchemaEntry oldEntry, FieldSchemaEntry newEntry) {
+        if (newEntry == null) return FieldCarryVerdict.DROP_REMOVED;
+        String oldType = oldEntry != null ? oldEntry.type() : null;
+        if (oldType != null && newEntry.type() != null
+                && !oldType.equalsIgnoreCase(newEntry.type())) {
+            return FieldCarryVerdict.DROP_TYPE_CHANGED;
+        }
+        return FieldCarryVerdict.KEEP;
+    }
+
+    /** Human-readable name for a dropped field — the OLD schema's label
+     *  where it has one, else the value row's own snapshotted name
+     *  (rare, legacy rows). Shared so both callers report the same
+     *  wording to the ERM. */
+    static String droppedFieldLabel(FieldSchemaEntry oldEntry, String snapshotName) {
+        return oldEntry != null && oldEntry.name() != null
+                ? oldEntry.name() : snapshotName;
+    }
+
+    /**
      * Shared R2 value-reapply engine — the state-agnostic core of both
      * {@link #resyncTemplate} (DRAFT in-place) and
      * {@link #reopenForTemplateUpdate} (in-flight backward hop). Walks
@@ -1111,27 +1376,21 @@ public class DocumentInstanceService {
 
         for (DocumentInstanceFieldValue v : valueRepo.findByInstanceId(instance.getId())) {
             FieldSchemaEntry newEntry = newById.get(v.getFieldId());
-            if (newEntry == null) {
-                // R2: field REMOVED. Resolve the human-readable name
-                // from the OLD schema (falling back to the value row's
-                // snapshotted fieldName if the schema entry is
-                // nameless — rare, legacy).
-                FieldSchemaEntry oldEntryForName = oldById.get(v.getFieldId());
-                String name = oldEntryForName != null
-                        && oldEntryForName.name() != null
-                                ? oldEntryForName.name()
-                                : v.getFieldName();
+            FieldSchemaEntry oldEntry = oldById.get(v.getFieldId());
+            // Rules live in classifyFieldCarry — shared with
+            // issueCorrectedOffer, which applies the same verdicts to a
+            // copy rather than an in-place reconcile.
+            FieldCarryVerdict verdict = classifyFieldCarry(oldEntry, newEntry);
+            if (verdict == FieldCarryVerdict.DROP_REMOVED) {
                 valueRepo.delete(v);
                 droppedRemovedFieldIds.add(v.getFieldId());
-                droppedRemovedFieldNames.add(name);
+                droppedRemovedFieldNames.add(
+                        droppedFieldLabel(oldEntry, v.getFieldName()));
                 continue;
             }
-            FieldSchemaEntry oldEntry = oldById.get(v.getFieldId());
-            String oldType = oldEntry != null ? oldEntry.type() : null;
-            if (oldType != null && newEntry.type() != null
-                    && !oldType.equalsIgnoreCase(newEntry.type())) {
-                // R2: TYPE CHANGED — drop, safer than keeping an
-                // incompatible payload (TEXT into SIGNATURE slot, etc.).
+            if (verdict == FieldCarryVerdict.DROP_TYPE_CHANGED) {
+                // Safer than keeping an incompatible payload (TEXT into
+                // a SIGNATURE slot, etc.).
                 valueRepo.delete(v);
                 droppedTypeChangedFieldIds.add(v.getFieldId());
                 continue;
@@ -2467,11 +2726,31 @@ public class DocumentInstanceService {
         // the intern submits, pulling the document back would discard
         // work they've completed, so that case supersedes instead.
         boolean canErmCorrect = isErm && s == DocumentInstanceStatus.SENT_TO_INTERN;
+        // Issue-corrected covers the states correct-and-resend can't:
+        // a party has signed, or the offer is already revoked. SENT is
+        // excluded — that one has the cheaper same-record path.
+        //
+        // The revocation gate only applies when the action would have to
+        // revoke something. An ALREADY-revoked prior needs no revoke, so
+        // an intern who has since started must still be able to receive
+        // a corrected offer for an offer that was withdrawn earlier.
+        boolean issueCorrectedState = isErm
+                && (s == DocumentInstanceStatus.REVOKED
+                        || (DocumentInstanceStatus.REVOCABLE.contains(s)
+                                && s != DocumentInstanceStatus.SENT_TO_INTERN));
+        boolean needsRevokeLeg = s != DocumentInstanceStatus.REVOKED;
+        boolean canErmIssueCorrected = issueCorrectedState
+                && (!needsRevokeLeg || gate.allowed());
+        String issueCorrectedBlockedReason =
+                issueCorrectedState && needsRevokeLeg && !gate.allowed()
+                        ? gate.reason() : null;
         return new DocumentInstanceDtos.InstanceActions(
                 canErmFill, canErmSend, canInternFill, canInternSubmit,
                 canErmReturn, canErmVerify, canErmFinalize, canErmRevoke,
                 gate.allowed() ? null : gate.reason(),
-                canErmCorrect);
+                canErmCorrect,
+                canErmIssueCorrected,
+                issueCorrectedBlockedReason);
     }
 
     // ── Audit + notify + parse helpers ───────────────────────────────

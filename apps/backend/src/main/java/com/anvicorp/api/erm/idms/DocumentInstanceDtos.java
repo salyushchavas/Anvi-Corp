@@ -182,7 +182,19 @@ public final class DocumentInstanceDtos {
              *  {@code SENT_TO_INTERN}, the sent-but-unsigned window.
              *  Once the intern submits, correcting the document is the
              *  separate issue-corrected flow, not a reopen. */
-            boolean canErmCorrect
+            boolean canErmCorrect,
+            /** ERM "issue corrected offer" — available once a party has
+             *  signed (or the offer is already revoked), where the
+             *  document must be preserved as a record rather than
+             *  reopened. Deliberately a separate flag from
+             *  {@code canErmCorrect} so a reopen can never swallow a
+             *  document the intern has submitted. */
+            boolean canErmIssueCorrected,
+            /** Why issue-corrected is unavailable, when it is. Carries
+             *  the revocation gate's reason (the action has to revoke
+             *  the prior, so the gate applies) — shown rather than
+             *  hiding the button, so the ERM sees the cause. */
+            String issueCorrectedBlockedReason
     ) {}
 
     // ── Draft re-sync to latest template ────────────────────────────
@@ -440,6 +452,46 @@ public final class DocumentInstanceDtos {
             @Size(max = 40) String reasonCode,
             @Size(max = 2000) String comments,
             Long expectedUpdatedAt
+    ) {}
+
+    /**
+     * Request for {@code POST /api/v1/erm/idms/{id}/issue-corrected} —
+     * revoke a signed offer and issue a corrected copy pre-filled from
+     * it.
+     *
+     * <p>{@code reasonCode} is REQUIRED here, unlike
+     * {@link CorrectRequest}. That one fixes a document nobody has
+     * signed and notifies no one, so a reason has no reader. This one
+     * revokes a SIGNED document and the intern is told it was
+     * withdrawn — they are owed a reason they can read.</p>
+     */
+    public record IssueCorrectedRequest(
+            @NotBlank @Size(max = 40) String reasonCode,
+            @Size(max = 2000) String comments,
+            Long expectedUpdatedAt
+    ) {}
+
+    /**
+     * Response for the issue-corrected action.
+     *
+     * <p>{@code droppedFieldNames} exists because a value silently
+     * vanishing from a legal document is the failure mode worth being
+     * loud about. When the admin has edited the template since the prior
+     * offer was created, a field the ERM had filled may no longer exist
+     * (or may have changed type), and its answer cannot carry. The ERM
+     * is told which ones by name so they can re-check the corrected
+     * offer before sending rather than discovering a blank on the
+     * executed PDF.</p>
+     */
+    public record IssueCorrectedResponse(
+            /** The new DRAFT offer, pre-filled and linked to the prior
+             *  via {@code supersedesId}. */
+            InstanceDetail instance,
+            /** How many of the prior's answers carried over. */
+            int carriedCount,
+            /** Fields whose answers could NOT carry, by name. Empty in
+             *  the common case where the template hasn't moved. */
+            List<String> droppedFieldNames
     ) {}
 
     // ── Awaiting-offer bridge (reused shape) ─────────────────────────
