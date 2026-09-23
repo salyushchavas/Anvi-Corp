@@ -177,7 +177,12 @@ public final class DocumentInstanceDtos {
             boolean canErmFinalize,
             boolean canErmRevoke,
             /** Revocation gate reason when {@code canErmRevoke=false}. */
-            String revokeBlockedReason
+            String revokeBlockedReason,
+            /** ERM "correct &amp; re-send" — true only on
+             *  {@code SENT_TO_INTERN}, the sent-but-unsigned window.
+             *  Once the intern submits, correcting the document is the
+             *  separate issue-corrected flow, not a reopen. */
+            boolean canErmCorrect
     ) {}
 
     // ── Draft re-sync to latest template ────────────────────────────
@@ -413,6 +418,26 @@ public final class DocumentInstanceDtos {
 
     public record RevokeRequest(
             @NotBlank @Size(max = 40) String reasonCode,
+            @Size(max = 2000) String comments,
+            Long expectedUpdatedAt
+    ) {}
+
+    /**
+     * Request for {@code POST /api/v1/erm/idms/{id}/correct-and-reopen}
+     * — the ERM pulling a sent, unsigned offer back to DRAFT to fix a
+     * value they got wrong.
+     *
+     * <p>{@code reasonCode} is OPTIONAL here, unlike {@link ReturnRequest}
+     * and {@link RevokeRequest} where it is mandatory. Those two are
+     * addressed to someone else — the intern reads the reason on their
+     * correction surface, and a revocation reason is a record of a
+     * decision taken about them. This one is the ERM annotating their
+     * own typo for the audit trail; requiring a reason code to fix your
+     * own mistake is friction with no reader. Omitted, it records as
+     * {@code ERM_CORRECTION}.</p>
+     */
+    public record CorrectRequest(
+            @Size(max = 40) String reasonCode,
             @Size(max = 2000) String comments,
             Long expectedUpdatedAt
     ) {}

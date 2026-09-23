@@ -1449,22 +1449,11 @@ public class DocumentInstanceService {
         // Mandatory backward-hop mutations (silent-break traps).
         boolean statusChanging = toStatus != fromStatus;
         if (statusChanging) {
-            instance.setStatus(toStatus);
-            // (1) Verify gate must re-earn — clear ERM's "viewed
-            //     before verify" stamp.
-            instance.setLastErmViewedAt(null);
-            // (2) Defensive — a VERIFIED doc could carry a rendered
-            //     PDF ref forward; a reopened doc must not.
-            instance.setFinalPdfDocumentId(null);
-            // (3) Target-specific intern-cycle cleanups.
-            if (toStatus == DocumentInstanceStatus.DRAFT) {
-                // Clean draft owned by ERM: strip every intern-cycle
-                // side effect so the fill surface renders as fresh.
-                instance.setInternLocked(false);
-                instance.setReturnReasonCode(null);
-                instance.setReturnComments(null);
-                instance.setUnlockedFieldIdsJson(null);
-            } else if (toStatus == DocumentInstanceStatus.RETURNED) {
+            // Shared with reopenForErmCorrection — see applyBackwardHop.
+            // For a DRAFT target that call is the whole job; RETURNED
+            // needs the extra intern-cycle setup below.
+            applyBackwardHop(instance, toStatus);
+            if (toStatus == DocumentInstanceStatus.RETURNED) {
                 // Intern re-review + re-sign. Narrow the editable
                 // field set to just the affected intern fields + the
                 // intern signature so they don't get pulled into a
@@ -1605,6 +1594,201 @@ public class DocumentInstanceService {
                         r.newFieldIds().size());
         return new DocumentInstanceDtos.ReopenTemplateResponse(
                 toDetail(instance, caller), responseSummary);
+    }
+
+    /**
+     * ERM "correct &amp; re-send" — pull a SENT, unsigned offer back to
+     * {@link DocumentInstanceStatus#DRAFT} so the ERM can fix a value
+     * they got wrong, then re-send it on the SAME record.
+     *
+     * <p>The mirror of {@link #returnForCorrections}: that one hands the
+     * document back to the INTERN to fix THEIR fields; this hands it
+     * back to the ERM to fix THEIRS. Same record, same audit thread —
+     * not revoke-and-recreate, which would fork the history and is
+     * reserved for documents the intern has already signed.</p>
+     *
+     * <h2>Why this is a sibling of {@link #reopenForTemplateUpdate},
+     * not a flag on it</h2>
+     * <p>That method exists because the TEMPLATE moved, so it
+     * re-snapshots the template onto the instance, reconciles value
+     * rows against the new schema, re-resolves AUTO bindings, and
+     * derives its routing and signature decisions from the diff. Here
+     * the template has NOT moved — the ERM simply mistyped. Every one
+     * of those steps is either a no-op or actively wrong:</p>
+     * <ul>
+     *   <li><b>Re-snapshot must NOT happen.</b> If an admin edited the
+     *       template since this document was sent, re-snapshotting would
+     *       silently pull that unrelated edit into a "fix the date"
+     *       action. The ERM asked to change one value, not to adopt a
+     *       new template version.</li>
+     *   <li><b>No value reconciliation</b> — no schema diff to
+     *       reconcile.</li>
+     *   <li><b>No AUTO re-resolve</b> — AUTO bindings resolve at
+     *       {@code create()} and nothing upstream changed.</li>
+     *   <li><b>Routing is unconditional.</b> The reopen method's router
+     *       reads the diff; with no diff it returns
+     *       {@code reroutedTo="NONE"} and changes nothing at all. This
+     *       path always targets DRAFT.</li>
+     * </ul>
+     *
+     * <h2>Signatures — both dropped, unconditionally</h2>
+     * <p>The reopen method's signature policy keys off the template
+     * diff, so with no diff it would preserve BOTH signatures over
+     * changed content. That is wrong here. The ERM is about to alter a
+     * value on a legal document, and neither party signed the version
+     * that is about to exist:</p>
+     * <ul>
+     *   <li>The ERM signed in DRAFT before sending — their attestation
+     *       covered the value they are now changing.</li>
+     *   <li>The intern CAN sign on {@code SENT_TO_INTERN} before
+     *       submitting ({@link #requireCanFill} permits it), so a
+     *       signature may well exist here. They signed a document whose
+     *       ERM-owned value is about to change, and they never saw the
+     *       new one.</li>
+     * </ul>
+     * <p>Both are cleared and must be re-collected. This follows the
+     * same doctrine the reopen path states for content changes: safer to
+     * ask a party to re-sign than to keep a signature over content they
+     * did not see.</p>
+     *
+     * <h2>Values are preserved</h2>
+     * <p>Field values live in {@code document_instance_field_value},
+     * keyed {@code (instance_id, field_id)} — a different table from the
+     * instance row. A status change cannot touch them, and this method
+     * deletes nothing except signature rows. The ERM corrects the one
+     * wrong field rather than re-keying the document, and the intern's
+     * partial typing survives too.</p>
+     *
+     * <h2>Silent until re-send</h2>
+     * <p>No notification fires on pull-back. The document is moving to
+     * the ERM, not to the intern, and telling the intern "your offer
+     * was withdrawn" seconds before "your offer is ready" would be
+     * noise. {@link #send} already notifies when the ERM re-sends, and
+     * that is the moment the intern actually has something to do.</p>
+     *
+     * <h2>Reason capture</h2>
+     * <p>{@code reasonCode} / {@code comments} go to the review + audit
+     * trail ONLY. They deliberately do NOT populate
+     * {@code returnReasonCode} / {@code returnComments} — those are the
+     * intern-facing "here's what to fix" fields rendered on the intern's
+     * correction surface, and this correction is the ERM's own. The
+     * backward hop clears them.</p>
+     *
+     * @throws ConflictException if the document is not SENT_TO_INTERN
+     *         (already-DRAFT is an idempotent no-op). A document the
+     *         intern has submitted, or that is verified / finalized /
+     *         terminal, is out of scope here — correcting those is the
+     *         separate issue-corrected flow, which supersedes rather
+     *         than reopens.
+     */
+    @Transactional
+    public DocumentInstanceDtos.InstanceDetail reopenForErmCorrection(
+            UUID instanceId,
+            DocumentInstanceDtos.CorrectRequest req,
+            User caller) {
+        requireErmOrAdmin(caller);
+        // GUARD FIRST — pessimistic row-lock BEFORE any mutation.
+        DocumentInstance instance = instanceRepo.findByIdForUpdate(instanceId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Document instance not found: " + instanceId));
+        DocumentInstanceStatus fromStatus = instance.getStatus();
+        // Idempotency: already back in DRAFT (double-click, retry after a
+        // network hiccup, browser back+forward) → return current state
+        // with no second audit row and no second signature sweep.
+        if (fromStatus == DocumentInstanceStatus.DRAFT) {
+            return toDetail(instance, caller);
+        }
+        if (fromStatus != DocumentInstanceStatus.SENT_TO_INTERN) {
+            throw new ConflictException(
+                    "Only a sent, unsigned offer can be corrected and re-sent. "
+                            + "Current state: " + fromStatus);
+        }
+        assertNotStaleForTransition(instance,
+                req == null ? null : req.expectedUpdatedAt());
+
+        // Backward hop → DRAFT (shared with reopenForTemplateUpdate).
+        applyBackwardHop(instance, DocumentInstanceStatus.DRAFT);
+
+        // Drop BOTH parties' signatures — see the javadoc. Walk the
+        // instance's OWN snapshot schema (not the live template): this
+        // path never re-snapshots, so the snapshot is the authority on
+        // what fields this document has.
+        List<String> invalidatedSignatureFieldIds = new ArrayList<>();
+        for (FieldSchemaEntry f : parseSchema(instance.getSnapshotFieldSchemaJson())) {
+            if (!"SIGNATURE".equalsIgnoreCase(f.type())) continue;
+            DocumentInstanceFieldValue sigRow = valueRepo
+                    .findByInstanceIdAndFieldId(instance.getId(), f.id())
+                    .orElse(null);
+            if (sigRow != null && sigRow.getSignatureDocumentId() != null) {
+                valueRepo.delete(sigRow);
+                invalidatedSignatureFieldIds.add(f.id());
+            }
+        }
+
+        instance.setVersion(instance.getVersion() + 1);
+        instanceRepo.save(instance);
+
+        String reasonCode = req == null || req.reasonCode() == null
+                || req.reasonCode().isBlank() ? "ERM_CORRECTION" : req.reasonCode();
+        String comments = req == null ? null : req.comments();
+        writeReview(instance.getId(), "CORRECT_REOPEN", reasonCode, comments,
+                caller, "ERM");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fromStatus", fromStatus.name());
+        payload.put("toStatus", DocumentInstanceStatus.DRAFT.name());
+        payload.put("reasonCode", reasonCode);
+        payload.put("comments", comments == null ? "" : comments);
+        payload.put("invalidatedSignatureFieldIds",
+                String.join(",", invalidatedSignatureFieldIds));
+        writeAudit("CORRECT_REOPEN", instance, caller, payload);
+        log.info("[IDMS] reopenForErmCorrection instance={} by={} from={} to=DRAFT "
+                        + "reason={} sigsInvalidated={}",
+                instance.getId(), caller.getId(), fromStatus.name(),
+                reasonCode, invalidatedSignatureFieldIds.size());
+
+        // NO intern notification here — silent until the ERM re-sends.
+        // send() fires the intern's notification at the moment they
+        // actually have something to act on.
+        return toDetail(instance, caller);
+    }
+
+    /**
+     * The mandatory mutation set for ANY backward hop — a document
+     * moving to an earlier state must never carry forward-only state
+     * with it.
+     *
+     * <p>Shared by {@link #reopenForTemplateUpdate} (admin edited the
+     * template) and {@link #reopenForErmCorrection} (ERM mistyped their
+     * own field). Both roll a document backwards, and both were getting
+     * the same four silent-break traps wrong is exactly the kind of
+     * thing that only shows up in production, so there is one
+     * definition:</p>
+     * <ol>
+     *   <li>{@code lastErmViewedAt = null} — the verify gate must be
+     *       re-earned. A stale stamp would let an ERM verify a document
+     *       they never re-opened after it changed.</li>
+     *   <li>{@code finalPdfDocumentId = null} — a VERIFIED document can
+     *       carry a rendered PDF reference; a reopened one must not, or
+     *       a superseded PDF stays reachable.</li>
+     *   <li>{@code internLocked = false} + the return-cycle columns
+     *       cleared — so the fill surface renders as a clean draft
+     *       rather than inheriting a half-finished correction cycle.</li>
+     * </ol>
+     *
+     * <p>Callers targeting {@link DocumentInstanceStatus#RETURNED}
+     * re-populate the return-cycle columns immediately after; clearing
+     * them here first is what keeps the DRAFT path honest without
+     * changing the RETURNED path's result.</p>
+     */
+    private void applyBackwardHop(
+            DocumentInstance instance, DocumentInstanceStatus toStatus) {
+        instance.setStatus(toStatus);
+        instance.setLastErmViewedAt(null);
+        instance.setFinalPdfDocumentId(null);
+        instance.setInternLocked(false);
+        instance.setReturnReasonCode(null);
+        instance.setReturnComments(null);
+        instance.setUnlockedFieldIdsJson(null);
     }
 
     /** Byte-safe string equality with null tolerance. */
@@ -2279,10 +2463,15 @@ public class DocumentInstanceService {
         boolean canErmRevoke = isErm
                 && DocumentInstanceStatus.REVOCABLE.contains(s)
                 && gate.allowed();
+        // Correct & re-send — the sent-but-unsigned window only. After
+        // the intern submits, pulling the document back would discard
+        // work they've completed, so that case supersedes instead.
+        boolean canErmCorrect = isErm && s == DocumentInstanceStatus.SENT_TO_INTERN;
         return new DocumentInstanceDtos.InstanceActions(
                 canErmFill, canErmSend, canInternFill, canInternSubmit,
                 canErmReturn, canErmVerify, canErmFinalize, canErmRevoke,
-                gate.allowed() ? null : gate.reason());
+                gate.allowed() ? null : gate.reason(),
+                canErmCorrect);
     }
 
     // ── Audit + notify + parse helpers ───────────────────────────────
