@@ -315,9 +315,14 @@ class DocumentInstancePdfRendererXhtmlIT {
         assertTrue(shell.contains("margin-left: -1in"),
                 "header negative margin-left offset missing "
                         + "(would leave logo inset by 1in): " + shell);
-        assertTrue(shell.contains("class=\"pdf-doc-header\"") || shell.contains(" pdf-doc-header"),
+        // Matched on the element's opening tag rather than the whole
+        // attribute value: Fix C also stamps a fallback-typography class
+        // onto header/footer, so the attribute now reads
+        // class="pdf-doc-header pdf-fb-hf" and an exact-value match would
+        // break every time another marker is added.
+        assertTrue(shell.contains("<header class=\"pdf-doc-header"),
                 "first <header> not marked with pdf-doc-header class: " + shell);
-        assertTrue(shell.contains("class=\"pdf-doc-footer\"") || shell.contains(" pdf-doc-footer"),
+        assertTrue(shell.contains("<footer class=\"pdf-doc-footer"),
                 "first <footer> not marked with pdf-doc-footer class: " + shell);
 
         // 4. Extra header/footer copies dropped — the second section
@@ -446,9 +451,15 @@ class DocumentInstancePdfRendererXhtmlIT {
     void print_css_shell_has_list_indent_and_breathing_room() {
         DocumentInstancePdfRenderer renderer = new DocumentInstancePdfRenderer();
         String shell = renderer.toXhtmlForTest("Offer", "<p>body</p>");
-        // Real <ul>/<ol> get padding + visible markers.
-        assertTrue(shell.contains("ul, ol {"),
-                "ul/ol margin+padding rule missing: " + shell);
+        // Real <ul>/<ol> get padding + visible markers. Fix C moved the
+        // indent/spacing off the `ul, ol` element selector and onto a
+        // fallback class stamped by the renderer, so a document that
+        // states its own list indent wins instead of having the shell's
+        // value added on top. The scaffolding itself is unchanged —
+        // ShellFallbackNeverOverridesIT measures that a real <ul><li>
+        // still renders indented, and that a document indent beats it.
+        assertTrue(shell.contains("." + DocumentInstancePdfRenderer.FALLBACK_LIST + " {"),
+                "ul/ol fallback indent rule missing: " + shell);
         assertTrue(shell.contains("padding-left: 2.5em"),
                 "list padding-left missing (would render bullets flush left): " + shell);
         assertTrue(shell.contains("list-style-type: disc"),
@@ -463,20 +474,44 @@ class DocumentInstancePdfRendererXhtmlIT {
         assertTrue(shell.contains("list-style-position: outside !important"),
                 "docx-preview list-item list-style-position not flipped to outside: "
                         + shell);
-        // margin-left / padding-left MUST NOT carry !important — the
-        // source w:ind lands on the paragraph's inline style="margin-left:...",
-        // and an inline style has higher specificity than a shell selector,
-        // so the source's real indent naturally wins over these fallbacks.
-        // The prior !important clobbered every list to the same 2em.
+        // The fallback INDENT lives on a marker class, not on the
+        // attribute selector, and it is margin-left ONLY.
+        //
+        // Two separate lessons are pinned here:
+        //
+        // 1. No !important — the source w:ind lands on the paragraph's
+        //    inline style="margin-left:...", which must win. The original
+        //    !important clobbered every list to the same 2em.
+        //
+        // 2. No padding-left. This one is subtler and was the measured
+        //    bug Fix C removed: the document states its indent as
+        //    margin-left, so a shell padding-left never CONFLICTED with
+        //    it — the cascade never chose between them and the two simply
+        //    SUMMED. Every source indent rendered 6pt deeper than asked
+        //    (0.5in came out as +42pt against a 36pt request), and a list
+        //    with no source indent got 30pt invented from nowhere. No
+        //    specificity change can fix an addition; the declaration had
+        //    to go. The bullet's gap now comes from margin-left plus
+        //    list-style-position:outside.
+        assertTrue(shell.contains("." + DocumentInstancePdfRenderer.FALLBACK_NUM + " {"),
+                "docx-preview list-item fallback rule missing: " + shell);
         assertTrue(shell.contains("margin-left: 2em;"),
                 "docx-preview list-item fallback indent missing: " + shell);
-        assertTrue(shell.contains("padding-left: 0.5em;"),
-                "docx-preview list-item fallback padding missing: " + shell);
+        assertFalse(shell.contains("padding-left: 0.5em"),
+                "the stacking list padding must NOT be reintroduced — it adds "
+                        + "to the document's own margin-left instead of losing "
+                        + "to it: " + shell);
         assertFalse(shell.contains("margin-left: 2em !important"),
                 "list-indent must be overridable by the source's inline "
                         + "margin-left — !important would clobber it: " + shell);
-        assertFalse(shell.contains("padding-left: 0.5em !important"),
-                "list-padding must be overridable by the source: " + shell);
+        // The high-specificity attribute selector must carry ONLY the
+        // structural bullet positioning. Leaving the indent on it (0,1,1)
+        // would out-rank a document's own class rule (0,1,0) and silently
+        // beat the uploaded document.
+        assertTrue(shell.contains(
+                        "p[class*=\"docx-num\"] { list-style-position: outside !important; }"),
+                "the docx-num attribute selector must carry only the structural "
+                        + "bullet positioning, not the indent: " + shell);
     }
 
     /**
@@ -524,8 +559,13 @@ class DocumentInstancePdfRendererXhtmlIT {
         // Structural list rules ARE still in place (ul/ol scaffolding
         // is separate from paragraph spacing; docx-preview lists route
         // through the p[class*="docx-num"] rule above, not these).
-        assertTrue(shell.contains("ul, ol {"),
-                "ul/ol structural rule missing: " + shell);
+        assertTrue(shell.contains("." + DocumentInstancePdfRenderer.FALLBACK_LIST + " {"),
+                "ul/ol fallback scaffolding missing: " + shell);
+        // And the shell must no longer stack a padding-left onto a list
+        // paragraph that already carries the document's own indent —
+        // that addition was silently deepening every source indent.
+        assertFalse(shell.contains("padding-left: 0.5em"),
+                "shell must not re-impose the stacking list padding: " + shell);
     }
 
     /** BUG 4 (font hoist) — the docx-preview list-item paragraph
