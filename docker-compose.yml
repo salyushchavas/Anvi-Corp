@@ -1,0 +1,109 @@
+# Anvi Careers — local development stack.
+#
+#   docker compose up --build     first run
+#   docker compose up             every run after that
+#
+# Three containers: a Postgres database, the Spring Boot backend, and the
+# Next.js frontend. Settings come from the `.env` file next to this one
+# (copy .env.example to .env — the defaults work as-is).
+#
+# NOT a production deployment. It seeds test accounts with known passwords
+# and ships development signing keys; see .env.example.
+
+services:
+  # ── Database ────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-anvi}
+      POSTGRES_USER: ${POSTGRES_USER:-anvi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-anvi_local_dev}
+    volumes:
+      - anvi_pgdata:/var/lib/postgresql/data
+    # The backend fails to start if it connects before Postgres is ready
+    # to accept queries. This healthcheck plus `condition: service_healthy`
+    # below is what makes `docker compose up` work on the first try instead
+    # of needing a restart.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-anvi} -d ${POSTGRES_DB:-anvi}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    # Port 5432 is deliberately NOT published to the host. Anyone with
+    # Postgres already installed would hit "port is already allocated", and
+    # nothing here needs it. To inspect the DB directly, either add
+    #   ports: ["5433:5432"]
+    # or run: docker compose exec postgres psql -U anvi -d anvi
+
+  # ── Backend (Spring Boot) ───────────────────────────────────────────
+  backend:
+    build:
+      context: ./apps/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Container-to-container address: `postgres` is the service name
+      # above, resolved on the compose network. Not localhost — inside a
+      # container, localhost is the container itself.
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-anvi}
+      DB_USERNAME: ${POSTGRES_USER:-anvi}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-anvi_local_dev}
+
+      # Required — the app refuses to start without these two.
+      JWT_SECRET: ${JWT_SECRET}
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY}
+
+      # The browser calls the backend from http://localhost:3000, so that
+      # origin has to be allowed or every request fails CORS.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+
+      # Test logins. DEV ONLY — see .env.example.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@anvicorp.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      SEED_ROLE_ACCOUNTS: ${SEED_ROLE_ACCOUNTS:-true}
+      SEED_TEST_INTERNS: ${SEED_TEST_INTERNS:-true}
+
+      # External services, all off by default. With S3 disabled the app
+      # stores uploads and generated PDFs on the local volume below, so
+      # documents and offer letters work without any AWS account.
+      AWS_S3_ENABLED: ${AWS_S3_ENABLED:-false}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_S3_REGION: ${AWS_S3_REGION:-}
+      AWS_S3_ACCESS_KEY_ID: ${AWS_S3_ACCESS_KEY_ID:-}
+      AWS_S3_SECRET_ACCESS_KEY: ${AWS_S3_SECRET_ACCESS_KEY:-}
+      ZOOM_ENABLED: ${ZOOM_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    volumes:
+      # Uploaded documents, resumes and generated PDFs. A named volume so
+      # they survive `docker compose down` (use `down -v` to wipe).
+      - anvi_uploads:/app/uploads
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    restart: unless-stopped
+
+  # ── Frontend (Next.js) ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./apps/frontend
+      args:
+        # Baked into the browser bundle at build time — must be the address
+        # the BROWSER uses (the published host port), not the internal
+        # `http://backend:8080`. See the note in apps/frontend/Dockerfile.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  anvi_pgdata:
+  anvi_uploads:
