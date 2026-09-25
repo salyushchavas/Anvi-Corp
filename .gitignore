@@ -27,13 +27,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # local env files
-# `.env` is where real credentials land once someone fills one in, so it is
-# ignored outright — the previous `.env*.local` pattern did NOT cover a
-# plain `.env` and would have let one be committed. `.env.example` is the
-# committed template and is explicitly re-included.
-.env
-.env.*
-!.env.example
+.env*.local
 
 # vercel
 .vercel
@@ -41,12 +35,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# Runtime upload storage. When S3 is disabled (the default for local
-# development) the backend writes uploaded documents, resumes and generated
-# PDFs here. These are real user files — never commit them.
-uploads/
-
-# Editor / tooling local settings
-.vscode/
-.claude/
